@@ -1,0 +1,7 @@
+flask>=3.0,<4
+flask-session>=0.8,<0.9
+SQLAlchemy>=2.0,<3
+numpy==1.26.4
+pandas==2.2.2
+watchdog>=4
+gunicorn>=21,<22
