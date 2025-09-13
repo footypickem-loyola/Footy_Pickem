@@ -78,6 +78,101 @@ BASE_HTML = """
 </html>
 """
 
+# --- Admin template ---
+ADMIN_HTML = """
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>EPL Pick 'Em — Admin</title>
+  <script src="https://unpkg.com/htmx.org@2.0.2"></script>
+  <style>
+    body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin: 24px; color:#111; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 12px 0; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+    .row { display:flex; gap:16px; flex-wrap:wrap; }
+    .col { flex:1; min-width: 320px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align:left; padding:6px 8px; border-bottom:1px solid #eee; }
+    select, input { padding:6px; border:1px solid #ccc; border-radius:6px; }
+    .btn { padding:8px 12px; border:1px solid #ccc; background:#f8f8f8; border-radius:8px; cursor:pointer; }
+    .btn.primary { background:#0ea5e9; color:#fff; border-color:#0284c7; }
+    .muted { color:#666; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Admin — Edit Results</h2>
+    {% if not is_admin %}
+      <form method="post" action="{{ url_for('admin_login') }}">
+        <label>Room Code <input name="room_code" required></label>
+        <button class="btn primary" type="submit">Unlock</button>
+      </form>
+      <p class="muted">Enter the current season room code to unlock admin tools.</p>
+    {% else %}
+      <form method="post" action="{{ url_for('admin_logout') }}" style="margin-bottom:8px;">
+        <button class="btn" type="submit">Lock Admin</button>
+      </form>
+
+      <div class="card">
+        <form method="get" action="{{ url_for('admin') }}">
+          <label>Week
+            <select name="week" onchange="this.form.submit()">
+              {% for wk in weeks %}
+                <option value="{{ wk.number }}" {% if wk.number==week.number %}selected{% endif %}>Week {{ wk.number }} ({{ wk.status }})</option>
+              {% endfor %}
+            </select>
+          </label>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>Results — Week {{ week.number }} ({{ week.status }})</h3>
+        <form method="post" action="{{ url_for('admin_set_results') }}">
+          <input type="hidden" name="week" value="{{ week.number }}">
+          <table>
+            <thead>
+              <tr><th>#</th><th>Home</th><th>Away</th><th>Outcome</th></tr>
+            </thead>
+            <tbody>
+              {% for f in fixtures %}
+                <tr>
+                  <td>#{{ f.match_number }}</td>
+                  <td>{{ f.home }}</td>
+                  <td>{{ f.away }}</td>
+                  <td>
+                    <select name="outcome_{{ f.id }}">
+                      <option value="">(no change)</option>
+                      <option value="{{ f.home }}" {% if results.get(f.id)=='Home' %}selected{% endif %}>{{ f.home }}</option>
+                      <option value="{{ f.away }}" {% if results.get(f.id)=='Away' %}selected{% endif %}>{{ f.away }}</option>
+                      <option value="Draw" {% if results.get(f.id)=='Draw' %}selected{% endif %}>Draw</option>
+                    </select>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+            <button class="btn primary" type="submit">Save Changes</button>
+            <label style="display:flex; gap:6px; align-items:center;">
+              <input type="checkbox" name="force_status" value="provisional">
+              Mark week as provisional after save
+            </label>
+          </div>
+        </form>
+        <p class="muted" style="margin-top:8px;">Admin edits bypass the UI lock — use carefully.</p>
+      </div>
+    {% endif %}
+  </div>
+</body>
+</html>
+"""
+
+ADMIN_SESSION_KEY = "is_admin"
+
+def is_admin_session() -> bool:
+    return bool(session.get(ADMIN_SESSION_KEY, False))
+
+
 JOIN_HTML = """
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Join</title>
@@ -276,6 +371,24 @@ SCORES_PARTIAL = """
     {% endfor %}
   </tbody>
 </table>
+
+<div class="card">
+  <h5>Results — Week {{ week.number }}</h5>
+  <table>
+    <thead><tr><th>#</th><th>Home</th><th>Away</th><th>Outcome</th></tr></thead>
+    <tbody>
+      {% for fr in fixtures_with_results %}
+        <tr>
+          <td>#{{ fr['match_number'] }}</td>
+          <td>{{ fr['home'] }}</td>
+          <td>{{ fr['away'] }}</td>
+          <td>{{ fr['outcome_display'] }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
 <div class="card">
   <h5>Enter Results</h5>
   <form hx-post="{{ url_for('set_result') }}" hx-target="#scores" hx-swap="outerHTML">
@@ -302,6 +415,7 @@ SCORES_PARTIAL = """
   </form>
 </div>
 """
+
 
 # -------------------- App + DB --------------------
 DB_PATH = os.environ.get("DB_PATH", "sqlite:///pickem.db")
@@ -509,6 +623,79 @@ def tab_open():
         rows.append({"week": wk.number, "status": wk.status, "done": done, "total": total})
     return render_template_string(OPEN_PARTIAL, open_rows=rows, you=you)
 
+@app.get("/admin")
+def admin():
+    db = SessionLocal()
+    weeks = db.query(Week).order_by(Week.number.asc()).all()
+    if not weeks:
+        return render_template_string(ADMIN_HTML, is_admin=is_admin_session(), weeks=[], week=None, fixtures=[], results={})
+    # pick selected week or default to current_drafting_week
+    sel = request.args.get("week", type=int)
+    if sel:
+        wk = db.query(Week).filter_by(number=sel).first()
+    else:
+        wk = current_drafting_week(db) or weeks[0]
+    fixtures = db.query(Fixture).filter_by(week_id=wk.id).order_by(Fixture.match_number.asc()).all()
+    # map fixture_id -> 'Home'/'Away'/'Draw'
+    res_map = {r.fixture_id: r.outcome for r in db.query(Result).join(Fixture).filter(Fixture.week_id==wk.id)}
+    return render_template_string(ADMIN_HTML, is_admin=is_admin_session(), weeks=weeks, week=wk, fixtures=fixtures, results=res_map)
+
+@app.post("/admin/login")
+def admin_login():
+    db = SessionLocal()
+    code = request.form.get("room_code","").strip()
+    # Accept if matches ANY week's code (simple, season-wide admin)
+    wk = db.query(Week).filter_by(room_code=code).first()
+    if wk:
+        session[ADMIN_SESSION_KEY] = True
+    return redirect(url_for("admin"))
+
+@app.post("/admin/logout")
+def admin_logout():
+    session.pop(ADMIN_SESSION_KEY, None)
+    return redirect(url_for("admin"))
+
+@app.post("/admin/set-results")
+def admin_set_results():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    db = SessionLocal()
+    wk_number = int(request.form["week"])
+    wk = db.query(Week).filter_by(number=wk_number).first()
+    if not wk:
+        abort(404, "Week not found")
+
+    fixtures = db.query(Fixture).filter_by(week_id=wk.id).all()
+    # Apply changes fixture-by-fixture
+    for f in fixtures:
+        key = f"outcome_{f.id}"
+        raw = request.form.get(key, "").strip()
+        if not raw:
+            continue  # no change
+        # Map team-name/Draw into canonical
+        if raw.lower() == "draw":
+            outcome = "Draw"
+        elif raw == f.home:
+            outcome = "Home"
+        elif raw == f.away:
+            outcome = "Away"
+        else:
+            continue  # ignore invalid values
+        existing = db.query(Result).filter_by(fixture_id=f.id).first()
+        if existing:
+            existing.outcome = outcome
+        else:
+            db.add(Result(fixture_id=f.id, outcome=outcome))
+
+    # Optional: force status back to provisional, useful after correcting a finalized week
+    if request.form.get("force_status") == "provisional":
+        wk.status = "provisional"
+
+    db.commit()
+    # Recompute status in case everything is filled
+    update_week_status(db, wk)
+    return redirect(url_for("admin", week=wk.number))
+
 @app.get("/tab/season")
 def tab_season():
     db = SessionLocal()
@@ -587,7 +774,28 @@ def scores_partial(week_number: int):
     scores = [{"name": pl.name, "points": points.get(pl.id, 0)} for pl in db.query(Player).all()]
     payouts = payouts_for_week(db, wk)
     fixtures = db.query(Fixture).filter_by(week_id=wk.id).order_by(Fixture.match_number.asc()).all()
-    return render_template_string(SCORES_PARTIAL, week=wk, scores=scores, payouts=payouts, fixtures=fixtures)
+    # map fixture_id -> outcome
+    results_map = {r.fixture_id: r.outcome for r in db.query(Result).join(Fixture).filter(Fixture.week_id==wk.id)}
+    fixtures_with_results = []
+    for f in fixtures:
+        outcome = results_map.get(f.id)
+        if outcome == "Home":
+            display = f.home
+        elif outcome == "Away":
+            display = f.away
+        elif outcome == "Draw":
+            display = "Draw"
+        else:
+            display = "—"
+        fixtures_with_results.append({
+            "match_number": f.match_number,
+            "home": f.home,
+            "away": f.away,
+            "outcome_display": display
+        })
+    return render_template_string(SCORES_PARTIAL, week=wk, scores=scores, payouts=payouts,
+                                  fixtures=fixtures, fixtures_with_results=fixtures_with_results)
+
 
 def payouts_for_week(db, week):
     points = weekly_points_map(db, week)
