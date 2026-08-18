@@ -17,6 +17,15 @@ class PickemAppTests(unittest.TestCase):
         cls.csv_path = Path(__file__).resolve().parents[1] / "epl_2025.csv"
         app_module.app.config.update(TESTING=True)
 
+    @classmethod
+    def tearDownClass(cls):
+        # Windows will not delete the temporary SQLite file while SQLAlchemy
+        # still has a pooled connection open.
+        app_module.SessionLocal.remove()
+        app_module.engine.dispose()
+        TEST_DIR.cleanup()
+        super().tearDownClass()
+
     def setUp(self):
         app_module.SessionLocal.remove()
         app_module.Base.metadata.drop_all(app_module.engine)
@@ -27,6 +36,9 @@ class PickemAppTests(unittest.TestCase):
             ["Steve", "Joe", "Marc", "Drew", "Scott", "Connor"],
             "LOCALTEST",
         )
+
+    def tearDown(self):
+        app_module.SessionLocal.remove()
 
     def test_snake_order_contains_back_to_back_turns(self):
         db = app_module.SessionLocal()
