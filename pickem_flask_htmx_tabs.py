@@ -2,7 +2,9 @@
 import argparse
 import os
 import random
+import sqlite3
 from datetime import datetime
+from pathlib import Path
 from typing import List, Tuple, Dict, Iterable, Optional
 
 from flask import Flask, request, session, redirect, url_for, render_template_string, abort
@@ -276,22 +278,23 @@ CURRENT_PARTIAL = """
 <div class="row">
   <div class="col">
     <div class="card">
-      <h3>Week {{ wk.number }} — Hello, {{ you.name }}</h3>
+      <h3>{{ season.name }} — Week {{ wk.number }} — Hello, {{ you.name }}</h3>
       <div class="muted">Room: {{ wk.room_code }}</div>
       <div>Status: <span class="status {{ wk.status }}">{{ wk.status|capitalize }}</span></div>
+      {% if season.is_archived %}<div class="badge" style="margin-top:8px;">Archived — read only</div>{% endif %}
     </div>
 
-    <div class="card" id="fixtures" hx-get="{{ url_for('fixtures_partial', week_number=wk.number) }}" hx-trigger="load">
+    <div class="card" id="fixtures" hx-get="{{ url_for('fixtures_partial', week_number=wk.number, season=season.code) }}" hx-trigger="load">
       Loading fixtures...
     </div>
 
-    <div class="card" id="scores" hx-get="{{ url_for('scores_partial', week_number=wk.number) }}" hx-trigger="load" hx-swap="outerHTML">
+    <div class="card" id="scores" hx-get="{{ url_for('scores_partial', week_number=wk.number, season=season.code) }}" hx-trigger="load" hx-swap="outerHTML">
       Loading scores...
     </div>
   </div>
 
   <div class="col">
-    <div id="matchups" class="card" hx-get="{{ url_for('matchups_partial', week_number=wk.number) }}" hx-trigger="load" hx-swap="outerHTML">
+    <div id="matchups" class="card" hx-get="{{ url_for('matchups_partial', week_number=wk.number, season=season.code) }}" hx-trigger="load" hx-swap="outerHTML">
       Loading matchups...
     </div>
   </div>
@@ -300,14 +303,14 @@ CURRENT_PARTIAL = """
 
 OPEN_PARTIAL = """
 <div class="card">
-  <h3>Open Weeks</h3>
+  <h3>{{ season.name }} — Open Weeks</h3>
   <p class="muted">Any week not yet finalized shows up here. Auto-finalizes when all fixtures have results.</p>
   <table>
     <thead><tr><th>Week</th><th>Status</th><th>Completed Fixtures</th><th>Total Fixtures</th></tr></thead>
     <tbody>
       {% for row in open_rows %}
         <tr>
-          <td><a href="#" hx-get="{{ url_for('tab_current') }}?force_week={{ row['week'] }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">Week {{ row['week'] }}</a></td>
+          <td><a href="#" hx-get="{{ url_for('tab_current', force_week=row['week'], season=season.code) }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">Week {{ row['week'] }}</a></td>
           <td><span class="status {{ row['status'] }}">{{ row['status']|capitalize }}</span></td>
           <td>{{ row['done'] }}</td>
           <td>{{ row['total'] }}</td>
@@ -323,7 +326,18 @@ OPEN_PARTIAL = """
 
 SEASON_PARTIAL = """
 <div class="card">
-  <h3>Season Summary (Final weeks only)</h3>
+  <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
+    <h3 style="margin:0;">{{ selected_season.name }} Summary</h3>
+    <form hx-get="{{ url_for('tab_season') }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
+      <label>Season
+        <select name="season" onchange="this.form.requestSubmit()">
+          {% for season in seasons %}
+            <option value="{{ season.code }}" {% if season.id == selected_season.id %}selected{% endif %}>{{ season.name }}{% if season.is_archived %} (Archived){% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+  </div>
   <p class="muted">Cumulative points from finalized weeks. Net = For – Against.</p>
   <div class="table-scroll">
     <table class="centered-table season-summary-table">
@@ -382,7 +396,7 @@ SEASON_PARTIAL = """
     <tbody>
       {% for wk in weeks %}
       <tr>
-        <td><a href="#" hx-get="{{ url_for('tab_current') }}?force_week={{ wk.number }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">Week {{ wk.number }}</a></td>
+        <td><a href="#" hx-get="{{ url_for('tab_current', force_week=wk.number, season=selected_season.code) }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">Week {{ wk.number }}</a></td>
         {% for p in players %}
           <td>{{ weekly_points[wk.number].get(p.id, 0) }}</td>
         {% endfor %}
@@ -406,6 +420,7 @@ FIXTURES_PARTIAL = """
 MATCHUPS_PARTIAL = """
 <div id="matchups" class="card">
   <h4>Matchups (click to pick)</h4>
+  {% if read_only %}<p class="muted">This season is archived. Picks are available for viewing only.</p>{% endif %}
   {% for m in matchups %}
     <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -418,9 +433,10 @@ MATCHUPS_PARTIAL = """
     <div class="row">
       <div class="col">
         <h5>Available</h5>
-        {% if m['available'] %}
+        {% if m['available'] and not read_only %}
           <form hx-post="{{ url_for('make_pick') }}" hx-trigger="confirmedPick" hx-target="#matchups" hx-swap="outerHTML">
             <input type="hidden" name="week" value="{{ week.number }}">
+            <input type="hidden" name="season" value="{{ season.code }}">
             <input type="hidden" name="matchup_id" value="{{ m['id'] }}">
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
               <label>Game
@@ -443,6 +459,8 @@ MATCHUPS_PARTIAL = """
               {% endif %}
             </div>
           </form>
+        {% elif read_only %}
+          <div class="muted">Archived — no additional picks can be submitted.</div>
         {% else %}
           <div class="muted">All games picked in this matchup.</div>
         {% endif %}
@@ -510,8 +528,10 @@ SCORES_PARTIAL = """
 
 <div class="card">
   <h5>Enter Results</h5>
+  {% if not read_only %}
   <form hx-post="{{ url_for('set_result') }}" hx-target="#scores" hx-swap="outerHTML">
     <input type="hidden" name="week" value="{{ week.number }}">
+    <input type="hidden" name="season" value="{{ season.code }}">
     <label>Match #
       <select name="fixture_id"
               hx-get="{{ url_for('outcome_options') }}"
@@ -532,6 +552,9 @@ SCORES_PARTIAL = """
     </div>
     <button class="btn" type="submit">Set Result</button>
   </form>
+  {% else %}
+    <div class="muted">Archived — results are read only.</div>
+  {% endif %}
 </div>
 </div>
 """
@@ -575,12 +598,24 @@ class Player(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, unique=True, nullable=False)
 
+class Season(Base):
+    __tablename__ = "seasons"
+    id = Column(Integer, primary_key=True)
+    code = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
+    is_active = Column(Integer, nullable=False, default=0)
+    is_archived = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 class Week(Base):
     __tablename__ = "weeks"
     id = Column(Integer, primary_key=True)
-    number = Column(Integer, unique=True, nullable=False)
+    season_id = Column(Integer, ForeignKey("seasons.id"), nullable=False)
+    number = Column(Integer, nullable=False)
     room_code = Column(String, nullable=False)
     status = Column(String, default="drafting") # drafting | provisional | finalized
+    season = relationship("Season")
+    __table_args__ = (UniqueConstraint("season_id", "number", name="uix_season_week_number"),)
 
 class Fixture(Base):
     __tablename__ = "fixtures"
@@ -623,7 +658,129 @@ class Result(Base):
     outcome = Column(String, nullable=False)  # Home|Away|Draw
     fixture = relationship("Fixture")
 
-Base.metadata.create_all(engine)
+def _database_file_path(target_engine) -> Optional[Path]:
+    """Return the SQLite database file path, excluding in-memory databases."""
+    if target_engine.dialect.name != "sqlite":
+        return None
+    database = target_engine.url.database
+    if not database or database == ":memory:":
+        return None
+    return Path(database).expanduser().resolve()
+
+
+def _backup_legacy_database(target_engine) -> Optional[Path]:
+    """Create a one-time SQLite backup immediately before the season migration."""
+    source_path = _database_file_path(target_engine)
+    if source_path is None or not source_path.exists():
+        return None
+    backup_path = source_path.with_name(f"{source_path.stem}.pre_seasons.db")
+    if backup_path.exists():
+        return backup_path
+    source = sqlite3.connect(str(source_path))
+    destination = sqlite3.connect(str(backup_path))
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    return backup_path
+
+
+def ensure_database_schema(target_engine=engine) -> bool:
+    """Create the current schema and safely migrate a legacy single-season DB.
+
+    Returns True only when the legacy weeks table was migrated.
+    """
+    migrated = False
+    if target_engine.dialect.name != "sqlite":
+        Base.metadata.create_all(target_engine)
+        return migrated
+
+    raw = target_engine.raw_connection()
+    cursor = raw.cursor()
+    try:
+        weeks_exists = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='weeks'"
+        ).fetchone()
+        week_columns = []
+        if weeks_exists:
+            week_columns = [row[1] for row in cursor.execute("PRAGMA table_info(weeks)").fetchall()]
+
+        if weeks_exists and "season_id" not in week_columns:
+            _backup_legacy_database(target_engine)
+            cursor.execute("PRAGMA foreign_keys=OFF")
+            cursor.execute("PRAGMA legacy_alter_table=ON")
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seasons (
+                    id INTEGER PRIMARY KEY,
+                    code VARCHAR NOT NULL UNIQUE,
+                    name VARCHAR NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 0,
+                    is_archived INTEGER NOT NULL DEFAULT 0,
+                    created_at DATETIME
+                )
+                """
+            )
+            legacy_season = cursor.execute(
+                "SELECT id FROM seasons WHERE code=?", ("year-1",)
+            ).fetchone()
+            if legacy_season:
+                legacy_season_id = legacy_season[0]
+                cursor.execute(
+                    "UPDATE seasons SET name=?, is_active=0, is_archived=1 WHERE id=?",
+                    ("Year 1", legacy_season_id),
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO seasons (code, name, is_active, is_archived, created_at) VALUES (?, ?, 0, 1, ?)",
+                    ("year-1", "Year 1", datetime.utcnow()),
+                )
+                legacy_season_id = cursor.lastrowid
+
+            legacy_count = cursor.execute("SELECT COUNT(*) FROM weeks").fetchone()[0]
+            cursor.execute("ALTER TABLE weeks RENAME TO weeks_legacy")
+            cursor.execute(
+                """
+                CREATE TABLE weeks (
+                    id INTEGER PRIMARY KEY,
+                    season_id INTEGER NOT NULL,
+                    number INTEGER NOT NULL,
+                    room_code VARCHAR NOT NULL,
+                    status VARCHAR,
+                    CONSTRAINT uix_season_week_number UNIQUE (season_id, number),
+                    FOREIGN KEY(season_id) REFERENCES seasons(id)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                INSERT INTO weeks (id, season_id, number, room_code, status)
+                SELECT id, ?, number, room_code, status FROM weeks_legacy
+                """,
+                (legacy_season_id,),
+            )
+            migrated_count = cursor.execute("SELECT COUNT(*) FROM weeks").fetchone()[0]
+            if migrated_count != legacy_count:
+                raise RuntimeError("Season migration row-count check failed")
+            cursor.execute("DROP TABLE weeks_legacy")
+            cursor.execute("CREATE INDEX IF NOT EXISTS ix_weeks_season_id ON weeks (season_id)")
+            raw.commit()
+            cursor.execute("PRAGMA legacy_alter_table=OFF")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            migrated = True
+    except Exception:
+        raw.rollback()
+        raise
+    finally:
+        cursor.close()
+        raw.close()
+
+    Base.metadata.create_all(target_engine)
+    return migrated
+
+
+ensure_database_schema(engine)
 
 # -------------------- Helpers --------------------
 def current_player(db):
@@ -631,6 +788,39 @@ def current_player(db):
     if not name:
         return None
     return db.query(Player).filter_by(name=name).first()
+
+
+def active_season(db) -> Optional[Season]:
+    season = db.query(Season).filter_by(is_active=1).order_by(Season.id.desc()).first()
+    if season:
+        return season
+    season = db.query(Season).filter_by(is_archived=0).order_by(Season.id.desc()).first()
+    if season:
+        return season
+    return db.query(Season).order_by(Season.id.desc()).first()
+
+
+def requested_season(db, code: Optional[str] = None) -> Optional[Season]:
+    season_code = code or request.args.get("season") or request.form.get("season")
+    if season_code:
+        season = db.query(Season).filter_by(code=season_code).first()
+        if season:
+            return season
+    return active_season(db)
+
+
+def season_players(db, season: Season) -> List[Player]:
+    matchups = db.query(Matchup).join(Week).filter(Week.season_id == season.id).all()
+    player_ids = set()
+    for matchup in matchups:
+        player_ids.update((matchup.player_a_id, matchup.player_b_id))
+    if not player_ids:
+        return db.query(Player).order_by(Player.name.asc()).all()
+    return db.query(Player).filter(Player.id.in_(player_ids)).order_by(Player.name.asc()).all()
+
+
+def season_week(db, season: Season, number: int) -> Optional[Week]:
+    return db.query(Week).filter_by(season_id=season.id, number=number).first()
 
 def matchup_order(m: Matchup) -> Tuple[int, int]:
     first = m.first_picker_id
@@ -699,16 +889,16 @@ def weekly_pick_records(db, week: Week) -> Dict[int, Dict[str, int]]:
         records[pick.player_id][bucket] += 1
     return records
 
-def season_detailed_totals_finalized(db) -> Dict[int, Dict[str, int]]:
+def season_detailed_totals_finalized(db, season: Season) -> Dict[int, Dict[str, int]]:
     """Aggregate pick records and opponents' pick records across finalized weeks."""
     totals: Dict[int, Dict[str, int]] = {
         p.id: {
             'correct': 0, 'incorrect': 0, 'draws': 0,
             'against_correct': 0, 'against_incorrect': 0, 'against_draws': 0,
         }
-        for p in db.query(Player).all()
+        for p in season_players(db, season)
     }
-    for week in db.query(Week).filter_by(status="finalized").order_by(Week.number.asc()).all():
+    for week in db.query(Week).filter_by(season_id=season.id, status="finalized").order_by(Week.number.asc()).all():
         records = weekly_pick_records(db, week)
         for matchup in db.query(Matchup).filter_by(week_id=week.id).all():
             a_record = records[matchup.player_a_id]
@@ -720,9 +910,9 @@ def season_detailed_totals_finalized(db) -> Dict[int, Dict[str, int]]:
                 totals[matchup.player_b_id][f'against_{key}'] += a_record[key]
     return totals
 
-def season_totals_finalized(db) -> Dict[int, Dict[str,int]]:
+def season_totals_finalized(db, season: Season) -> Dict[int, Dict[str,int]]:
     totals: Dict[int, Dict[str,int]] = {}
-    for wk in db.query(Week).order_by(Week.number.asc()).all():
+    for wk in db.query(Week).filter_by(season_id=season.id).order_by(Week.number.asc()).all():
         if wk.status != "finalized":
             continue
         fa = weekly_for_against(db, wk)
@@ -741,6 +931,8 @@ def count_results_for_week(db, wk: Week) -> Tuple[int,int]:
     return done, total
 
 def update_week_status(db, wk: Week) -> None:
+    if wk.season and wk.season.is_archived:
+        return
     done, total = count_results_for_week(db, wk)
     if done == 0:
         wk.status = "drafting"
@@ -750,55 +942,65 @@ def update_week_status(db, wk: Week) -> None:
         wk.status = "finalized"
     db.add(wk); db.commit()
 
-def current_drafting_week(db) -> Optional[Week]:
-    wk = db.query(Week).filter_by(status="drafting").order_by(Week.number.asc()).first()
+def current_drafting_week(db, season: Season) -> Optional[Week]:
+    base = db.query(Week).filter_by(season_id=season.id)
+    wk = base.filter_by(status="drafting").order_by(Week.number.asc()).first()
     if wk: return wk
-    wk = db.query(Week).filter_by(status="provisional").order_by(Week.number.asc()).first()
+    wk = base.filter_by(status="provisional").order_by(Week.number.asc()).first()
     if wk: return wk
-    return db.query(Week).order_by(Week.number.asc()).first()
+    return base.order_by(Week.number.asc()).first()
 
 # -------------------- Tab routes (HTMX content) --------------------
 @app.get("/tab/current")
 def tab_current():
     db = SessionLocal()
     you = current_player(db)
+    season = requested_season(db)
+    if season is None:
+        return "<div class='card'>No seasons initialized yet.</div>"
     # Optionally force a specific week via query param (?force_week=5)
     force = request.args.get("force_week", type=int)
     if force:
-        wk = db.query(Week).filter_by(number=force).first()
+        wk = season_week(db, season, force)
         if wk is None:
             abort(404, "Week not found")
     else:
-        wk = current_drafting_week(db)
+        wk = current_drafting_week(db, season)
     if wk is None:
-        return "<div class='card'>No weeks initialized yet.</div>"
+        return f"<div class='card'>No weeks initialized for {season.name} yet.</div>"
     update_week_status(db, wk)
-    return render_template_string(CURRENT_PARTIAL, current_week=wk, you=you)
+    return render_template_string(CURRENT_PARTIAL, current_week=wk, season=season, you=you)
 
 @app.get("/tab/open")
 def tab_open():
     db = SessionLocal()
     you = current_player(db)
+    season = requested_season(db)
+    if season is None:
+        return "<div class='card'>No seasons initialized yet.</div>"
     rows = []
-    for wk in db.query(Week).order_by(Week.number.asc()).all():
+    for wk in db.query(Week).filter_by(season_id=season.id).order_by(Week.number.asc()).all():
         if wk.status == "finalized":
             continue
         done, total = count_results_for_week(db, wk)
         rows.append({"week": wk.number, "status": wk.status, "done": done, "total": total})
-    return render_template_string(OPEN_PARTIAL, open_rows=rows, you=you)
+    return render_template_string(OPEN_PARTIAL, open_rows=rows, season=season, you=you)
 
 @app.get("/admin")
 def admin():
     db = SessionLocal()
-    weeks = db.query(Week).order_by(Week.number.asc()).all()
+    season = active_season(db)
+    if season is None:
+        return render_template_string(ADMIN_HTML, is_admin=is_admin_session(), weeks=[], week=None, fixtures=[], results={})
+    weeks = db.query(Week).filter_by(season_id=season.id).order_by(Week.number.asc()).all()
     if not weeks:
         return render_template_string(ADMIN_HTML, is_admin=is_admin_session(), weeks=[], week=None, fixtures=[], results={})
     # pick selected week or default to current_drafting_week
     sel = request.args.get("week", type=int)
     if sel:
-        wk = db.query(Week).filter_by(number=sel).first()
+        wk = season_week(db, season, sel)
     else:
-        wk = current_drafting_week(db) or weeks[0]
+        wk = current_drafting_week(db, season) or weeks[0]
     fixtures = db.query(Fixture).filter_by(week_id=wk.id).order_by(Fixture.match_number.asc()).all()
     # map fixture_id -> 'Home'/'Away'/'Draw'
     res_map = {r.fixture_id: r.outcome for r in db.query(Result).join(Fixture).filter(Fixture.week_id==wk.id)}
@@ -808,8 +1010,8 @@ def admin():
 def admin_login():
     db = SessionLocal()
     code = request.form.get("room_code","").strip()
-    # Accept if matches ANY week's code (simple, season-wide admin)
-    wk = db.query(Week).filter_by(room_code=code).first()
+    season = active_season(db)
+    wk = None if season is None else db.query(Week).filter_by(season_id=season.id, room_code=code).first()
     if wk:
         session[ADMIN_SESSION_KEY] = True
     return redirect(url_for("admin"))
@@ -824,8 +1026,11 @@ def admin_set_results():
     if not is_admin_session():
         abort(403, "Admin locked")
     db = SessionLocal()
+    season = active_season(db)
+    if season is None or season.is_archived:
+        abort(403, "No writable active season")
     wk_number = int(request.form["week"])
-    wk = db.query(Week).filter_by(number=wk_number).first()
+    wk = season_week(db, season, wk_number)
     if not wk:
         abort(404, "Week not found")
 
@@ -864,10 +1069,14 @@ def admin_set_results():
 def tab_season():
     db = SessionLocal()
     you = current_player(db)
-    weeks = db.query(Week).order_by(Week.number.asc()).all()
-    players = db.query(Player).order_by(Player.name.asc()).all()
-    totals = season_totals_finalized(db)
-    details = season_detailed_totals_finalized(db)
+    selected_season = requested_season(db)
+    if selected_season is None:
+        return "<div class='card'>No seasons initialized yet.</div>"
+    seasons = db.query(Season).order_by(Season.id.desc()).all()
+    weeks = db.query(Week).filter_by(season_id=selected_season.id).order_by(Week.number.asc()).all()
+    players = season_players(db, selected_season)
+    totals = season_totals_finalized(db, selected_season)
+    details = season_detailed_totals_finalized(db, selected_season)
     season_rows = []
     for p in players:
         row = {
@@ -895,7 +1104,8 @@ def tab_season():
     for wk in weeks:
         weekly_points[wk.number] = weekly_points_map(db, wk)
     return render_template_string(SEASON_PARTIAL, season_rows=season_rows, players=players,
-                                  weeks=weeks, weekly_points=weekly_points, you=you)
+                                  weeks=weeks, weekly_points=weekly_points, you=you,
+                                  seasons=seasons, selected_season=selected_season)
 
 # -------------------- Page shell --------------------
 @app.route("/")
@@ -909,14 +1119,20 @@ def shell():
 @app.route("/partials/fixtures/<int:week_number>")
 def fixtures_partial(week_number: int):
     db = SessionLocal()
-    wk = db.query(Week).filter_by(number=week_number).first()
+    season = requested_season(db)
+    wk = None if season is None else season_week(db, season, week_number)
+    if wk is None:
+        abort(404, "Week not found")
     fixtures = db.query(Fixture).filter_by(week_id=wk.id).order_by(Fixture.match_number.asc()).all()
     return render_template_string(FIXTURES_PARTIAL, fixtures=fixtures)
 
 @app.route("/partials/matchups/<int:week_number>")
 def matchups_partial(week_number: int):
     db = SessionLocal()
-    wk = db.query(Week).filter_by(number=week_number).first()
+    season = requested_season(db)
+    wk = None if season is None else season_week(db, season, week_number)
+    if wk is None:
+        abort(404, "Week not found")
     you = current_player(db)
     matchups = []
     for m in db.query(Matchup).filter_by(week_id=wk.id).all():
@@ -943,12 +1159,16 @@ def matchups_partial(week_number: int):
             "available": avail_view,
             "log": log
         })
-    return render_template_string(MATCHUPS_PARTIAL, matchups=matchups, week=wk, you=you)
+    return render_template_string(MATCHUPS_PARTIAL, matchups=matchups, week=wk, season=season,
+                                  read_only=bool(season.is_archived), you=you)
 
 @app.route("/partials/scores/<int:week_number>")
 def scores_partial(week_number: int):
     db = SessionLocal()
-    wk = db.query(Week).filter_by(number=week_number).first()
+    season = requested_season(db)
+    wk = None if season is None else season_week(db, season, week_number)
+    if wk is None:
+        abort(404, "Week not found")
     update_week_status(db, wk)
     points = weekly_points_map(db, wk)
     records = weekly_pick_records(db, wk)
@@ -984,8 +1204,9 @@ def scores_partial(week_number: int):
             "away": f.away,
             "outcome_display": display
         })
-    return render_template_string(SCORES_PARTIAL, week=wk, scores=scores, payouts=payouts,
-                                  fixtures=fixtures, fixtures_with_results=fixtures_with_results)
+    return render_template_string(SCORES_PARTIAL, week=wk, season=season, scores=scores, payouts=payouts,
+                                  fixtures=fixtures, fixtures_with_results=fixtures_with_results,
+                                  read_only=bool(season.is_archived))
 
 
 def payouts_for_week(db, week):
@@ -1028,8 +1249,13 @@ def make_pick():
     me = current_player(db)
     if me is None:
         abort(403, "Not logged in")
+    season = requested_season(db, request.form.get("season"))
+    if season is None or season.is_archived:
+        abort(403, "Archived seasons are read only")
     wk_number = int(request.form["week"])
-    wk = db.query(Week).filter_by(number=wk_number).first()
+    wk = season_week(db, season, wk_number)
+    if wk is None:
+        abort(404, "Week not found")
     m = db.query(Matchup).get(int(request.form["matchup_id"]))
     fx_id = int(request.form["fixture_id"])
     team_name = request.form["team"].strip()
@@ -1063,8 +1289,13 @@ def make_pick():
 @app.post("/set_result")
 def set_result():
     db = SessionLocal()
+    season = requested_season(db, request.form.get("season"))
+    if season is None or season.is_archived:
+        abort(403, "Archived seasons are read only")
     wk_number = int(request.form["week"])
-    wk = db.query(Week).filter_by(number=wk_number).first()
+    wk = season_week(db, season, wk_number)
+    if wk is None:
+        abort(404, "Week not found")
     fx_id = int(request.form["fixture_id"])
     raw = request.form["outcome"].strip()
 
@@ -1097,8 +1328,9 @@ def set_result():
 def join():
     db = SessionLocal()
     # Determine a sensible week to join against
-    wk = current_drafting_week(db)
-    allowed_names = [p.name for p in db.query(Player).all()]
+    season = active_season(db)
+    wk = None if season is None else current_drafting_week(db, season)
+    allowed_names = [] if season is None else [p.name for p in season_players(db, season)]
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         code = request.form.get("room_code", "").strip()
@@ -1128,36 +1360,70 @@ def parse_weeks_arg(weeks_arg: str, df: pd.DataFrame) -> List[int]:
             out.add(int(p))
     return sorted(out)
 
-def init_weeks_from_csv(csv_path: str, weeks: Iterable[int], players: List[str], room_code: str):
+def _delete_season_weeks(db, season: Season) -> None:
+    weeks = db.query(Week).filter_by(season_id=season.id).all()
+    week_ids = [week.id for week in weeks]
+    if not week_ids:
+        return
+    fixture_ids = [row[0] for row in db.query(Fixture.id).filter(Fixture.week_id.in_(week_ids)).all()]
+    matchup_ids = [row[0] for row in db.query(Matchup.id).filter(Matchup.week_id.in_(week_ids)).all()]
+    if fixture_ids:
+        db.query(Result).filter(Result.fixture_id.in_(fixture_ids)).delete(synchronize_session=False)
+    if matchup_ids:
+        db.query(Pick).filter(Pick.matchup_id.in_(matchup_ids)).delete(synchronize_session=False)
+    db.query(Matchup).filter(Matchup.week_id.in_(week_ids)).delete(synchronize_session=False)
+    db.query(Fixture).filter(Fixture.week_id.in_(week_ids)).delete(synchronize_session=False)
+    db.query(Week).filter(Week.id.in_(week_ids)).delete(synchronize_session=False)
+
+
+def init_weeks_from_csv(
+    csv_path: str,
+    weeks: Iterable[int],
+    players: List[str],
+    room_code: str,
+    season_code: str = "year-2",
+    season_name: str = "Year 2",
+    allow_reset: bool = False,
+):
     db = SessionLocal()
     df = pd.read_csv(csv_path)
 
-    # Reset players to the provided 6
-    db.query(Player).delete()
+    season = db.query(Season).filter_by(code=season_code).first()
+    if season is None:
+        season = Season(code=season_code, name=season_name, is_active=1, is_archived=0)
+        db.add(season)
+        db.flush()
+    else:
+        existing_weeks = db.query(Week).filter_by(season_id=season.id).count()
+        if (season.is_archived or existing_weeks) and not allow_reset:
+            raise RuntimeError(
+                f"{season.name} already contains data. Set ALLOW_SEASON_RESET=1 only after making a backup."
+            )
+        if allow_reset:
+            _delete_season_weeks(db, season)
+        season.name = season_name
+        season.is_archived = 0
+        season.is_active = 1
+
+    db.query(Season).filter(Season.id != season.id).update(
+        {Season.is_active: 0}, synchronize_session=False
+    )
+
+    # Players are shared across seasons; add missing names without deleting history.
     for name in players:
-        db.add(Player(name=name))
+        if db.query(Player).filter_by(name=name).first() is None:
+            db.add(Player(name=name))
     db.commit()
 
     for week_number in weeks:
-        wk = db.query(Week).filter_by(number=week_number).first()
-        if wk:
-            # wipe week data
-            fxs = db.query(Fixture).filter_by(week_id=wk.id).all()
-            fx_ids = [f.id for f in fxs]
-            if fx_ids:
-                db.query(Result).filter(Result.fixture_id.in_(fx_ids)).delete(synchronize_session=False)
-            mus = db.query(Matchup).filter_by(week_id=wk.id).all()
-            mu_ids = [m.id for m in mus]
-            if mu_ids:
-                db.query(Pick).filter(Pick.matchup_id.in_(mu_ids)).delete(synchronize_session=False)
-                db.query(Matchup).filter_by(week_id=wk.id).delete()
-            db.query(Fixture).filter_by(week_id=wk.id).delete()
-            wk.room_code = room_code
-            wk.status = "drafting"
-        else:
-            wk = Week(number=week_number, room_code=room_code, status="drafting")
-            db.add(wk)
-            db.flush()
+        wk = Week(
+            season_id=season.id,
+            number=week_number,
+            room_code=room_code,
+            status="drafting",
+        )
+        db.add(wk)
+        db.flush()
 
         wkdf = df[df["Round Number"] == week_number]
         for _, r in wkdf.iterrows():
@@ -1168,7 +1434,7 @@ def init_weeks_from_csv(csv_path: str, weeks: Iterable[int], players: List[str],
         db.commit()
 
         # create 3 matchups for the week
-        pls = db.query(Player).order_by(Player.name.asc()).all()
+        pls = db.query(Player).filter(Player.name.in_(players)).order_by(Player.name.asc()).all()
         names = [p.name for p in pls]
         random.shuffle(names)
         pairs = [(names[i], names[i+1]) for i in range(0, len(names), 2)]
@@ -1179,8 +1445,7 @@ def init_weeks_from_csv(csv_path: str, weeks: Iterable[int], players: List[str],
             db.add(Matchup(week_id=wk.id, player_a_id=a.id, player_b_id=b.id, first_picker_id=first.id))
         db.commit()
 
-        # ensure initial status is set correctly
-        update_week_status(db, wk)
+    return season
 
 # -------------------- CLI --------------------
 def main():
@@ -1189,6 +1454,8 @@ def main():
     parser.add_argument("--weeks", required=True, help="Weeks to init: '1', '1-4', '1,3,8-10', or 'all'")
     parser.add_argument("--players", required=True, help="Comma-separated 6 player names")
     parser.add_argument("--room", required=True, help="Room code (shared password)")
+    parser.add_argument("--season-code", default=os.environ.get("SEASON_CODE", "year-2"))
+    parser.add_argument("--season-name", default=os.environ.get("SEASON_NAME", "Year 2"))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5000)
     args = parser.parse_args()
@@ -1206,7 +1473,16 @@ def main():
         if not weeks:
             print("No weeks selected to initialize.")
             return
-        init_weeks_from_csv(args.csv, weeks, players, args.room)
+        allow_reset = os.environ.get("ALLOW_SEASON_RESET", "0") == "1"
+        init_weeks_from_csv(
+            args.csv,
+            weeks,
+            players,
+            args.room,
+            season_code=args.season_code,
+            season_name=args.season_name,
+            allow_reset=allow_reset,
+        )
 
     app.jinja_env.globals.update(zip=zip)
 

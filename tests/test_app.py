@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -191,6 +192,172 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(html.count('class="against-header"'), 3)
         self.assertIn('class="total-net-header"', html)
         self.assertIn('class="total-net-cell"', html)
+
+    def test_duplicate_week_numbers_are_isolated_by_season(self):
+        db = app_module.SessionLocal()
+        year_two = db.query(app_module.Season).filter_by(code="year-2").one()
+        year_one = app_module.Season(
+            code="year-1", name="Year 1", is_active=0, is_archived=1
+        )
+        db.add(year_one)
+        db.flush()
+        db.add(app_module.Week(
+            season_id=year_one.id,
+            number=1,
+            room_code="ARCHIVE",
+            status="finalized",
+        ))
+        db.commit()
+
+        weeks = db.query(app_module.Week).filter_by(number=1).all()
+        self.assertEqual(len(weeks), 2)
+        self.assertEqual({week.season_id for week in weeks}, {year_one.id, year_two.id})
+
+        with app_module.app.test_client() as client:
+            with client.session_transaction() as user_session:
+                user_session["player_name"] = "Steve"
+            season_response = client.get("/tab/season?season=year-1")
+            week_response = client.get("/tab/current?season=year-1&force_week=1")
+
+        self.assertIn(b"Year 1 Summary", season_response.data)
+        self.assertIn(b"Year 1 (Archived)", season_response.data)
+        self.assertIn(b"Year 2", season_response.data)
+        self.assertIn("Archived — read only".encode(), week_response.data)
+
+    def test_existing_season_cannot_be_reinitialized_without_explicit_reset(self):
+        with self.assertRaises(RuntimeError):
+            app_module.init_weeks_from_csv(
+                str(self.csv_path),
+                [1],
+                ["Steve", "Joe", "Marc", "Drew", "Scott", "Connor"],
+                "LOCALTEST",
+                season_code="year-2",
+                season_name="Year 2",
+            )
+
+    def test_archived_season_rejects_result_changes(self):
+        db = app_module.SessionLocal()
+        archived = app_module.Season(
+            code="year-1", name="Year 1", is_active=0, is_archived=1
+        )
+        db.add(archived)
+        db.flush()
+        week = app_module.Week(
+            season_id=archived.id,
+            number=1,
+            room_code="ARCHIVE",
+            status="finalized",
+        )
+        db.add(week)
+        db.flush()
+        fixture = app_module.Fixture(
+            week_id=week.id,
+            match_number=1,
+            home="Arsenal",
+            away="Chelsea",
+        )
+        db.add(fixture)
+        db.commit()
+
+        with app_module.app.test_client() as client:
+            response = client.post("/set_result", data={
+                "season": "year-1",
+                "week": 1,
+                "fixture_id": fixture.id,
+                "outcome": fixture.home,
+            })
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(db.query(app_module.Result).filter_by(fixture_id=fixture.id).count(), 0)
+
+    def test_legacy_database_migrates_without_losing_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "legacy.db"
+            connection = sqlite3.connect(db_path)
+            connection.executescript(
+                """
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE players (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL UNIQUE);
+                CREATE TABLE weeks (
+                    id INTEGER PRIMARY KEY,
+                    number INTEGER NOT NULL UNIQUE,
+                    room_code VARCHAR NOT NULL,
+                    status VARCHAR
+                );
+                CREATE TABLE fixtures (
+                    id INTEGER PRIMARY KEY,
+                    week_id INTEGER NOT NULL REFERENCES weeks(id),
+                    match_number INTEGER NOT NULL,
+                    home VARCHAR NOT NULL,
+                    away VARCHAR NOT NULL,
+                    UNIQUE (week_id, match_number)
+                );
+                CREATE TABLE matchups (
+                    id INTEGER PRIMARY KEY,
+                    week_id INTEGER NOT NULL REFERENCES weeks(id),
+                    player_a_id INTEGER NOT NULL REFERENCES players(id),
+                    player_b_id INTEGER NOT NULL REFERENCES players(id),
+                    first_picker_id INTEGER NOT NULL REFERENCES players(id)
+                );
+                CREATE TABLE picks (
+                    id INTEGER PRIMARY KEY,
+                    matchup_id INTEGER NOT NULL REFERENCES matchups(id),
+                    player_id INTEGER NOT NULL REFERENCES players(id),
+                    fixture_id INTEGER NOT NULL REFERENCES fixtures(id),
+                    team VARCHAR NOT NULL,
+                    created_at DATETIME,
+                    UNIQUE (matchup_id, fixture_id)
+                );
+                CREATE TABLE results (
+                    id INTEGER PRIMARY KEY,
+                    fixture_id INTEGER NOT NULL UNIQUE REFERENCES fixtures(id),
+                    outcome VARCHAR NOT NULL
+                );
+                INSERT INTO players VALUES (1, 'Steve'), (2, 'Joe');
+                INSERT INTO weeks VALUES (10, 1, 'YEAR1', 'finalized');
+                INSERT INTO fixtures VALUES (20, 10, 1, 'Arsenal', 'Chelsea');
+                INSERT INTO matchups VALUES (30, 10, 1, 2, 1);
+                INSERT INTO picks VALUES (40, 30, 1, 20, 'Arsenal', '2025-08-17 12:00:00');
+                INSERT INTO results VALUES (50, 20, 'Home');
+                """
+            )
+            connection.commit()
+            connection.close()
+
+            legacy_engine = app_module.create_engine(
+                f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
+            )
+            self.assertTrue(app_module.ensure_database_schema(legacy_engine))
+            legacy_engine.dispose()
+
+            connection = sqlite3.connect(db_path)
+            season = connection.execute(
+                "SELECT id, name, is_archived FROM seasons WHERE code='year-1'"
+            ).fetchone()
+            migrated_week = connection.execute(
+                "SELECT id, season_id, number FROM weeks WHERE id=10"
+            ).fetchone()
+            connection.execute(
+                "INSERT INTO seasons (code, name, is_active, is_archived) VALUES ('year-2', 'Year 2', 1, 0)"
+            )
+            year_two_id = connection.execute(
+                "SELECT id FROM seasons WHERE code='year-2'"
+            ).fetchone()[0]
+            connection.execute(
+                "INSERT INTO weeks (season_id, number, room_code, status) VALUES (?, 1, 'YEAR2', 'drafting')",
+                (year_two_id,),
+            )
+            connection.commit()
+
+            self.assertEqual(season[1:], ("Year 1", 1))
+            self.assertEqual(migrated_week, (10, season[0], 1))
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM picks").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM results").fetchone()[0], 1)
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM weeks WHERE number=1").fetchone()[0], 2)
+            connection.close()
+
+            self.assertTrue((Path(directory) / "legacy.pre_seasons.db").exists())
 
 
 if __name__ == "__main__":
