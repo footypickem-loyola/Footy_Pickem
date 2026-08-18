@@ -41,6 +41,7 @@ BASE_HTML = """
     select, input { padding: 6px; border: 1px solid #ccc; border-radius: 6px; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
+    .centered-table th, .centered-table td { text-align: center; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
     .chip { border: 1px solid #ddd; border-radius: 999px; padding: 6px 10px; display: flex; justify-content: space-between; align-items: center; }
     .status { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ccc; font-size:12px; }
@@ -277,7 +278,7 @@ CURRENT_PARTIAL = """
       Loading fixtures...
     </div>
 
-    <div class="card" id="scores" hx-get="{{ url_for('scores_partial', week_number=wk.number) }}" hx-trigger="load">
+    <div class="card" id="scores" hx-get="{{ url_for('scores_partial', week_number=wk.number) }}" hx-trigger="load" hx-swap="outerHTML">
       Loading scores...
     </div>
   </div>
@@ -318,7 +319,7 @@ SEASON_PARTIAL = """
   <h3>Season Summary (Final weeks only)</h3>
   <p class="muted">Cumulative points from finalized weeks. Net = For – Against.</p>
   <div class="table-scroll">
-    <table>
+    <table class="centered-table">
       <thead><tr><th>Rank</th><th>Player</th><th>For</th><th>Against</th><th>Net</th></tr></thead>
       <tbody>
         {% for row in season_rows %}
@@ -331,11 +332,12 @@ SEASON_PARTIAL = """
   <details style="margin-top:14px;">
     <summary class="btn" style="display:inline-block;">Show detailed breakdown</summary>
     <div class="table-scroll" style="margin-top:10px;">
-      <table>
+      <table class="centered-table">
         <thead>
           <tr>
             <th>Player</th><th>Correct</th><th>Incorrect</th><th>Draws</th>
             <th>Against Correct</th><th>Against Incorrect</th><th>Against Draws</th>
+            <th>For Net</th><th>Against Net</th><th>Total Net</th>
           </tr>
         </thead>
         <tbody>
@@ -344,6 +346,7 @@ SEASON_PARTIAL = """
               <td>{{ row['name'] }}</td>
               <td>{{ row['correct'] }}</td><td>{{ row['incorrect'] }}</td><td>{{ row['draws'] }}</td>
               <td>{{ row['against_correct'] }}</td><td>{{ row['against_incorrect'] }}</td><td>{{ row['against_draws'] }}</td>
+              <td>{{ row['for_net'] }}</td><td>{{ row['against_net'] }}</td><td>{{ row['total_net'] }}</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -354,7 +357,7 @@ SEASON_PARTIAL = """
 
 <div class="card">
   <h4>Weekly rollup</h4>
-  <table>
+  <table class="centered-table">
     <thead>
       <tr>
         <th>Week</th>
@@ -449,15 +452,21 @@ MATCHUPS_PARTIAL = """
 """
 
 SCORES_PARTIAL = """
+<div id="scores" class="card">
 <h4>Scores & Payouts</h4>
-<table>
-  <thead><tr><th>Player</th><th>Points</th></tr></thead>
+<div class="table-scroll">
+<table class="centered-table">
+  <thead><tr><th>Player</th><th>Points</th><th>Games Finalized</th><th>Correct</th><th>Incorrect</th><th>Draws</th></tr></thead>
   <tbody>
     {% for row in scores %}
-      <tr><td>{{ row['name'] }}</td><td>{{ row['points'] }}</td></tr>
+      <tr>
+        <td>{{ row['name'] }}</td><td>{{ row['points'] }}</td><td>{{ row['games_finalized'] }}</td>
+        <td>{{ row['correct'] }}</td><td>{{ row['incorrect'] }}</td><td>{{ row['draws'] }}</td>
+      </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
 <h5>Payouts ($5/pt)</h5>
 <table>
   <thead><tr><th>From</th><th>To</th><th>Point Diff</th><th>Payout</th></tr></thead>
@@ -509,6 +518,7 @@ SCORES_PARTIAL = """
     </div>
     <button class="btn" type="submit">Set Result</button>
   </form>
+</div>
 </div>
 """
 
@@ -853,6 +863,9 @@ def tab_season():
             "net": totals.get(p.id, {}).get("net", 0),
         }
         row.update(details.get(p.id, {}))
+        row["for_net"] = row["correct"] - row["incorrect"]
+        row["against_net"] = row["against_correct"] - row["against_incorrect"]
+        row["total_net"] = row["for_net"] - row["against_net"]
         season_rows.append(row)
 
     # Standings: net points first, then correct picks. Exact ties share a rank.
@@ -924,7 +937,18 @@ def scores_partial(week_number: int):
     wk = db.query(Week).filter_by(number=week_number).first()
     update_week_status(db, wk)
     points = weekly_points_map(db, wk)
-    scores = [{"name": pl.name, "points": points.get(pl.id, 0)} for pl in db.query(Player).all()]
+    records = weekly_pick_records(db, wk)
+    scores = []
+    for player in db.query(Player).order_by(Player.name.asc()).all():
+        record = records.get(player.id, {"correct": 0, "incorrect": 0, "draws": 0})
+        scores.append({
+            "name": player.name,
+            "points": points.get(player.id, 0),
+            "games_finalized": record["correct"] + record["incorrect"] + record["draws"],
+            "correct": record["correct"],
+            "incorrect": record["incorrect"],
+            "draws": record["draws"],
+        })
     payouts = payouts_for_week(db, wk)
     fixtures = db.query(Fixture).filter_by(week_id=wk.id).order_by(Fixture.match_number.asc()).all()
     # map fixture_id -> outcome

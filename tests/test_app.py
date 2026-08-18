@@ -114,6 +114,70 @@ class PickemAppTests(unittest.TestCase):
         record = app_module.weekly_pick_records(db, week)[player_id]
         self.assertEqual(record, {"correct": 1, "incorrect": 1, "draws": 1})
 
+    def test_scores_panel_refreshes_and_shows_record_breakdown(self):
+        db = app_module.SessionLocal()
+        week = db.query(app_module.Week).filter_by(number=1).one()
+        matchup = db.query(app_module.Matchup).filter_by(week_id=week.id).first()
+        player = db.get(app_module.Player, matchup.player_a_id)
+        fixtures = db.query(app_module.Fixture).filter_by(week_id=week.id).order_by(
+            app_module.Fixture.match_number
+        ).all()
+
+        for fixture, outcome, team in (
+            (fixtures[0], "Home", fixtures[0].home),
+            (fixtures[1], "Away", fixtures[1].home),
+            (fixtures[2], "Draw", fixtures[2].home),
+        ):
+            db.add(app_module.Pick(
+                matchup_id=matchup.id,
+                player_id=player.id,
+                fixture_id=fixture.id,
+                team=team,
+            ))
+            db.add(app_module.Result(fixture_id=fixture.id, outcome=outcome))
+        db.commit()
+
+        with app_module.app.test_client() as client:
+            response = client.get("/partials/scores/1")
+
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(html.count('id="scores"'), 1)
+        self.assertIn("Games Finalized", html)
+        self.assertIn(f"<td>{player.name}</td><td>0</td><td>3</td>", html)
+
+    def test_result_submission_returns_replaceable_scores_panel(self):
+        db = app_module.SessionLocal()
+        fixture = db.query(app_module.Fixture).order_by(app_module.Fixture.match_number).first()
+
+        with app_module.app.test_client() as client:
+            response = client.post("/set_result", data={
+                "week": 1,
+                "fixture_id": fixture.id,
+                "outcome": fixture.home,
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.count(b'id="scores"'), 1)
+        self.assertIn(fixture.home.encode(), response.data)
+
+    def test_season_page_has_centered_net_breakdown(self):
+        db = app_module.SessionLocal()
+        week = db.query(app_module.Week).filter_by(number=1).one()
+        week.status = "finalized"
+        db.commit()
+
+        with app_module.app.test_client() as client:
+            with client.session_transaction() as user_session:
+                user_session["player_name"] = "Steve"
+            response = client.get("/tab/season")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'class="centered-table"', response.data)
+        self.assertIn(b"For Net", response.data)
+        self.assertIn(b"Against Net", response.data)
+        self.assertIn(b"Total Net", response.data)
+
 
 if __name__ == "__main__":
     unittest.main()
