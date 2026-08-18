@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import os
 import random
 import sqlite3
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Tuple, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
-from flask import Flask, request, session, redirect, url_for, render_template_string, abort
+from flask import Flask, abort, flash, redirect, render_template_string, request, session, url_for
 from flask_session import Session
 from sqlalchemy import (
     create_engine, Column, Integer, String, ForeignKey, UniqueConstraint, DateTime, event
@@ -15,6 +20,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, scoped_session
 from jinja2 import DictLoader
 import pandas as pd
+
+FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
+FOOTBALL_DATA_PROVIDER = "football-data.org"
+DEFAULT_API_COMPETITION = "PL"
+DEFAULT_API_SEASON_YEAR = 2026
 
 # -------------------- In-memory base + partial templates --------------------
 BASE_HTML = """
@@ -178,11 +188,19 @@ ADMIN_HTML = """
     .btn { padding:8px 12px; border:1px solid #ccc; background:#f8f8f8; border-radius:8px; cursor:pointer; }
     .btn.primary { background:#0ea5e9; color:#fff; border-color:#0284c7; }
     .muted { color:#666; }
+    .notice { padding:10px 12px; border-radius:8px; margin:8px 0; }
+    .notice.success { background:#ecfdf5; border:1px solid #86efac; }
+    .notice.error { background:#fef2f2; border:1px solid #fca5a5; }
+    .api-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; }
+    .api-stat { background:#f8fafc; border-radius:8px; padding:10px; }
   </style>
 </head>
 <body>
   <div class="card">
     <h2>Admin — Edit Results</h2>
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      <div class="notice {{ category }}">{{ message }}</div>
+    {% endfor %}
     {% if not is_admin %}
       <form method="post" action="{{ url_for('admin_login') }}">
         <label>Room Code <input name="room_code" required></label>
@@ -194,6 +212,47 @@ ADMIN_HTML = """
         <button class="btn" type="submit">Lock Admin</button>
       </form>
 
+      <div class="card">
+        <h3>Premier League Data</h3>
+        <p class="muted">
+          API key: {{ 'Configured' if api_configured else 'Not configured' }}.
+          The key is read from the server environment and is never displayed here.
+        </p>
+
+        {% if can_import_api %}
+          <h4>Import 2026–27 Fixtures</h4>
+          <form method="post" action="{{ url_for('admin_import_api_season') }}">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <label>Season name <input name="season_name" value="2026–27" required></label>
+              <label>Season year <input name="season_year" type="number" value="2026" required></label>
+              <label>Room code <input name="room_code" value="{{ default_room_code }}" required></label>
+            </div>
+            <label style="display:block; margin-top:8px;">Players
+              <input name="players" value="{{ default_players }}" style="width:min(100%,620px);" required>
+            </label>
+            <button class="btn primary" type="submit" style="margin-top:8px;">Import Premier League Fixtures</button>
+          </form>
+          <p class="muted">The import validates all 380 fixtures before writing anything.</p>
+        {% elif season and not season.is_archived %}
+          <form method="post" action="{{ url_for('admin_sync_api_results') }}">
+            <button class="btn primary" type="submit" {% if not api_configured %}disabled{% endif %}>Sync Final Scores</button>
+          </form>
+        {% endif %}
+
+        {% if api_state %}
+          <div class="api-grid" style="margin-top:12px;">
+            <div class="api-stat"><strong>Last successful sync</strong><br>{{ api_state.last_success_at or 'Never' }}</div>
+            <div class="api-stat"><strong>Results imported</strong><br>{{ api_state.results_imported }}</div>
+            <div class="api-stat"><strong>Matches pending</strong><br>{{ api_state.pending_matches }}</div>
+            <div class="api-stat"><strong>Unmatched fixtures</strong><br>{{ api_state.unmatched_matches }}</div>
+            <div class="api-stat"><strong>Requests remaining</strong><br>{{ api_state.requests_remaining if api_state.requests_remaining is not none else 'Unknown' }}</div>
+            <div class="api-stat"><strong>Allowance reset</strong><br>{% if api_state.reset_seconds is not none %}{{ api_state.reset_seconds }} sec{% else %}Unknown{% endif %}</div>
+          </div>
+          {% if api_state.last_error %}<div class="notice error">Last API error: {{ api_state.last_error }}</div>{% endif %}
+        {% endif %}
+      </div>
+
+      {% if week %}
       <div class="card">
         <form method="get" action="{{ url_for('admin') }}">
           <label>Week
@@ -242,6 +301,9 @@ ADMIN_HTML = """
         </form>
         <p class="muted" style="margin-top:8px;">Admin edits bypass the UI lock — use carefully.</p>
       </div>
+      {% else %}
+        <div class="card muted">No active-season weeks have been initialized yet.</div>
+      {% endif %}
     {% endif %}
   </div>
 </body>
@@ -512,14 +574,16 @@ SCORES_PARTIAL = """
 <div class="card">
   <h5>Results — Week {{ week.number }}</h5>
   <table>
-    <thead><tr><th>#</th><th>Home</th><th>Away</th><th>Outcome</th></tr></thead>
+    <thead><tr><th>#</th><th>Home</th><th>Away</th><th>Score</th><th>Outcome</th><th>Source</th></tr></thead>
     <tbody>
       {% for fr in fixtures_with_results %}
         <tr>
           <td>#{{ fr['match_number'] }}</td>
           <td>{{ fr['home'] }}</td>
           <td>{{ fr['away'] }}</td>
+          <td>{{ fr['score_display'] }}</td>
           <td>{{ fr['outcome_display'] }}</td>
+          <td>{{ fr['source_display'] }}</td>
         </tr>
       {% endfor %}
     </tbody>
@@ -605,6 +669,8 @@ class Season(Base):
     name = Column(String, nullable=False)
     is_active = Column(Integer, nullable=False, default=0)
     is_archived = Column(Integer, nullable=False, default=0)
+    api_competition_code = Column(String)
+    api_season_year = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class Week(Base):
@@ -624,6 +690,9 @@ class Fixture(Base):
     match_number = Column(Integer, nullable=False)
     home = Column(String, nullable=False)
     away = Column(String, nullable=False)
+    external_match_id = Column(Integer, unique=True)
+    kickoff_utc = Column(DateTime)
+    api_status = Column(String)
     __table_args__ = (UniqueConstraint("week_id", "match_number", name="uix_week_matchnumber"),)
 
 class Matchup(Base):
@@ -656,7 +725,28 @@ class Result(Base):
     id = Column(Integer, primary_key=True)
     fixture_id = Column(Integer, ForeignKey("fixtures.id"), nullable=False, unique=True)
     outcome = Column(String, nullable=False)  # Home|Away|Draw
+    home_score = Column(Integer)
+    away_score = Column(Integer)
+    source = Column(String, nullable=False, default="manual")
+    updated_at = Column(DateTime, default=datetime.utcnow)
     fixture = relationship("Fixture")
+
+
+class ApiSyncState(Base):
+    __tablename__ = "api_sync_states"
+    id = Column(Integer, primary_key=True)
+    season_id = Column(Integer, ForeignKey("seasons.id"), nullable=False, unique=True)
+    provider = Column(String, nullable=False, default=FOOTBALL_DATA_PROVIDER)
+    last_attempt_at = Column(DateTime)
+    last_success_at = Column(DateTime)
+    last_error = Column(String)
+    requests_remaining = Column(Integer)
+    reset_seconds = Column(Integer)
+    fixtures_imported = Column(Integer, nullable=False, default=0)
+    results_imported = Column(Integer, nullable=False, default=0)
+    pending_matches = Column(Integer, nullable=False, default=0)
+    unmatched_matches = Column(Integer, nullable=False, default=0)
+    season = relationship("Season")
 
 def _database_file_path(target_engine) -> Optional[Path]:
     """Return the SQLite database file path, excluding in-memory databases."""
@@ -668,12 +758,12 @@ def _database_file_path(target_engine) -> Optional[Path]:
     return Path(database).expanduser().resolve()
 
 
-def _backup_legacy_database(target_engine) -> Optional[Path]:
-    """Create a one-time SQLite backup immediately before the season migration."""
+def _backup_database(target_engine, suffix: str) -> Optional[Path]:
+    """Create a one-time SQLite backup before a schema migration."""
     source_path = _database_file_path(target_engine)
     if source_path is None or not source_path.exists():
         return None
-    backup_path = source_path.with_name(f"{source_path.stem}.pre_seasons.db")
+    backup_path = source_path.with_name(f"{source_path.stem}.{suffix}.db")
     if backup_path.exists():
         return backup_path
     source = sqlite3.connect(str(source_path))
@@ -684,6 +774,10 @@ def _backup_legacy_database(target_engine) -> Optional[Path]:
         destination.close()
         source.close()
     return backup_path
+
+
+def _backup_legacy_database(target_engine) -> Optional[Path]:
+    return _backup_database(target_engine, "pre_seasons")
 
 
 def ensure_database_schema(target_engine=engine) -> bool:
@@ -769,6 +863,54 @@ def ensure_database_schema(target_engine=engine) -> bool:
             cursor.execute("PRAGMA legacy_alter_table=OFF")
             cursor.execute("PRAGMA foreign_keys=ON")
             migrated = True
+
+        # Add football-data.org metadata without rebuilding or deleting any
+        # existing Year 1/Year 2 records. SQLite's ADD COLUMN keeps legacy rows.
+        api_columns = {
+            "seasons": {
+                "api_competition_code": "VARCHAR",
+                "api_season_year": "INTEGER",
+            },
+            "fixtures": {
+                "external_match_id": "INTEGER",
+                "kickoff_utc": "DATETIME",
+                "api_status": "VARCHAR",
+            },
+            "results": {
+                "home_score": "INTEGER",
+                "away_score": "INTEGER",
+                "source": "VARCHAR DEFAULT 'manual'",
+                "updated_at": "DATETIME",
+            },
+        }
+        missing_columns = []
+        for table, columns in api_columns.items():
+            table_exists = cursor.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+            if not table_exists:
+                continue
+            existing = {
+                row[1] for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            missing_columns.extend(
+                (table, name, definition)
+                for name, definition in columns.items()
+                if name not in existing
+            )
+
+        if missing_columns:
+            _backup_database(target_engine, "pre_football_api")
+            for table, name, definition in missing_columns:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+            cursor.execute(
+                "UPDATE results SET source='manual' WHERE source IS NULL OR source=''"
+            )
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_fixtures_external_match_id "
+                "ON fixtures(external_match_id) WHERE external_match_id IS NOT NULL"
+            )
+            raw.commit()
     except Exception:
         raw.rollback()
         raise
@@ -781,6 +923,415 @@ def ensure_database_schema(target_engine=engine) -> bool:
 
 
 ensure_database_schema(engine)
+
+
+# -------------------- football-data.org client --------------------
+class FootballDataError(RuntimeError):
+    pass
+
+
+class FootballDataRateLimitError(FootballDataError):
+    pass
+
+
+class FootballDataClient:
+    """Small v4 client that obeys the provider's rate-limit response headers."""
+
+    def __init__(
+        self,
+        token: str,
+        base_url: str = FOOTBALL_DATA_BASE_URL,
+        opener: Callable[..., Any] = urlopen,
+        sleeper: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+        max_inline_wait: int = 65,
+    ):
+        if not token.strip():
+            raise FootballDataError("FOOTBALL_DATA_API_KEY is not configured")
+        self.token = token.strip()
+        self.base_url = base_url.rstrip("/")
+        self.opener = opener
+        self.sleeper = sleeper
+        self.monotonic = monotonic
+        self.max_inline_wait = max_inline_wait
+        self.requests_remaining: Optional[int] = None
+        self.reset_seconds: Optional[int] = None
+        self._not_before = 0.0
+
+    @staticmethod
+    def _header_int(headers, name: str) -> Optional[int]:
+        if headers is None:
+            return None
+        value = headers.get(name)
+        if value is None:
+            return None
+        try:
+            return max(0, int(float(value)))
+        except (TypeError, ValueError):
+            return None
+
+    def _capture_rate_headers(self, headers) -> None:
+        remaining = self._header_int(headers, "X-Requests-Available-Minute")
+        reset = self._header_int(headers, "X-RequestCounter-Reset")
+        if remaining is not None:
+            self.requests_remaining = remaining
+        if reset is not None:
+            self.reset_seconds = reset
+        if self.requests_remaining == 0 and self.reset_seconds:
+            self._not_before = max(
+                self._not_before,
+                self.monotonic() + self.reset_seconds + 0.25,
+            )
+
+    def _wait_for_allowance(self) -> None:
+        wait_seconds = self._not_before - self.monotonic()
+        if wait_seconds <= 0:
+            return
+        if wait_seconds > self.max_inline_wait:
+            raise FootballDataRateLimitError(
+                f"API allowance resets in approximately {int(wait_seconds)} seconds"
+            )
+        self.sleeper(wait_seconds)
+        self._not_before = 0.0
+
+    def get_json(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        query = urlencode(params or {})
+        url = f"{self.base_url}/{path.lstrip('/')}"
+        if query:
+            url = f"{url}?{query}"
+        request_object = Request(url, headers={"X-Auth-Token": self.token})
+
+        for attempt in range(2):
+            self._wait_for_allowance()
+            try:
+                with self.opener(request_object, timeout=25) as response:
+                    self._capture_rate_headers(response.headers)
+                    payload = json.loads(response.read().decode("utf-8"))
+                    if not isinstance(payload, dict):
+                        raise FootballDataError("Football API returned an unexpected response")
+                    return payload
+            except HTTPError as exc:
+                self._capture_rate_headers(exc.headers)
+                retry_after = self._header_int(exc.headers, "Retry-After")
+                wait_seconds = retry_after or self.reset_seconds or 0
+                if exc.code == 429 and attempt == 0 and 0 < wait_seconds <= self.max_inline_wait:
+                    self.sleeper(wait_seconds + 0.25)
+                    self._not_before = 0.0
+                    continue
+                if exc.code == 429:
+                    raise FootballDataRateLimitError(
+                        f"Football API rate limit reached; retry in about {wait_seconds or 'a few'} seconds"
+                    ) from exc
+                raise FootballDataError(f"Football API returned HTTP {exc.code}") from exc
+            except (URLError, TimeoutError) as exc:
+                raise FootballDataError(f"Could not reach football-data.org: {exc.reason if hasattr(exc, 'reason') else exc}") from exc
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise FootballDataError("Football API returned invalid JSON") from exc
+
+        raise FootballDataError("Football API request failed")
+
+    def competition_matches(self, competition: str, season_year: int) -> List[Dict[str, Any]]:
+        payload = self.get_json(
+            f"competitions/{competition}/matches",
+            {"season": int(season_year)},
+        )
+        matches = payload.get("matches")
+        if not isinstance(matches, list):
+            raise FootballDataError("Football API response did not include a match list")
+        return matches
+
+
+def football_data_client() -> FootballDataClient:
+    return FootballDataClient(os.environ.get("FOOTBALL_DATA_API_KEY", ""))
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def parse_api_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise FootballDataError(f"Invalid fixture date from football API: {value}") from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def api_team_name(team: Dict[str, Any]) -> str:
+    name = team.get("shortName") or team.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise FootballDataError("Football API returned a fixture without a team name")
+    return name.strip()
+
+
+def validate_api_matches(matches: List[Dict[str, Any]]) -> Dict[int, List[Dict[str, Any]]]:
+    """Validate a complete 38-matchday Premier League schedule before any DB writes."""
+    by_matchday: Dict[int, List[Dict[str, Any]]] = {}
+    external_ids = set()
+    for match in matches:
+        external_id = match.get("id")
+        matchday = match.get("matchday")
+        if not isinstance(external_id, int) or not isinstance(matchday, int):
+            raise FootballDataError("Football API returned a fixture without an ID or matchday")
+        if external_id in external_ids:
+            raise FootballDataError(f"Duplicate football API match ID: {external_id}")
+        external_ids.add(external_id)
+        api_team_name(match.get("homeTeam") or {})
+        api_team_name(match.get("awayTeam") or {})
+        parse_api_datetime(match.get("utcDate"))
+        by_matchday.setdefault(matchday, []).append(match)
+
+    expected_matchdays = set(range(1, 39))
+    if set(by_matchday) != expected_matchdays:
+        missing = sorted(expected_matchdays - set(by_matchday))
+        raise FootballDataError(
+            f"Expected all 38 Premier League matchdays; missing: {missing or 'none'}"
+        )
+    wrong_counts = {
+        matchday: len(items) for matchday, items in by_matchday.items() if len(items) != 10
+    }
+    if wrong_counts or len(matches) != 380:
+        raise FootballDataError(
+            f"Expected 380 fixtures (10 per matchday); received {len(matches)}"
+        )
+    return by_matchday
+
+
+def _sync_state(db, season: Season) -> ApiSyncState:
+    state = db.query(ApiSyncState).filter_by(season_id=season.id).first()
+    if state is None:
+        state = ApiSyncState(season_id=season.id, provider=FOOTBALL_DATA_PROVIDER)
+        db.add(state)
+        db.flush()
+    return state
+
+
+def _copy_rate_state(state: ApiSyncState, client: FootballDataClient) -> None:
+    state.requests_remaining = client.requests_remaining
+    state.reset_seconds = client.reset_seconds
+
+
+def _set_week_status_without_commit(db, week: Week) -> None:
+    if week.season and week.season.is_archived:
+        return
+    done, total = count_results_for_week(db, week)
+    if done == 0:
+        week.status = "drafting"
+    elif done < total:
+        week.status = "provisional"
+    else:
+        week.status = "finalized"
+    db.add(week)
+
+
+def init_season_from_api(
+    players: List[str],
+    room_code: str,
+    season_code: str = "year-2",
+    season_name: str = "2026–27",
+    competition: str = DEFAULT_API_COMPETITION,
+    season_year: int = DEFAULT_API_SEASON_YEAR,
+    client: Optional[FootballDataClient] = None,
+) -> Season:
+    clean_players = list(dict.fromkeys(name.strip() for name in players if name.strip()))
+    if len(clean_players) != 6:
+        raise ValueError("Exactly six unique player names are required")
+    if not room_code.strip():
+        raise ValueError("A room code is required")
+
+    api_client = client or football_data_client()
+    matches = api_client.competition_matches(competition, season_year)
+    by_matchday = validate_api_matches(matches)
+
+    db = SessionLocal()
+    try:
+        season = db.query(Season).filter_by(code=season_code).first()
+        if season is not None and db.query(Week).filter_by(season_id=season.id).count():
+            raise RuntimeError(
+                f"{season.name} already contains weeks; API import will not replace them"
+            )
+        if season is None:
+            season = Season(code=season_code, name=season_name)
+            db.add(season)
+            db.flush()
+
+        season.name = season_name
+        season.is_active = 1
+        season.is_archived = 0
+        season.api_competition_code = competition
+        season.api_season_year = int(season_year)
+        db.query(Season).filter(Season.id != season.id).update(
+            {Season.is_active: 0}, synchronize_session=False
+        )
+
+        for name in clean_players:
+            if db.query(Player).filter_by(name=name).first() is None:
+                db.add(Player(name=name))
+        db.flush()
+        player_rows = db.query(Player).filter(Player.name.in_(clean_players)).all()
+        players_by_name = {player.name: player for player in player_rows}
+
+        match_number = 0
+        for matchday in range(1, 39):
+            week = Week(
+                season_id=season.id,
+                number=matchday,
+                room_code=room_code.strip(),
+                status="drafting",
+            )
+            db.add(week)
+            db.flush()
+            ordered_matches = sorted(
+                by_matchday[matchday],
+                key=lambda item: (item.get("utcDate") or "", item["id"]),
+            )
+            for match in ordered_matches:
+                match_number += 1
+                db.add(Fixture(
+                    week_id=week.id,
+                    match_number=match_number,
+                    home=api_team_name(match["homeTeam"]),
+                    away=api_team_name(match["awayTeam"]),
+                    external_match_id=match["id"],
+                    kickoff_utc=parse_api_datetime(match.get("utcDate")),
+                    api_status=match.get("status"),
+                ))
+
+            shuffled_names = clean_players[:]
+            random.shuffle(shuffled_names)
+            for index in range(0, len(shuffled_names), 2):
+                player_a = players_by_name[shuffled_names[index]]
+                player_b = players_by_name[shuffled_names[index + 1]]
+                first_picker = random.choice([player_a, player_b])
+                db.add(Matchup(
+                    week_id=week.id,
+                    player_a_id=player_a.id,
+                    player_b_id=player_b.id,
+                    first_picker_id=first_picker.id,
+                ))
+
+        state = _sync_state(db, season)
+        state.last_attempt_at = utcnow()
+        state.last_success_at = state.last_attempt_at
+        state.last_error = None
+        state.fixtures_imported = match_number
+        state.results_imported = 0
+        state.pending_matches = match_number
+        state.unmatched_matches = 0
+        _copy_rate_state(state, api_client)
+        db.commit()
+        return season
+    except Exception:
+        db.rollback()
+        raise
+
+
+def sync_results_from_api(
+    season: Season,
+    client: Optional[FootballDataClient] = None,
+) -> Dict[str, int]:
+    if season.is_archived:
+        raise RuntimeError("Archived seasons cannot be synchronized")
+    if not season.api_competition_code or season.api_season_year is None:
+        raise RuntimeError(f"{season.name} is not linked to football-data.org")
+
+    db = SessionLocal()
+    season = db.get(Season, season.id)
+    state = _sync_state(db, season)
+    state.last_attempt_at = utcnow()
+    state.last_error = None
+    db.commit()
+    api_client = client or football_data_client()
+
+    try:
+        matches = api_client.competition_matches(
+            season.api_competition_code, season.api_season_year
+        )
+        api_matches = {
+            match["id"]: match for match in matches if isinstance(match.get("id"), int)
+        }
+        fixtures = db.query(Fixture).join(Week).filter(Week.season_id == season.id).all()
+        local_ids = {
+            fixture.external_match_id for fixture in fixtures
+            if fixture.external_match_id is not None
+        }
+        applied_results = 0
+        manual_overrides = 0
+        for fixture in fixtures:
+            match = api_matches.get(fixture.external_match_id)
+            if match is None:
+                continue
+            fixture.kickoff_utc = parse_api_datetime(match.get("utcDate"))
+            fixture.api_status = match.get("status")
+            if match.get("status") != "FINISHED":
+                continue
+            full_time = (match.get("score") or {}).get("fullTime") or {}
+            home_score = full_time.get("home")
+            away_score = full_time.get("away")
+            if not isinstance(home_score, int) or not isinstance(away_score, int):
+                continue
+            outcome = "Draw"
+            if home_score > away_score:
+                outcome = "Home"
+            elif away_score > home_score:
+                outcome = "Away"
+
+            result = db.query(Result).filter_by(fixture_id=fixture.id).first()
+            if result is not None and result.source == "manual":
+                manual_overrides += 1
+                continue
+            if result is None:
+                result = Result(fixture_id=fixture.id)
+                db.add(result)
+            result.outcome = outcome
+            result.home_score = home_score
+            result.away_score = away_score
+            result.source = FOOTBALL_DATA_PROVIDER
+            result.updated_at = utcnow()
+            applied_results += 1
+
+        db.flush()
+        weeks = db.query(Week).filter_by(season_id=season.id).all()
+        for week in weeks:
+            _set_week_status_without_commit(db, week)
+
+        result_count = db.query(Result).join(Fixture).join(Week).filter(
+            Week.season_id == season.id
+        ).count()
+        fixtures_without_external_id = sum(
+            1 for fixture in fixtures if fixture.external_match_id is None
+        )
+        unmatched = (
+            fixtures_without_external_id
+            + len(local_ids - set(api_matches))
+            + len(set(api_matches) - local_ids)
+        )
+        state = _sync_state(db, season)
+        state.last_success_at = utcnow()
+        state.last_error = None
+        state.results_imported = applied_results
+        state.pending_matches = max(0, len(fixtures) - result_count)
+        state.unmatched_matches = unmatched
+        _copy_rate_state(state, api_client)
+        db.commit()
+        return {
+            "results_imported": applied_results,
+            "pending_matches": state.pending_matches,
+            "unmatched_matches": unmatched,
+            "manual_overrides": manual_overrides,
+        }
+    except Exception as exc:
+        db.rollback()
+        state = _sync_state(db, season)
+        state.last_attempt_at = utcnow()
+        state.last_error = str(exc)[:500]
+        _copy_rate_state(state, api_client)
+        db.commit()
+        raise
 
 # -------------------- Helpers --------------------
 def current_player(db):
@@ -990,21 +1541,48 @@ def tab_open():
 def admin():
     db = SessionLocal()
     season = active_season(db)
-    if season is None:
-        return render_template_string(ADMIN_HTML, is_admin=is_admin_session(), weeks=[], week=None, fixtures=[], results={})
-    weeks = db.query(Week).filter_by(season_id=season.id).order_by(Week.number.asc()).all()
-    if not weeks:
-        return render_template_string(ADMIN_HTML, is_admin=is_admin_session(), weeks=[], week=None, fixtures=[], results={})
-    # pick selected week or default to current_drafting_week
-    sel = request.args.get("week", type=int)
-    if sel:
-        wk = season_week(db, season, sel)
-    else:
-        wk = current_drafting_week(db, season) or weeks[0]
-    fixtures = db.query(Fixture).filter_by(week_id=wk.id).order_by(Fixture.match_number.asc()).all()
-    # map fixture_id -> 'Home'/'Away'/'Draw'
-    res_map = {r.fixture_id: r.outcome for r in db.query(Result).join(Fixture).filter(Fixture.week_id==wk.id)}
-    return render_template_string(ADMIN_HTML, is_admin=is_admin_session(), weeks=weeks, week=wk, fixtures=fixtures, results=res_map)
+    weeks = [] if season is None else db.query(Week).filter_by(
+        season_id=season.id
+    ).order_by(Week.number.asc()).all()
+    wk = None
+    fixtures = []
+    res_map = {}
+    if weeks:
+        sel = request.args.get("week", type=int)
+        wk = season_week(db, season, sel) if sel else current_drafting_week(db, season)
+        wk = wk or weeks[0]
+        fixtures = db.query(Fixture).filter_by(week_id=wk.id).order_by(
+            Fixture.match_number.asc()
+        ).all()
+        res_map = {
+            result.fixture_id: result.outcome
+            for result in db.query(Result).join(Fixture).filter(Fixture.week_id == wk.id)
+        }
+
+    year_two = db.query(Season).filter_by(code="year-2").first()
+    can_import_api = year_two is None or db.query(Week).filter_by(
+        season_id=year_two.id
+    ).count() == 0
+    defaults_from = season_players(db, season) if season is not None else db.query(
+        Player
+    ).order_by(Player.name.asc()).all()
+    api_state = None if season is None else db.query(ApiSyncState).filter_by(
+        season_id=season.id
+    ).first()
+    return render_template_string(
+        ADMIN_HTML,
+        is_admin=is_admin_session(),
+        season=season,
+        weeks=weeks,
+        week=wk,
+        fixtures=fixtures,
+        results=res_map,
+        api_configured=bool(os.environ.get("FOOTBALL_DATA_API_KEY", "").strip()),
+        api_state=api_state,
+        can_import_api=can_import_api,
+        default_players=",".join(player.name for player in defaults_from),
+        default_room_code=wk.room_code if wk is not None else "",
+    )
 
 @app.post("/admin/login")
 def admin_login():
@@ -1019,6 +1597,46 @@ def admin_login():
 @app.post("/admin/logout")
 def admin_logout():
     session.pop(ADMIN_SESSION_KEY, None)
+    return redirect(url_for("admin"))
+
+
+@app.post("/admin/import-api-season")
+def admin_import_api_season():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    try:
+        players = [name.strip() for name in request.form.get("players", "").split(",")]
+        season = init_season_from_api(
+            players=players,
+            room_code=request.form.get("room_code", ""),
+            season_code="year-2",
+            season_name=request.form.get("season_name", "2026–27").strip() or "2026–27",
+            competition=DEFAULT_API_COMPETITION,
+            season_year=int(request.form.get("season_year", DEFAULT_API_SEASON_YEAR)),
+        )
+        flash(f"Imported 380 fixtures into {season.name}.", "success")
+    except (FootballDataError, RuntimeError, ValueError) as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("admin"))
+
+
+@app.post("/admin/sync-api-results")
+def admin_sync_api_results():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    db = SessionLocal()
+    season = active_season(db)
+    if season is None or season.is_archived:
+        abort(403, "No writable active season")
+    try:
+        summary = sync_results_from_api(season)
+        flash(
+            f"Score sync complete: {summary['results_imported']} final results imported; "
+            f"{summary['pending_matches']} matches pending.",
+            "success",
+        )
+    except (FootballDataError, RuntimeError) as exc:
+        flash(str(exc), "error")
     return redirect(url_for("admin"))
 
 @app.post("/admin/set-results")
@@ -1053,8 +1671,17 @@ def admin_set_results():
         existing = db.query(Result).filter_by(fixture_id=f.id).first()
         if existing:
             existing.outcome = outcome
+            existing.home_score = None
+            existing.away_score = None
+            existing.source = "manual"
+            existing.updated_at = utcnow()
         else:
-            db.add(Result(fixture_id=f.id, outcome=outcome))
+            db.add(Result(
+                fixture_id=f.id,
+                outcome=outcome,
+                source="manual",
+                updated_at=utcnow(),
+            ))
 
     # Optional: force status back to provisional, useful after correcting a finalized week
     if request.form.get("force_status") == "provisional":
@@ -1185,11 +1812,14 @@ def scores_partial(week_number: int):
         })
     payouts = payouts_for_week(db, wk)
     fixtures = db.query(Fixture).filter_by(week_id=wk.id).order_by(Fixture.match_number.asc()).all()
-    # map fixture_id -> outcome
-    results_map = {r.fixture_id: r.outcome for r in db.query(Result).join(Fixture).filter(Fixture.week_id==wk.id)}
+    results_map = {
+        result.fixture_id: result
+        for result in db.query(Result).join(Fixture).filter(Fixture.week_id == wk.id)
+    }
     fixtures_with_results = []
     for f in fixtures:
-        outcome = results_map.get(f.id)
+        result = results_map.get(f.id)
+        outcome = None if result is None else result.outcome
         if outcome == "Home":
             display = f.home
         elif outcome == "Away":
@@ -1198,11 +1828,19 @@ def scores_partial(week_number: int):
             display = "Draw"
         else:
             display = "—"
+        score_display = "—"
+        source_display = "—"
+        if result is not None:
+            if result.home_score is not None and result.away_score is not None:
+                score_display = f"{result.home_score}–{result.away_score}"
+            source_display = "API" if result.source == FOOTBALL_DATA_PROVIDER else "Manual"
         fixtures_with_results.append({
             "match_number": f.match_number,
             "home": f.home,
             "away": f.away,
-            "outcome_display": display
+            "score_display": score_display,
+            "outcome_display": display,
+            "source_display": source_display,
         })
     return render_template_string(SCORES_PARTIAL, week=wk, season=season, scores=scores, payouts=payouts,
                                   fixtures=fixtures, fixtures_with_results=fixtures_with_results,
@@ -1316,8 +1954,17 @@ def set_result():
     existing = db.query(Result).filter_by(fixture_id=fx.id).first()
     if existing:
         existing.outcome = outcome
+        existing.home_score = None
+        existing.away_score = None
+        existing.source = "manual"
+        existing.updated_at = utcnow()
     else:
-        db.add(Result(fixture_id=fx.id, outcome=outcome))
+        db.add(Result(
+            fixture_id=fx.id,
+            outcome=outcome,
+            source="manual",
+            updated_at=utcnow(),
+        ))
     db.commit()
     # Auto-finalization update
     update_week_status(db, wk)
@@ -1450,24 +2097,41 @@ def init_weeks_from_csv(
 # -------------------- CLI --------------------
 def main():
     parser = argparse.ArgumentParser(description="Pick 'Em Flask + HTMX (tabs, multi-week, team-name picks)")
-    parser.add_argument("--csv", required=True, help="Path to fixtures CSV")
-    parser.add_argument("--weeks", required=True, help="Weeks to init: '1', '1-4', '1,3,8-10', or 'all'")
-    parser.add_argument("--players", required=True, help="Comma-separated 6 player names")
-    parser.add_argument("--room", required=True, help="Room code (shared password)")
+    parser.add_argument("--csv", help="Legacy CSV path (only needed with INIT_ON_START=1)")
+    parser.add_argument("--weeks", default="all", help="Legacy CSV weeks to initialize")
+    parser.add_argument("--players", default="", help="Comma-separated 6 player names")
+    parser.add_argument("--room", default="", help="Room code (shared password)")
     parser.add_argument("--season-code", default=os.environ.get("SEASON_CODE", "year-2"))
     parser.add_argument("--season-name", default=os.environ.get("SEASON_NAME", "Year 2"))
+    parser.add_argument(
+        "--sync-api-once",
+        action="store_true",
+        help="Synchronize the active API-backed season and exit (for a scheduled job)",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5000)
     args = parser.parse_args()
 
-    players = [p.strip() for p in args.players.split(",") if p.strip()]
-    if len(players) != 6:
-        print("Please supply exactly 6 players.")
+    if args.sync_api_once:
+        db = SessionLocal()
+        season = active_season(db)
+        if season is None:
+            raise RuntimeError("No active season to synchronize")
+        summary = sync_results_from_api(season)
+        print(
+            f"Score sync complete: {summary['results_imported']} final results imported; "
+            f"{summary['pending_matches']} pending."
+        )
         return
 
     # --- Only initialize when requested (so we don't wipe DB on every restart) ---
     do_init = os.environ.get("INIT_ON_START", "0") == "1"
     if do_init:
+        players = [p.strip() for p in args.players.split(",") if p.strip()]
+        if len(players) != 6:
+            raise ValueError("Please supply exactly 6 players for CSV initialization")
+        if not args.csv or not args.room:
+            raise ValueError("--csv and --room are required when INIT_ON_START=1")
         df = pd.read_csv(args.csv)
         weeks = parse_weeks_arg(args.weeks, df)
         if not weeks:

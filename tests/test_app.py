@@ -12,6 +12,53 @@ os.environ["INIT_ON_START"] = "0"
 import pickem_flask_htmx_tabs as app_module  # noqa: E402
 
 
+class FakeResponse:
+    def __init__(self, payload, headers=None):
+        import json
+
+        self._body = json.dumps(payload).encode("utf-8")
+        self.headers = headers or {}
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+
+class FakeFootballDataClient:
+    def __init__(self, matches, remaining=9, reset=4):
+        self.matches = matches
+        self.requests_remaining = remaining
+        self.reset_seconds = reset
+
+    def competition_matches(self, competition, season_year):
+        self.competition = competition
+        self.season_year = season_year
+        return self.matches
+
+
+def complete_api_schedule():
+    matches = []
+    external_id = 100000
+    for matchday in range(1, 39):
+        for game in range(1, 11):
+            matches.append({
+                "id": external_id,
+                "matchday": matchday,
+                "utcDate": f"2026-08-{((matchday - 1) % 28) + 1:02d}T{game + 9:02d}:00:00Z",
+                "status": "TIMED",
+                "homeTeam": {"shortName": f"Home {matchday}-{game}"},
+                "awayTeam": {"shortName": f"Away {matchday}-{game}"},
+                "score": {"fullTime": {"home": None, "away": None}},
+            })
+            external_id += 1
+    return matches
+
+
 class PickemAppTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -353,11 +400,149 @@ class PickemAppTests(unittest.TestCase):
             self.assertEqual(migrated_week, (10, season[0], 1))
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM picks").fetchone()[0], 1)
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM results").fetchone()[0], 1)
+            self.assertEqual(
+                connection.execute("SELECT source FROM results WHERE id=50").fetchone()[0],
+                "manual",
+            )
+            fixture_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(fixtures)").fetchall()
+            }
+            self.assertIn("external_match_id", fixture_columns)
+            self.assertIn("kickoff_utc", fixture_columns)
             self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM weeks WHERE number=1").fetchone()[0], 2)
             connection.close()
 
             self.assertTrue((Path(directory) / "legacy.pre_seasons.db").exists())
+            self.assertTrue((Path(directory) / "legacy.pre_football_api.db").exists())
+
+    def test_api_client_obeys_rate_limit_response_headers(self):
+        responses = [
+            FakeResponse(
+                {"matches": []},
+                {"X-Requests-Available-Minute": "0", "X-RequestCounter-Reset": "2"},
+            ),
+            FakeResponse(
+                {"matches": []},
+                {"X-Requests-Available-Minute": "9", "X-RequestCounter-Reset": "58"},
+            ),
+        ]
+        clock = {"now": 100.0}
+        sleeps = []
+
+        def fake_sleep(seconds):
+            sleeps.append(seconds)
+            clock["now"] += seconds
+
+        client = app_module.FootballDataClient(
+            "test-token",
+            opener=lambda request, timeout: responses.pop(0),
+            sleeper=fake_sleep,
+            monotonic=lambda: clock["now"],
+        )
+        client.competition_matches("PL", 2026)
+        client.competition_matches("PL", 2026)
+
+        self.assertEqual(len(sleeps), 1)
+        self.assertGreaterEqual(sleeps[0], 2)
+        self.assertEqual(client.requests_remaining, 9)
+        self.assertEqual(client.reset_seconds, 58)
+
+    def test_admin_renders_api_controls_without_exposing_a_key(self):
+        with app_module.app.test_client() as client:
+            with client.session_transaction() as admin_session:
+                admin_session[app_module.ADMIN_SESSION_KEY] = True
+            response = client.get("/admin")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Premier League Data", response.data)
+        self.assertIn(b"Sync Final Scores", response.data)
+        self.assertNotIn(b"test-token", response.data)
+
+    def test_api_fixture_import_creates_complete_year_two(self):
+        db = app_module.SessionLocal()
+        existing = db.query(app_module.Season).filter_by(code="year-2").one()
+        app_module._delete_season_weeks(db, existing)
+        db.delete(existing)
+        db.commit()
+
+        fake_client = FakeFootballDataClient(complete_api_schedule(), remaining=8, reset=12)
+        season = app_module.init_season_from_api(
+            ["Steve", "Joe", "Marc", "Drew", "Scott", "Connor"],
+            "LOCALTEST",
+            client=fake_client,
+        )
+
+        self.assertEqual(season.name, "2026–27")
+        self.assertEqual(season.api_competition_code, "PL")
+        self.assertEqual(season.api_season_year, 2026)
+        self.assertEqual(db.query(app_module.Week).filter_by(season_id=season.id).count(), 38)
+        self.assertEqual(
+            db.query(app_module.Fixture).join(app_module.Week).filter(
+                app_module.Week.season_id == season.id
+            ).count(),
+            380,
+        )
+        self.assertEqual(
+            db.query(app_module.Matchup).join(app_module.Week).filter(
+                app_module.Week.season_id == season.id
+            ).count(),
+            114,
+        )
+        state = db.query(app_module.ApiSyncState).filter_by(season_id=season.id).one()
+        self.assertEqual(state.fixtures_imported, 380)
+        self.assertEqual(state.requests_remaining, 8)
+
+    def test_api_score_sync_preserves_manual_override(self):
+        db = app_module.SessionLocal()
+        season = db.query(app_module.Season).filter_by(code="year-2").one()
+        season.api_competition_code = "PL"
+        season.api_season_year = 2026
+        fixtures = db.query(app_module.Fixture).join(app_module.Week).filter(
+            app_module.Week.season_id == season.id
+        ).order_by(app_module.Fixture.match_number).all()
+        for index, fixture in enumerate(fixtures):
+            fixture.external_match_id = 200000 + index
+        manual_fixture = fixtures[1]
+        db.add(app_module.Result(
+            fixture_id=manual_fixture.id,
+            outcome="Draw",
+            source="manual",
+        ))
+        db.commit()
+
+        matches = []
+        for index, fixture in enumerate(fixtures):
+            finished = index < 2
+            matches.append({
+                "id": fixture.external_match_id,
+                "matchday": 1,
+                "utcDate": "2026-08-15T14:00:00Z",
+                "status": "FINISHED" if finished else "TIMED",
+                "homeTeam": {"shortName": fixture.home},
+                "awayTeam": {"shortName": fixture.away},
+                "score": {"fullTime": {
+                    "home": 2 if index == 0 else (0 if finished else None),
+                    "away": 1 if index == 0 else (1 if finished else None),
+                }},
+            })
+
+        summary = app_module.sync_results_from_api(
+            season,
+            client=FakeFootballDataClient(matches, remaining=7, reset=22),
+        )
+        api_result = db.query(app_module.Result).filter_by(fixture_id=fixtures[0].id).one()
+        manual_result = db.query(app_module.Result).filter_by(
+            fixture_id=manual_fixture.id
+        ).one()
+
+        self.assertEqual(summary["results_imported"], 1)
+        self.assertEqual(summary["manual_overrides"], 1)
+        self.assertEqual(api_result.outcome, "Home")
+        self.assertEqual((api_result.home_score, api_result.away_score), (2, 1))
+        self.assertEqual(api_result.source, app_module.FOOTBALL_DATA_PROVIDER)
+        self.assertEqual(manual_result.outcome, "Draw")
+        self.assertEqual(manual_result.source, "manual")
 
 
 if __name__ == "__main__":
