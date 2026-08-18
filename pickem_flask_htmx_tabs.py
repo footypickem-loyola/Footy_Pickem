@@ -47,6 +47,19 @@ BASE_HTML = """
     .status.drafting { background:#eef; border-color:#99c; }
     .status.provisional { background:#ffe; border-color:#cc9; }
     .status.finalized { background:#efe; border-color:#9c9; }
+    .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .modal-backdrop { display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.58); padding:20px; align-items:center; justify-content:center; }
+    .modal-backdrop.open { display:flex; }
+    .modal-card { width:min(420px, 100%); background:#fff; border-radius:16px; padding:22px; box-shadow:0 20px 60px rgba(0,0,0,.28); }
+    .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
+    .confirm-team { font-size:24px; font-weight:700; margin:8px 0 2px; }
+    @media (max-width:640px) {
+      body { margin:12px; }
+      nav { align-items:flex-start; }
+      .tabs { flex-wrap:wrap; }
+      .navright { width:100%; margin-left:0; }
+      .col { min-width:100%; }
+    }
   </style>
 </head>
 <body>
@@ -72,8 +85,66 @@ BASE_HTML = """
   </nav>
 
   <div id="main">
-    {% block body %}{% endblock %}
+    {{ body|safe }}
   </div>
+
+  <div id="pick-confirm-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="pick-confirm-title">
+    <div class="modal-card">
+      <h3 id="pick-confirm-title">Confirm pick</h3>
+      <div id="confirm-team" class="confirm-team"></div>
+      <div id="confirm-fixture" class="muted"></div>
+      <div class="modal-actions">
+        <button class="btn" type="button" onclick="closePickConfirm()">Go Back</button>
+        <button class="btn primary" type="button" onclick="submitConfirmedPick()">Confirm Pick</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let pendingPickForm = null;
+
+    function syncTeamOptions(gameSelect) {
+      const form = gameSelect.closest('form');
+      const teamSelect = form.querySelector('select[name="team"]');
+      const option = gameSelect.options[gameSelect.selectedIndex];
+      const previous = teamSelect.value;
+      teamSelect.innerHTML = '';
+      [option.dataset.home, option.dataset.away].forEach((team) => {
+        const teamOption = document.createElement('option');
+        teamOption.value = team;
+        teamOption.textContent = team;
+        teamSelect.appendChild(teamOption);
+      });
+      if ([option.dataset.home, option.dataset.away].includes(previous)) {
+        teamSelect.value = previous;
+      }
+    }
+
+    function openPickConfirm(form) {
+      pendingPickForm = form;
+      const gameSelect = form.querySelector('select[name="fixture_id"]');
+      const teamSelect = form.querySelector('select[name="team"]');
+      document.getElementById('confirm-team').textContent = teamSelect.value;
+      document.getElementById('confirm-fixture').textContent = gameSelect.options[gameSelect.selectedIndex].textContent;
+      document.getElementById('pick-confirm-modal').classList.add('open');
+    }
+
+    function closePickConfirm() {
+      document.getElementById('pick-confirm-modal').classList.remove('open');
+      pendingPickForm = null;
+    }
+
+    function submitConfirmedPick() {
+      if (!pendingPickForm) return;
+      const form = pendingPickForm;
+      closePickConfirm();
+      htmx.trigger(form, 'confirmedPick');
+    }
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closePickConfirm();
+    });
+  </script>
 </body>
 </html>
 """
@@ -212,7 +283,7 @@ CURRENT_PARTIAL = """
   </div>
 
   <div class="col">
-    <div id="matchups" class="card" hx-get="{{ url_for('matchups_partial', week_number=wk.number) }}" hx-trigger="load">
+    <div id="matchups" class="card" hx-get="{{ url_for('matchups_partial', week_number=wk.number) }}" hx-trigger="load" hx-swap="outerHTML">
       Loading matchups...
     </div>
   </div>
@@ -246,14 +317,39 @@ SEASON_PARTIAL = """
 <div class="card">
   <h3>Season Summary (Final weeks only)</h3>
   <p class="muted">Cumulative points from finalized weeks. Net = For – Against.</p>
-  <table>
-    <thead><tr><th>Player</th><th>For</th><th>Against</th><th>Net</th></tr></thead>
-    <tbody>
-      {% for row in season_rows %}
-        <tr><td>{{ row['name'] }}</td><td>{{ row['for'] }}</td><td>{{ row['against'] }}</td><td>{{ row['net'] }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Rank</th><th>Player</th><th>For</th><th>Against</th><th>Net</th></tr></thead>
+      <tbody>
+        {% for row in season_rows %}
+          <tr><td>{{ row['rank'] }}</td><td>{{ row['name'] }}</td><td>{{ row['for'] }}</td><td>{{ row['against'] }}</td><td>{{ row['net'] }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <details style="margin-top:14px;">
+    <summary class="btn" style="display:inline-block;">Show detailed breakdown</summary>
+    <div class="table-scroll" style="margin-top:10px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Player</th><th>Correct</th><th>Incorrect</th><th>Draws</th>
+            <th>Against Correct</th><th>Against Incorrect</th><th>Against Draws</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in season_rows %}
+            <tr>
+              <td>{{ row['name'] }}</td>
+              <td>{{ row['correct'] }}</td><td>{{ row['incorrect'] }}</td><td>{{ row['draws'] }}</td>
+              <td>{{ row['against_correct'] }}</td><td>{{ row['against_incorrect'] }}</td><td>{{ row['against_draws'] }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
 </div>
 
 <div class="card">
@@ -291,9 +387,10 @@ FIXTURES_PARTIAL = """
 """
 
 MATCHUPS_PARTIAL = """
-<h4>Matchups (click to pick)</h4>
-{% for m in matchups %}
-  <div class="card">
+<div id="matchups" class="card">
+  <h4>Matchups (click to pick)</h4>
+  {% for m in matchups %}
+    <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center;">
       <div><strong>{{ m['a'] }}</strong> vs <strong>{{ m['b'] }}</strong></div>
       <div class="badge">First picker: {{ m['first'] }}</div>
@@ -305,29 +402,27 @@ MATCHUPS_PARTIAL = """
       <div class="col">
         <h5>Available</h5>
         {% if m['available'] %}
-          <form hx-post="{{ url_for('make_pick') }}" hx-target="#matchups" hx-swap="outerHTML">
+          <form hx-post="{{ url_for('make_pick') }}" hx-trigger="confirmedPick" hx-target="#matchups" hx-swap="outerHTML">
             <input type="hidden" name="week" value="{{ week.number }}">
             <input type="hidden" name="matchup_id" value="{{ m['id'] }}">
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
               <label>Game
-                <select name="fixture_id" required>
+                <select name="fixture_id" required onchange="syncTeamOptions(this)">
                   {% for fx in m['available'] %}
-                    <option value="{{ fx['id'] }}">#{{ fx['match_number'] }}: {{ fx['home'] }} vs {{ fx['away'] }}</option>
+                    <option value="{{ fx['id'] }}" data-home="{{ fx['home'] }}" data-away="{{ fx['away'] }}">#{{ fx['match_number'] }}: {{ fx['home'] }} vs {{ fx['away'] }}</option>
                   {% endfor %}
                 </select>
               </label>
               <label>Team
                 <select name="team" required>
-                  {% for fx in m['available'] %}
-                    <option value="{{ fx['home'] }}">{{ fx['home'] }}</option>
-                    <option value="{{ fx['away'] }}">{{ fx['away'] }}</option>
-                  {% endfor %}
+                  <option value="{{ m['available'][0]['home'] }}">{{ m['available'][0]['home'] }}</option>
+                  <option value="{{ m['available'][0]['away'] }}">{{ m['available'][0]['away'] }}</option>
                 </select>
               </label>
               {% if you.id == m['turn_id'] %}
-                <button class="btn primary" type="submit">Pick</button>
+                <button class="btn primary" type="button" onclick="openPickConfirm(this.form)">Pick</button>
               {% else %}
-                <button class="btn" type="submit" disabled title="Not your turn">Pick</button>
+                <button class="btn" type="button" disabled title="Not your turn">Pick</button>
               {% endif %}
             </div>
           </form>
@@ -348,8 +443,9 @@ MATCHUPS_PARTIAL = """
         {% endif %}
       </div>
     </div>
-  </div>
-{% endfor %}
+    </div>
+  {% endfor %}
+</div>
 """
 
 SCORES_PARTIAL = """
@@ -556,6 +652,50 @@ def weekly_for_against(db, week: Week) -> Dict[int, Dict[str,int]]:
         out[m.player_b_id]['for'] += pb; out[m.player_b_id]['against'] += pa
     return out
 
+def weekly_pick_records(db, week: Week) -> Dict[int, Dict[str, int]]:
+    """Return correct/incorrect/draw pick counts for every player in a week."""
+    records: Dict[int, Dict[str, int]] = {
+        p.id: {'correct': 0, 'incorrect': 0, 'draws': 0}
+        for p in db.query(Player).all()
+    }
+    results = {
+        r.fixture_id: r.outcome
+        for r in db.query(Result).join(Fixture).filter(Fixture.week_id == week.id)
+    }
+    picks = db.query(Pick).join(Matchup).filter(Matchup.week_id == week.id).all()
+    for pick in picks:
+        outcome = results.get(pick.fixture_id)
+        if outcome is None:
+            continue
+        if outcome == "Draw":
+            bucket = "draws"
+        else:
+            winning_team = pick.fixture.home if outcome == "Home" else pick.fixture.away
+            bucket = "correct" if pick.team == winning_team else "incorrect"
+        records[pick.player_id][bucket] += 1
+    return records
+
+def season_detailed_totals_finalized(db) -> Dict[int, Dict[str, int]]:
+    """Aggregate pick records and opponents' pick records across finalized weeks."""
+    totals: Dict[int, Dict[str, int]] = {
+        p.id: {
+            'correct': 0, 'incorrect': 0, 'draws': 0,
+            'against_correct': 0, 'against_incorrect': 0, 'against_draws': 0,
+        }
+        for p in db.query(Player).all()
+    }
+    for week in db.query(Week).filter_by(status="finalized").order_by(Week.number.asc()).all():
+        records = weekly_pick_records(db, week)
+        for matchup in db.query(Matchup).filter_by(week_id=week.id).all():
+            a_record = records[matchup.player_a_id]
+            b_record = records[matchup.player_b_id]
+            for key in ('correct', 'incorrect', 'draws'):
+                totals[matchup.player_a_id][key] += a_record[key]
+                totals[matchup.player_b_id][key] += b_record[key]
+                totals[matchup.player_a_id][f'against_{key}'] += b_record[key]
+                totals[matchup.player_b_id][f'against_{key}'] += a_record[key]
+    return totals
+
 def season_totals_finalized(db) -> Dict[int, Dict[str,int]]:
     totals: Dict[int, Dict[str,int]] = {}
     for wk in db.query(Week).order_by(Week.number.asc()).all():
@@ -703,14 +843,27 @@ def tab_season():
     weeks = db.query(Week).order_by(Week.number.asc()).all()
     players = db.query(Player).order_by(Player.name.asc()).all()
     totals = season_totals_finalized(db)
+    details = season_detailed_totals_finalized(db)
     season_rows = []
     for p in players:
-        season_rows.append({
+        row = {
             "name": p.name,
             "for": totals.get(p.id, {}).get("for", 0),
             "against": totals.get(p.id, {}).get("against", 0),
             "net": totals.get(p.id, {}).get("net", 0),
-        })
+        }
+        row.update(details.get(p.id, {}))
+        season_rows.append(row)
+
+    # Standings: net points first, then correct picks. Exact ties share a rank.
+    season_rows.sort(key=lambda row: (-row["net"], -row["correct"], row["name"].lower()))
+    previous_key = None
+    for position, row in enumerate(season_rows, start=1):
+        rank_key = (row["net"], row["correct"])
+        if rank_key != previous_key:
+            current_rank = position
+            previous_key = rank_key
+        row["rank"] = current_rank
     weekly_points: Dict[int, Dict[int,int]] = {}
     for wk in weeks:
         weekly_points[wk.number] = weekly_points_map(db, wk)
