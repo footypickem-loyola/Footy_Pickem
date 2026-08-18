@@ -42,6 +42,11 @@ BASE_HTML = """
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
     .centered-table th, .centered-table td { text-align: center; }
+    .detailed-season-table th.for-header { background:#2563eb; color:#fff; }
+    .detailed-season-table th.against-header { background:#dbeafe; color:#0f2852; }
+    .detailed-season-table .against-start { border-left:3px solid #1d4ed8; }
+    .detailed-season-table th.total-net-header { background:#f59e0b; color:#3b2600; border-left:3px solid #b45309; }
+    .detailed-season-table td.total-net-cell { background:#fef3c7; font-weight:700; border-left:3px solid #b45309; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
     .chip { border: 1px solid #ddd; border-radius: 999px; padding: 6px 10px; display: flex; justify-content: space-between; align-items: center; }
     .status { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ccc; font-size:12px; }
@@ -332,12 +337,16 @@ SEASON_PARTIAL = """
   <details style="margin-top:14px;">
     <summary class="btn" style="display:inline-block;">Show detailed breakdown</summary>
     <div class="table-scroll" style="margin-top:10px;">
-      <table class="centered-table">
+      <table class="centered-table detailed-season-table">
         <thead>
           <tr>
-            <th>Player</th><th>Correct</th><th>Incorrect</th><th>Draws</th>
-            <th>Against Correct</th><th>Against Incorrect</th><th>Against Draws</th>
-            <th>For Net</th><th>Against Net</th><th>Total Net</th>
+            <th>Player</th>
+            <th class="for-header">Correct</th><th class="for-header">Incorrect</th>
+            <th class="for-header">Draws</th><th class="for-header">For Net</th>
+            <th class="against-header against-start">Against Correct</th>
+            <th class="against-header">Against Incorrect</th><th class="against-header">Against Draws</th>
+            <th class="against-header">Against Net</th>
+            <th class="total-net-header">Total Net</th>
           </tr>
         </thead>
         <tbody>
@@ -345,8 +354,11 @@ SEASON_PARTIAL = """
             <tr>
               <td>{{ row['name'] }}</td>
               <td>{{ row['correct'] }}</td><td>{{ row['incorrect'] }}</td><td>{{ row['draws'] }}</td>
-              <td>{{ row['against_correct'] }}</td><td>{{ row['against_incorrect'] }}</td><td>{{ row['against_draws'] }}</td>
-              <td>{{ row['for_net'] }}</td><td>{{ row['against_net'] }}</td><td>{{ row['total_net'] }}</td>
+              <td>{{ row['for_net'] }}</td>
+              <td class="against-start">{{ row['against_correct'] }}</td>
+              <td>{{ row['against_incorrect'] }}</td><td>{{ row['against_draws'] }}</td>
+              <td>{{ row['against_net'] }}</td>
+              <td class="total-net-cell">{{ row['total_net'] }}</td>
             </tr>
           {% endfor %}
         </tbody>

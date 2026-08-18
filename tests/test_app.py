@@ -177,6 +177,19 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b"For Net", response.data)
         self.assertIn(b"Against Net", response.data)
         self.assertIn(b"Total Net", response.data)
+        html = response.get_data(as_text=True)
+        ordered_headers = [
+            "Correct", "Incorrect", "Draws", "For Net",
+            "Against Correct", "Against Incorrect", "Against Draws", "Against Net",
+            "Total Net",
+        ]
+        header_positions = [html.index(f">{header}</th>") for header in ordered_headers]
+        self.assertEqual(header_positions, sorted(header_positions))
+        self.assertEqual(html.count('class="for-header"'), 4)
+        self.assertIn('class="against-header against-start"', html)
+        self.assertEqual(html.count('class="against-header"'), 3)
+        self.assertIn('class="total-net-header"', html)
+        self.assertIn('class="total-net-cell"', html)
 
 
 if __name__ == "__main__":
