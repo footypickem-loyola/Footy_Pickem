@@ -174,6 +174,7 @@ class PickemAppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'class="centered-table"', response.data)
+        self.assertIn(b'class="centered-table season-summary-table"', response.data)
         self.assertIn(b"For Net", response.data)
         self.assertIn(b"Against Net", response.data)
         self.assertIn(b"Total Net", response.data)

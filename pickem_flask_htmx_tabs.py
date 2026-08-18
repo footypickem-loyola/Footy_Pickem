@@ -42,6 +42,8 @@ BASE_HTML = """
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
     .centered-table th, .centered-table td { text-align: center; }
+    .season-summary-table { width:min(100%, 520px); margin:0 auto; }
+    .season-summary-table th, .season-summary-table td { padding:6px 10px; }
     .detailed-season-table th.for-header { background:#2563eb; color:#fff; }
     .detailed-season-table th.against-header { background:#dbeafe; color:#0f2852; }
     .detailed-season-table .against-start { border-left:3px solid #1d4ed8; }
@@ -324,7 +326,7 @@ SEASON_PARTIAL = """
   <h3>Season Summary (Final weeks only)</h3>
   <p class="muted">Cumulative points from finalized weeks. Net = For – Against.</p>
   <div class="table-scroll">
-    <table class="centered-table">
+    <table class="centered-table season-summary-table">
       <thead><tr><th>Rank</th><th>Player</th><th>For</th><th>Against</th><th>Net</th></tr></thead>
       <tbody>
         {% for row in season_rows %}
