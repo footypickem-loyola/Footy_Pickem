@@ -224,7 +224,7 @@ BASE_HTML = """
       overlay.setAttribute('aria-hidden', 'false');
       document.body.classList.add('banter-open');
       window.clearTimeout(arsenalBanterTimer);
-      arsenalBanterTimer = window.setTimeout(closeArsenalBanter, 2000);
+      arsenalBanterTimer = window.setTimeout(closeArsenalBanter, 4000);
     }
 
     function closeArsenalBanter() {

@@ -193,6 +193,7 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b'id="matchups"', response.data)
         self.assertIn(b"Football-Data.org API", response.data)
         self.assertIn(b"You\xe2\x80\x99ve picked the 2026 Champions. Nice pick!", response.data)
+        self.assertIn(b"setTimeout(closeArsenalBanter, 4000)", response.data)
         for image_number in range(1, 11):
             self.assertIn(
                 f"/static/arsenal_banter/banter_{image_number:02d}.jpg".encode(),

@@ -59,7 +59,7 @@ remain isolated by season.
 
 After a successful Arsenal pick, the app fires a one-time HTMX response event
 and displays a random full-screen image from `static/arsenal_banter` with the
-champions message. The overlay auto-dismisses after two seconds or on tap and
+champions message. The overlay auto-dismisses after four seconds or on tap and
 does not replay on refresh. Expected filenames are `banter_01.jpg` through
 `banter_10.jpg`.
 
