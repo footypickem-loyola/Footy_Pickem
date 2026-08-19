@@ -62,7 +62,24 @@ Manual results are authoritative: a later API sync will not overwrite a result
 whose source is `manual`. API-sourced results may be updated if the provider
 corrects a score.
 
-For a Railway cron service or another scheduler, run one synchronization and exit:
+For production automation with the volume-backed SQLite database, configure a
+separate scheduler to send a `POST` request to the existing web service:
+
+```text
+https://YOUR-APP.up.railway.app/tasks/sync-results
+X-Sync-Secret: a-long-random-secret
+```
+
+Set the same random value as the web service's `SYNC_SECRET` environment
+variable. The endpoint returns `403` for an incorrect secret and `503` when the
+server secret is not configured. Never put the secret in the URL or repository.
+
+The recommended production cadence is every two hours. A Railway cron service
+can call this endpoint and exit; the web service performs the database write on
+the service that owns the persistent volume.
+
+The command below remains available for maintenance when it runs inside a
+container that has the same database volume mounted:
 
 ```powershell
 .\.venv\Scripts\python.exe pickem_flask_htmx_tabs.py --sync-api-once
@@ -97,5 +114,6 @@ verifying a separate backup.
 - Production SQLite lives at `/data/pickem.db` on the Railway volume.
 - Keep `INIT_ON_START=0` in production except during an intentional, backed-up CSV initialization.
 - Store `FOOTBALL_DATA_API_KEY` only as a local or Railway environment variable.
+- Store `SYNC_SECRET` only as a Railway environment variable and send it in the `X-Sync-Secret` header.
 - Archived seasons reject pick and result writes at the server, not only in the UI.
 - Never commit room codes, Flask secrets, API keys, local databases, or `.env` files.

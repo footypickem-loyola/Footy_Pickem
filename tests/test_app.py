@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 TEST_DIR = tempfile.TemporaryDirectory()
@@ -135,6 +136,7 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Week 1", response.data)
         self.assertIn(b'id="matchups"', response.data)
+        self.assertIn(b"Football-Data.org API", response.data)
 
     def test_pick_records_distinguish_correct_incorrect_and_draw(self):
         db = app_module.SessionLocal()
@@ -458,6 +460,41 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b"Premier League Data", response.data)
         self.assertIn(b"Sync Final Scores", response.data)
         self.assertNotIn(b"test-token", response.data)
+
+    def test_scheduled_sync_requires_secret_and_returns_summary(self):
+        os.environ["SYNC_SECRET"] = "scheduler-secret"
+        summary = {
+            "results_imported": 2,
+            "pending_matches": 378,
+            "unmatched_matches": 0,
+            "manual_overrides": 0,
+        }
+        try:
+            with app_module.app.test_client() as client, patch.object(
+                app_module, "sync_results_from_api", return_value=summary
+            ) as sync_mock:
+                missing = client.post("/tasks/sync-results")
+                wrong = client.post(
+                    "/tasks/sync-results", headers={"X-Sync-Secret": "wrong"}
+                )
+                accepted = client.post(
+                    "/tasks/sync-results",
+                    headers={"X-Sync-Secret": "scheduler-secret"},
+                )
+        finally:
+            os.environ.pop("SYNC_SECRET", None)
+
+        self.assertEqual(missing.status_code, 403)
+        self.assertEqual(wrong.status_code, 403)
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.get_json()["results_imported"], 2)
+        sync_mock.assert_called_once()
+
+    def test_scheduled_sync_is_disabled_without_server_secret(self):
+        os.environ.pop("SYNC_SECRET", None)
+        with app_module.app.test_client() as client:
+            response = client.post("/tasks/sync-results")
+        self.assertEqual(response.status_code, 503)
 
     def test_api_fixture_import_creates_complete_year_two(self):
         db = app_module.SessionLocal()

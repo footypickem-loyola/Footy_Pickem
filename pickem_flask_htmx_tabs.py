@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hmac
 import json
 import os
 import random
@@ -12,7 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from flask import Flask, abort, flash, redirect, render_template_string, request, session, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template_string, request, session, url_for
 from flask_session import Session
 from sqlalchemy import (
     create_engine, Column, Integer, String, ForeignKey, UniqueConstraint, DateTime, event
@@ -119,6 +120,11 @@ BASE_HTML = """
       </div>
     </div>
   </div>
+
+  <footer class="muted" style="margin-top:24px; font-size:12px; text-align:center;">
+    Football data provided by the
+    <a href="https://www.football-data.org/" target="_blank" rel="noopener noreferrer">Football-Data.org API</a>.
+  </footer>
 
   <script>
     let pendingPickForm = null;
@@ -241,7 +247,7 @@ ADMIN_HTML = """
 
         {% if api_state %}
           <div class="api-grid" style="margin-top:12px;">
-            <div class="api-stat"><strong>Last successful sync</strong><br>{{ api_state.last_success_at or 'Never' }}</div>
+            <div class="api-stat"><strong>Last successful sync</strong><br>{{ api_last_success }}</div>
             <div class="api-stat"><strong>Results imported</strong><br>{{ api_state.results_imported }}</div>
             <div class="api-stat"><strong>Matches pending</strong><br>{{ api_state.pending_matches }}</div>
             <div class="api-stat"><strong>Unmatched fixtures</strong><br>{{ api_state.unmatched_matches }}</div>
@@ -1049,6 +1055,12 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def format_utc_timestamp(value: Optional[datetime]) -> str:
+    if value is None:
+        return "Never"
+    return value.strftime("%b %d, %Y %I:%M:%S %p UTC").replace(" 0", " ")
+
+
 def parse_api_datetime(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -1579,6 +1591,9 @@ def admin():
         results=res_map,
         api_configured=bool(os.environ.get("FOOTBALL_DATA_API_KEY", "").strip()),
         api_state=api_state,
+        api_last_success=format_utc_timestamp(
+            None if api_state is None else api_state.last_success_at
+        ),
         can_import_api=can_import_api,
         default_players=",".join(player.name for player in defaults_from),
         default_room_code=wk.room_code if wk is not None else "",
@@ -1638,6 +1653,31 @@ def admin_sync_api_results():
     except (FootballDataError, RuntimeError) as exc:
         flash(str(exc), "error")
     return redirect(url_for("admin"))
+
+
+@app.post("/tasks/sync-results")
+def scheduled_sync_results():
+    """Run one score sync from a scheduler without exposing admin credentials."""
+    expected_secret = os.environ.get("SYNC_SECRET", "").strip()
+    if not expected_secret:
+        return jsonify(ok=False, error="Scheduled sync is not configured"), 503
+
+    supplied_secret = request.headers.get("X-Sync-Secret", "")
+    if not hmac.compare_digest(supplied_secret, expected_secret):
+        return jsonify(ok=False, error="Forbidden"), 403
+
+    db = SessionLocal()
+    season = active_season(db)
+    if season is None or season.is_archived:
+        return jsonify(ok=False, error="No writable active season"), 409
+
+    try:
+        summary = sync_results_from_api(season)
+    except FootballDataRateLimitError as exc:
+        return jsonify(ok=False, error=str(exc)), 429
+    except (FootballDataError, RuntimeError) as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+    return jsonify(ok=True, season=season.code, **summary)
 
 @app.post("/admin/set-results")
 def admin_set_results():
