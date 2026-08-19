@@ -561,18 +561,32 @@ STATS_PARTIAL = """
 <div class="card">
   <h4>Head-to-Head{% if selected_player %} — {{ selected_player.name }}{% endif %}</h4>
   <div class="table-scroll">
-    <table class="centered-table">
-      <thead><tr><th>Opponent</th><th>W-D-L</th><th>Correct</th><th>Incorrect</th><th>Draws</th><th>Net For</th><th>Net Against</th><th>$ Net</th></tr></thead>
+    <table class="centered-table detailed-season-table">
+      <thead>
+        <tr>
+          <th>Opponent</th><th>W-D-L</th>
+          <th class="for-header">Correct</th><th class="for-header">Incorrect</th>
+          <th class="for-header">Draws</th><th class="for-header">For Net</th>
+          <th class="against-header against-start">Against Correct</th>
+          <th class="against-header">Against Incorrect</th>
+          <th class="against-header">Against Draws</th>
+          <th class="against-header">Against Net</th>
+          <th class="total-net-header">$ Net</th>
+        </tr>
+      </thead>
       <tbody>
         {% for row in head_to_head %}
           <tr>
             <td>{{ row['opponent'] }}</td><td>{{ row['wins'] }}-{{ row['ties'] }}-{{ row['losses'] }}</td>
             <td>{{ row['correct'] }}</td><td>{{ row['incorrect'] }}</td><td>{{ row['draws'] }}</td>
-            <td>{{ '%+d'|format(row['net_for']) }}</td><td>{{ '%+d'|format(row['net_against']) }}</td>
-            <td>{{ row['money_display'] }}</td>
+            <td>{{ '%+d'|format(row['net_for']) }}</td>
+            <td class="against-start">{{ row['against_correct'] }}</td>
+            <td>{{ row['against_incorrect'] }}</td><td>{{ row['against_draws'] }}</td>
+            <td>{{ '%+d'|format(row['net_against']) }}</td>
+            <td class="total-net-cell">{{ row['money_display'] }}</td>
           </tr>
         {% endfor %}
-        {% if not head_to_head %}<tr><td colspan="8" class="muted">No finalized head-to-head matchups yet.</td></tr>{% endif %}
+        {% if not head_to_head %}<tr><td colspan="11" class="muted">No finalized head-to-head matchups yet.</td></tr>{% endif %}
       </tbody>
     </table>
   </div>
@@ -1638,6 +1652,9 @@ def head_to_head_for_player(db, season: Season, player: Player) -> List[Dict[str
                 "incorrect": 0,
                 "draws": 0,
                 "net_for": 0,
+                "against_correct": 0,
+                "against_incorrect": 0,
+                "against_draws": 0,
                 "net_against": 0,
                 "money_net": 0,
             })
@@ -1654,6 +1671,11 @@ def head_to_head_for_player(db, season: Season, player: Player) -> List[Dict[str
             )
             for key in ("correct", "incorrect", "draws"):
                 row[key] += player_record[key]
+            opponent_record = records.get(
+                opponent_id, {"correct": 0, "incorrect": 0, "draws": 0}
+            )
+            for key in ("correct", "incorrect", "draws"):
+                row[f"against_{key}"] += opponent_record[key]
             row["net_for"] += player_points
             row["net_against"] += opponent_points
 
@@ -1720,6 +1742,47 @@ def club_records_for_player(
     return rows
 
 
+def season_club_records(db, season: Season) -> List[Dict[str, Any]]:
+    """Aggregate every player's finalized picks by Premier League club."""
+    results = {
+        result.fixture_id: result.outcome
+        for result in db.query(Result).join(Fixture).join(Week).filter(
+            Week.season_id == season.id,
+            Week.status == "finalized",
+        )
+    }
+    picks = db.query(Pick).join(Matchup).join(Week).filter(
+        Week.season_id == season.id,
+        Week.status == "finalized",
+    ).all()
+    records: Dict[str, Dict[str, Any]] = {}
+    for pick in picks:
+        outcome = results.get(pick.fixture_id)
+        if outcome is None:
+            continue
+        row = records.setdefault(pick.team, {
+            "club": pick.team,
+            "correct": 0,
+            "incorrect": 0,
+            "draws": 0,
+        })
+        if outcome == "Draw":
+            row["draws"] += 1
+        else:
+            winning_team = pick.fixture.home if outcome == "Home" else pick.fixture.away
+            row["correct" if pick.team == winning_team else "incorrect"] += 1
+
+    rows = []
+    for row in records.values():
+        row["picks"] = row["correct"] + row["incorrect"] + row["draws"]
+        row["decisions"] = row["correct"] + row["incorrect"]
+        row["accuracy"] = (
+            row["correct"] / row["decisions"] if row["decisions"] else None
+        )
+        rows.append(row)
+    return rows
+
+
 def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
     players = season_players(db, season)
     finalized_weeks = db.query(Week).filter_by(
@@ -1730,14 +1793,20 @@ def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
         return [
             {"label": "Biggest weekly win", **no_data},
             {"label": "Most correct picks", **no_data},
+            {"label": "Most incorrect picks", **no_data},
             {"label": "Most perfect weeks", **no_data},
             {"label": "Longest win streak", **no_data},
+            {"label": "Longest losing streak", **no_data},
+            {"label": "Highest club correct %", **no_data},
+            {"label": "Lowest club correct %", **no_data},
         ]
 
     biggest_win: Optional[Dict[str, Any]] = None
     perfect_counts = {player.id: 0 for player in players}
     current_streaks = {player.id: 0 for player in players}
     longest_streaks = {player.id: 0 for player in players}
+    current_losing_streaks = {player.id: 0 for player in players}
+    longest_losing_streaks = {player.id: 0 for player in players}
     names = {player.id: player.name for player in players}
 
     for week in finalized_weeks:
@@ -1774,8 +1843,17 @@ def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
                     longest_streaks[player_id] = max(
                         longest_streaks[player_id], current_streaks[player_id]
                     )
+                    current_losing_streaks[player_id] = 0
+                elif points.get(player_id, 0) < opponent_points:
+                    current_streaks[player_id] = 0
+                    current_losing_streaks[player_id] += 1
+                    longest_losing_streaks[player_id] = max(
+                        longest_losing_streaks[player_id],
+                        current_losing_streaks[player_id],
+                    )
                 else:
                     current_streaks[player_id] = 0
+                    current_losing_streaks[player_id] = 0
 
     detailed = season_detailed_totals_finalized(db, season)
     max_correct = max((detailed.get(player.id, {}).get("correct", 0) for player in players), default=0)
@@ -1783,10 +1861,39 @@ def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
         player.name for player in players
         if detailed.get(player.id, {}).get("correct", 0) == max_correct and max_correct > 0
     ]
+    max_incorrect = max((detailed.get(player.id, {}).get("incorrect", 0) for player in players), default=0)
+    incorrect_leaders = [
+        player.name for player in players
+        if detailed.get(player.id, {}).get("incorrect", 0) == max_incorrect and max_incorrect > 0
+    ]
     max_perfect = max(perfect_counts.values(), default=0)
     perfect_leaders = [names[player_id] for player_id, count in perfect_counts.items() if count == max_perfect and max_perfect > 0]
     max_streak = max(longest_streaks.values(), default=0)
     streak_leaders = [names[player_id] for player_id, count in longest_streaks.items() if count == max_streak and max_streak > 0]
+    max_losing_streak = max(longest_losing_streaks.values(), default=0)
+    losing_streak_leaders = [
+        names[player_id]
+        for player_id, count in longest_losing_streaks.items()
+        if count == max_losing_streak and max_losing_streak > 0
+    ]
+    club_records = [
+        row for row in season_club_records(db, season)
+        if row["accuracy"] is not None
+    ]
+    highest_club = min(
+        club_records,
+        key=lambda row: (
+            -row["accuracy"], -row["correct"], -row["decisions"], row["club"].lower()
+        ),
+        default=None,
+    )
+    lowest_club = min(
+        club_records,
+        key=lambda row: (
+            row["accuracy"], -row["incorrect"], -row["decisions"], row["club"].lower()
+        ),
+        default=None,
+    )
 
     return [
         {
@@ -1803,6 +1910,11 @@ def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
             "detail": f"{max_correct} correct" if max_correct else "No completed picks yet",
         },
         {
+            "label": "Most incorrect picks",
+            "value": ", ".join(incorrect_leaders) if incorrect_leaders else "No one yet",
+            "detail": f"{max_incorrect} incorrect" if max_incorrect else "No incorrect picks yet",
+        },
+        {
             "label": "Most perfect weeks",
             "value": ", ".join(perfect_leaders) if perfect_leaders else "No one yet",
             "detail": f"{max_perfect} perfect week{'s' if max_perfect != 1 else ''}" if max_perfect else "A perfect week is 5–0–0",
@@ -1811,6 +1923,29 @@ def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
             "label": "Longest win streak",
             "value": ", ".join(streak_leaders) if streak_leaders else "No one yet",
             "detail": f"{max_streak} week{'s' if max_streak != 1 else ''}" if max_streak else "No winning streak yet",
+        },
+        {
+            "label": "Longest losing streak",
+            "value": ", ".join(losing_streak_leaders) if losing_streak_leaders else "No one yet",
+            "detail": f"{max_losing_streak} week{'s' if max_losing_streak != 1 else ''}" if max_losing_streak else "No losing streak yet",
+        },
+        {
+            "label": "Highest club correct %",
+            "value": highest_club["club"] if highest_club else "No club yet",
+            "detail": (
+                f"{highest_club['accuracy'] * 100:.1f}% · "
+                f"{highest_club['correct']} correct of {highest_club['decisions']} decided"
+                if highest_club else "No decided club picks yet"
+            ),
+        },
+        {
+            "label": "Lowest club correct %",
+            "value": lowest_club["club"] if lowest_club else "No club yet",
+            "detail": (
+                f"{lowest_club['accuracy'] * 100:.1f}% · "
+                f"{lowest_club['incorrect']} incorrect of {lowest_club['decisions']} decided"
+                if lowest_club else "No decided club picks yet"
+            ),
         },
     ]
 
