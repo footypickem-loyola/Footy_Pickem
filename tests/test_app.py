@@ -287,8 +287,6 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(leaders["Longest win streak"]["detail"], "1 week")
         self.assertEqual(leaders["Longest losing streak"]["value"], player_b.name)
         self.assertEqual(leaders["Longest losing streak"]["detail"], "1 week")
-        self.assertIn("100.0% · 1 correct of 1 decided", leaders["Highest club correct %"]["detail"])
-        self.assertIn("0.0% · 1 incorrect of 1 decided", leaders["Lowest club correct %"]["detail"])
 
     def test_head_to_head_and_club_records_use_finalized_weeks(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
@@ -317,10 +315,6 @@ class PickemAppTests(unittest.TestCase):
         self.assertTrue(all(row["net"] == 1 for row in club_records))
         self.assertTrue(all(row["accuracy_display"] == "100.0%" for row in club_records))
 
-        season_club_records = app_module.season_club_records(db, season)
-        self.assertEqual(sum(row["correct"] for row in season_club_records), 5)
-        self.assertEqual(sum(row["incorrect"] for row in season_club_records), 5)
-
     def test_stats_tab_and_current_week_leader_card_render(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
         player_a_id = player_a.id
@@ -337,8 +331,6 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b"Against Correct", stats_response.data)
         self.assertIn(b"Against Incorrect", stats_response.data)
         self.assertIn(b"Against Draws", stats_response.data)
-        self.assertIn(b"Highest club correct %", stats_response.data)
-        self.assertIn(b"Lowest club correct %", stats_response.data)
         self.assertIn(b"+$50", stats_response.data)
         self.assertEqual(current_response.status_code, 200)
         self.assertIn(b"Season Leaders", current_response.data)

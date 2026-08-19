@@ -50,12 +50,10 @@ Open <http://127.0.0.1:5000/join> after the import.
 
 The Current Week page includes a compact Season Leaders card for biggest weekly
 win, correct and incorrect pick leaders, perfect weeks, winning and losing
-streaks, and the highest and lowest club correct percentages across all players.
-Club percentages exclude drawn fixtures and display the decided-pick sample size.
-The Stats tab adds player-filtered head-to-head records with detailed for/against
-pick breakdowns, plus club-picking records with club, minimum-picks, and
-best/worst/most-picked filters. Statistics use finalized weeks only and remain
-isolated by season.
+streaks. The Stats tab adds player-filtered head-to-head records with detailed
+for/against pick breakdowns, plus club-picking records with club, minimum-picks,
+and best/worst/most-picked filters. Statistics use finalized weeks only and
+remain isolated by season.
 
 ## Automatic final scores
 

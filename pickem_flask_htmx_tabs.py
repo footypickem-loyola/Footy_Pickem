@@ -1742,47 +1742,6 @@ def club_records_for_player(
     return rows
 
 
-def season_club_records(db, season: Season) -> List[Dict[str, Any]]:
-    """Aggregate every player's finalized picks by Premier League club."""
-    results = {
-        result.fixture_id: result.outcome
-        for result in db.query(Result).join(Fixture).join(Week).filter(
-            Week.season_id == season.id,
-            Week.status == "finalized",
-        )
-    }
-    picks = db.query(Pick).join(Matchup).join(Week).filter(
-        Week.season_id == season.id,
-        Week.status == "finalized",
-    ).all()
-    records: Dict[str, Dict[str, Any]] = {}
-    for pick in picks:
-        outcome = results.get(pick.fixture_id)
-        if outcome is None:
-            continue
-        row = records.setdefault(pick.team, {
-            "club": pick.team,
-            "correct": 0,
-            "incorrect": 0,
-            "draws": 0,
-        })
-        if outcome == "Draw":
-            row["draws"] += 1
-        else:
-            winning_team = pick.fixture.home if outcome == "Home" else pick.fixture.away
-            row["correct" if pick.team == winning_team else "incorrect"] += 1
-
-    rows = []
-    for row in records.values():
-        row["picks"] = row["correct"] + row["incorrect"] + row["draws"]
-        row["decisions"] = row["correct"] + row["incorrect"]
-        row["accuracy"] = (
-            row["correct"] / row["decisions"] if row["decisions"] else None
-        )
-        rows.append(row)
-    return rows
-
-
 def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
     players = season_players(db, season)
     finalized_weeks = db.query(Week).filter_by(
@@ -1797,8 +1756,6 @@ def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
             {"label": "Most perfect weeks", **no_data},
             {"label": "Longest win streak", **no_data},
             {"label": "Longest losing streak", **no_data},
-            {"label": "Highest club correct %", **no_data},
-            {"label": "Lowest club correct %", **no_data},
         ]
 
     biggest_win: Optional[Dict[str, Any]] = None
@@ -1876,24 +1833,6 @@ def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
         for player_id, count in longest_losing_streaks.items()
         if count == max_losing_streak and max_losing_streak > 0
     ]
-    club_records = [
-        row for row in season_club_records(db, season)
-        if row["accuracy"] is not None
-    ]
-    highest_club = min(
-        club_records,
-        key=lambda row: (
-            -row["accuracy"], -row["correct"], -row["decisions"], row["club"].lower()
-        ),
-        default=None,
-    )
-    lowest_club = min(
-        club_records,
-        key=lambda row: (
-            row["accuracy"], -row["incorrect"], -row["decisions"], row["club"].lower()
-        ),
-        default=None,
-    )
 
     return [
         {
@@ -1928,24 +1867,6 @@ def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
             "label": "Longest losing streak",
             "value": ", ".join(losing_streak_leaders) if losing_streak_leaders else "No one yet",
             "detail": f"{max_losing_streak} week{'s' if max_losing_streak != 1 else ''}" if max_losing_streak else "No losing streak yet",
-        },
-        {
-            "label": "Highest club correct %",
-            "value": highest_club["club"] if highest_club else "No club yet",
-            "detail": (
-                f"{highest_club['accuracy'] * 100:.1f}% · "
-                f"{highest_club['correct']} correct of {highest_club['decisions']} decided"
-                if highest_club else "No decided club picks yet"
-            ),
-        },
-        {
-            "label": "Lowest club correct %",
-            "value": lowest_club["club"] if lowest_club else "No club yet",
-            "detail": (
-                f"{lowest_club['accuracy'] * 100:.1f}% · "
-                f"{lowest_club['incorrect']} incorrect of {lowest_club['decisions']} decided"
-                if lowest_club else "No decided club picks yet"
-            ),
         },
     ]
 
