@@ -13,7 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template_string, request, session, url_for
+from flask import Flask, abort, flash, jsonify, make_response, redirect, render_template_string, request, session, url_for
 from flask_session import Session
 from sqlalchemy import (
     create_engine, Column, Integer, String, ForeignKey, UniqueConstraint, DateTime, event
@@ -26,6 +26,11 @@ FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
 FOOTBALL_DATA_PROVIDER = "football-data.org"
 DEFAULT_API_COMPETITION = "PL"
 DEFAULT_API_SEASON_YEAR = 2026
+ARSENAL_BANTER_FILENAMES = [
+    f"arsenal_banter/banter_{image_number:02d}.jpg"
+    for image_number in range(1, 11)
+]
+ARSENAL_TEAM_ALIASES = {"arsenal", "arsenal fc"}
 
 # -------------------- In-memory base + partial templates --------------------
 BASE_HTML = """
@@ -79,12 +84,22 @@ BASE_HTML = """
     .leader-label { color:#64748b; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
     .leader-value { font-size:16px; font-weight:700; margin-top:3px; }
     .leader-detail { color:#64748b; font-size:12px; margin-top:2px; }
+    .arsenal-banter { position:fixed; inset:0; z-index:2000; overflow:hidden; background:#111827; opacity:0; visibility:hidden; pointer-events:none; transition:opacity .18s ease, visibility .18s ease; }
+    .arsenal-banter.open { opacity:1; visibility:visible; pointer-events:auto; }
+    .arsenal-banter-image { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+    .arsenal-banter-scrim { position:absolute; inset:0; background:linear-gradient(180deg, rgba(0,0,0,.12) 20%, rgba(0,0,0,.88) 100%); }
+    .arsenal-banter-copy { position:absolute; left:0; right:0; bottom:0; color:#fff; padding:clamp(28px, 7vw, 72px); text-align:center; text-shadow:0 2px 16px rgba(0,0,0,.7); }
+    .arsenal-banter-kicker { color:#fca5a5; font-size:13px; font-weight:800; letter-spacing:.18em; text-transform:uppercase; }
+    .arsenal-banter-message { max-width:760px; margin:10px auto 0; font-size:clamp(30px, 7vw, 64px); font-weight:850; line-height:1.02; }
+    .arsenal-banter-hint { margin-top:16px; font-size:13px; opacity:.78; }
+    body.banter-open { overflow:hidden; }
     @media (max-width:640px) {
       body { margin:12px; }
       nav { align-items:flex-start; }
       .tabs { flex-wrap:wrap; }
       .navright { width:100%; margin-left:0; }
       .col { min-width:100%; }
+      .arsenal-banter-copy { padding:28px 20px 36px; }
     }
   </style>
 </head>
@@ -131,6 +146,17 @@ BASE_HTML = """
     </div>
   </div>
 
+  <div id="arsenal-banter" class="arsenal-banter" role="dialog" aria-modal="true" aria-hidden="true"
+       aria-label="Arsenal pick celebration" onclick="closeArsenalBanter()">
+    <img id="arsenal-banter-image" class="arsenal-banter-image" alt="Arsenal banter" decoding="async">
+    <div class="arsenal-banter-scrim"></div>
+    <div class="arsenal-banter-copy" aria-live="polite">
+      <div class="arsenal-banter-kicker">Excellent judgment</div>
+      <div class="arsenal-banter-message">You’ve picked the 2026 Champions. Nice pick!</div>
+      <div class="arsenal-banter-hint">Tap anywhere to dismiss</div>
+    </div>
+  </div>
+
   <footer class="muted" style="margin-top:24px; font-size:12px; text-align:center;">
     Football data provided by the
     <a href="https://www.football-data.org/" target="_blank" rel="noopener noreferrer">Football-Data.org API</a>.
@@ -138,6 +164,9 @@ BASE_HTML = """
 
   <script>
     let pendingPickForm = null;
+    let arsenalBanterTimer = null;
+    let lastArsenalBanterIndex = -1;
+    const arsenalBanterImages = {{ arsenal_banter_images|tojson }};
 
     function syncTeamOptions(gameSelect) {
       const form = gameSelect.closest('form');
@@ -177,8 +206,42 @@ BASE_HTML = """
       htmx.trigger(form, 'confirmedPick');
     }
 
+    function randomArsenalBanterImage() {
+      let imageIndex = Math.floor(Math.random() * arsenalBanterImages.length);
+      if (arsenalBanterImages.length > 1 && imageIndex === lastArsenalBanterIndex) {
+        imageIndex = (imageIndex + 1) % arsenalBanterImages.length;
+      }
+      lastArsenalBanterIndex = imageIndex;
+      return arsenalBanterImages[imageIndex];
+    }
+
+    function showArsenalBanter() {
+      if (!arsenalBanterImages.length) return;
+      const overlay = document.getElementById('arsenal-banter');
+      const image = document.getElementById('arsenal-banter-image');
+      image.src = randomArsenalBanterImage();
+      overlay.classList.add('open');
+      overlay.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('banter-open');
+      window.clearTimeout(arsenalBanterTimer);
+      arsenalBanterTimer = window.setTimeout(closeArsenalBanter, 2000);
+    }
+
+    function closeArsenalBanter() {
+      const overlay = document.getElementById('arsenal-banter');
+      window.clearTimeout(arsenalBanterTimer);
+      overlay.classList.remove('open');
+      overlay.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('banter-open');
+    }
+
+    document.body.addEventListener('arsenalBanter', showArsenalBanter);
+
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') closePickConfirm();
+      if (event.key === 'Escape') {
+        closePickConfirm();
+        closeArsenalBanter();
+      }
     });
   </script>
 </body>
@@ -2231,7 +2294,17 @@ def shell():
     db = SessionLocal()
     you = current_player(db)
     initial = tab_current()
-    return render_template_string(BASE_HTML, you=you, active_tab='current', body=initial)
+    arsenal_banter_images = [
+        url_for("static", filename=filename)
+        for filename in ARSENAL_BANTER_FILENAMES
+    ]
+    return render_template_string(
+        BASE_HTML,
+        you=you,
+        active_tab='current',
+        body=initial,
+        arsenal_banter_images=arsenal_banter_images,
+    )
 
 # -------------------- Partials used within tabs --------------------
 @app.route("/partials/fixtures/<int:week_number>")
@@ -2412,8 +2485,12 @@ def make_pick():
         db.rollback()
         abort(400, f"Pick failed: {e}")
 
-    # Re-render the matchups panel after pick
-    return matchups_partial(wk.number)
+    # Re-render the matchups panel after pick. Arsenal gets a one-time client
+    # event in this successful POST response, so refreshes never replay it.
+    response = make_response(matchups_partial(wk.number))
+    if team_name.casefold() in ARSENAL_TEAM_ALIASES:
+        response.headers["HX-Trigger"] = json.dumps({"arsenalBanter": {}})
+    return response
 
 @app.post("/set_result")
 def set_result():

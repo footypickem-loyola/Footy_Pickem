@@ -55,6 +55,14 @@ for/against pick breakdowns, plus club-picking records with club, minimum-picks,
 and best/worst/most-picked filters. Statistics use finalized weeks only and
 remain isolated by season.
 
+## Arsenal pick banter
+
+After a successful Arsenal pick, the app fires a one-time HTMX response event
+and displays a random full-screen image from `static/arsenal_banter` with the
+champions message. The overlay auto-dismisses after two seconds or on tap and
+does not replay on refresh. Expected filenames are `banter_01.jpg` through
+`banter_10.jpg`.
+
 ## Automatic final scores
 
 The Admin page includes **Sync Final Scores**. Each synchronization uses one

@@ -153,6 +153,34 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data.count(b'id="matchups"'), 1)
         self.assertIn(b'hx-trigger="confirmedPick"', response.data)
+        self.assertNotIn("HX-Trigger", response.headers)
+
+    def test_successful_arsenal_pick_emits_one_time_banter_event(self):
+        db = app_module.SessionLocal()
+        matchup = db.query(app_module.Matchup).first()
+        first_id, _ = app_module.matchup_order(matchup)
+        first = db.get(app_module.Player, first_id)
+        fixture = db.query(app_module.Fixture).filter(
+            app_module.Fixture.week_id == matchup.week_id,
+            (app_module.Fixture.home == "Arsenal")
+            | (app_module.Fixture.away == "Arsenal"),
+        ).one()
+
+        with app_module.app.test_client() as client:
+            with client.session_transaction() as user_session:
+                user_session["player_name"] = first.name
+            response = client.post("/pick", data={
+                "week": 1,
+                "matchup_id": matchup.id,
+                "fixture_id": fixture.id,
+                "team": "Arsenal",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("HX-Trigger"),
+            '{"arsenalBanter": {}}',
+        )
 
     def test_shell_renders_current_week(self):
         with app_module.app.test_client() as client:
@@ -164,6 +192,12 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b"Week 1", response.data)
         self.assertIn(b'id="matchups"', response.data)
         self.assertIn(b"Football-Data.org API", response.data)
+        self.assertIn(b"You\xe2\x80\x99ve picked the 2026 Champions. Nice pick!", response.data)
+        for image_number in range(1, 11):
+            self.assertIn(
+                f"/static/arsenal_banter/banter_{image_number:02d}.jpg".encode(),
+                response.data,
+            )
 
     def test_pick_records_distinguish_correct_incorrect_and_draw(self):
         db = app_module.SessionLocal()
