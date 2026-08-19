@@ -373,6 +373,11 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b"Longest losing streak", current_response.data)
         self.assertIn(b"View all stats", current_response.data)
         self.assertIn(player_a_name.encode(), current_response.data)
+        current_html = current_response.get_data(as_text=True)
+        self.assertLess(
+            current_html.index("Season Leaders"),
+            current_html.index('id="matchups"'),
+        )
 
     def test_duplicate_week_numbers_are_isolated_by_season(self):
         db = app_module.SessionLocal()

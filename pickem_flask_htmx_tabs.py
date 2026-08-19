@@ -433,6 +433,9 @@ CURRENT_PARTIAL = """
       Loading scores...
     </div>
 
+  </div>
+
+  <div class="col">
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
         <h4 style="margin:0;">Season Leaders</h4>
@@ -448,9 +451,7 @@ CURRENT_PARTIAL = """
         {% endfor %}
       </div>
     </div>
-  </div>
 
-  <div class="col">
     <div id="matchups" class="card" hx-get="{{ url_for('matchups_partial', week_number=wk.number, season=season.code) }}" hx-trigger="load" hx-swap="outerHTML">
       Loading matchups...
     </div>
