@@ -89,6 +89,33 @@ class PickemAppTests(unittest.TestCase):
     def tearDown(self):
         app_module.SessionLocal.remove()
 
+    def finalize_one_sided_matchup(self):
+        db = app_module.SessionLocal()
+        week = db.query(app_module.Week).filter_by(number=1).one()
+        matchup = db.query(app_module.Matchup).filter_by(week_id=week.id).first()
+        player_a = db.get(app_module.Player, matchup.player_a_id)
+        player_b = db.get(app_module.Player, matchup.player_b_id)
+        fixtures = db.query(app_module.Fixture).filter_by(week_id=week.id).order_by(
+            app_module.Fixture.match_number
+        ).all()
+        for index, fixture in enumerate(fixtures):
+            picker = player_a if index % 2 == 0 else player_b
+            picked_team = fixture.home if picker.id == player_a.id else fixture.away
+            db.add(app_module.Pick(
+                matchup_id=matchup.id,
+                player_id=picker.id,
+                fixture_id=fixture.id,
+                team=picked_team,
+            ))
+            db.add(app_module.Result(
+                fixture_id=fixture.id,
+                outcome="Home",
+                source="manual",
+            ))
+        week.status = "finalized"
+        db.commit()
+        return db, week, matchup, player_a, player_b
+
     def test_snake_order_contains_back_to_back_turns(self):
         db = app_module.SessionLocal()
         matchup = db.query(app_module.Matchup).first()
@@ -241,6 +268,58 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(html.count('class="against-header"'), 3)
         self.assertIn('class="total-net-header"', html)
         self.assertIn('class="total-net-cell"', html)
+
+    def test_season_leaders_identify_perfect_week_and_biggest_win(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        season = db.query(app_module.Season).filter_by(code="year-2").one()
+
+        leaders = {
+            row["label"]: row for row in app_module.season_leader_stats(db, season)
+        }
+
+        self.assertEqual(leaders["Biggest weekly win"]["value"], player_a.name)
+        self.assertIn("+10", leaders["Biggest weekly win"]["detail"])
+        self.assertEqual(leaders["Most correct picks"]["value"], player_a.name)
+        self.assertEqual(leaders["Most correct picks"]["detail"], "5 correct")
+        self.assertEqual(leaders["Most perfect weeks"]["value"], player_a.name)
+        self.assertEqual(leaders["Longest win streak"]["detail"], "1 week")
+
+    def test_head_to_head_and_club_records_use_finalized_weeks(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        season = db.query(app_module.Season).filter_by(code="year-2").one()
+
+        head_to_head = app_module.head_to_head_for_player(db, season, player_a)
+        club_records = app_module.club_records_for_player(db, season, player_a)
+
+        self.assertEqual(len(head_to_head), 1)
+        self.assertEqual(head_to_head[0]["opponent"], player_b.name)
+        self.assertEqual(
+            (head_to_head[0]["wins"], head_to_head[0]["ties"], head_to_head[0]["losses"]),
+            (1, 0, 0),
+        )
+        self.assertEqual(head_to_head[0]["money_display"], "+$50")
+        self.assertEqual(len(club_records), 5)
+        self.assertTrue(all(row["net"] == 1 for row in club_records))
+        self.assertTrue(all(row["accuracy_display"] == "100.0%" for row in club_records))
+
+    def test_stats_tab_and_current_week_leader_card_render(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        player_a_id = player_a.id
+        player_a_name = player_a.name
+        with app_module.app.test_client() as client:
+            with client.session_transaction() as user_session:
+                user_session["player_name"] = player_a_name
+            stats_response = client.get(f"/tab/stats?player={player_a_id}")
+            current_response = client.get("/tab/current")
+
+        self.assertEqual(stats_response.status_code, 200)
+        self.assertIn(b"Head-to-Head", stats_response.data)
+        self.assertIn(b"Club-Picking Record", stats_response.data)
+        self.assertIn(b"+$50", stats_response.data)
+        self.assertEqual(current_response.status_code, 200)
+        self.assertIn(b"Season Leaders", current_response.data)
+        self.assertIn(b"View all stats", current_response.data)
+        self.assertIn(player_a_name.encode(), current_response.data)
 
     def test_duplicate_week_numbers_are_isolated_by_season(self):
         db = app_module.SessionLocal()

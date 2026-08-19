@@ -74,6 +74,11 @@ BASE_HTML = """
     .modal-card { width:min(420px, 100%); background:#fff; border-radius:16px; padding:22px; box-shadow:0 20px 60px rgba(0,0,0,.28); }
     .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
     .confirm-team { font-size:24px; font-weight:700; margin:8px 0 2px; }
+    .leader-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+    .leader-stat { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px; }
+    .leader-label { color:#64748b; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+    .leader-value { font-size:16px; font-weight:700; margin-top:3px; }
+    .leader-detail { color:#64748b; font-size:12px; margin-top:2px; }
     @media (max-width:640px) {
       body { margin:12px; }
       nav { align-items:flex-start; }
@@ -100,6 +105,11 @@ BASE_HTML = """
               hx-get="{{ url_for('tab_season') }}"
               hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
         Season
+      </button>
+      <button class="tab {% if active_tab=='stats' %}active{% endif %}"
+              hx-get="{{ url_for('tab_stats') }}"
+              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
+        Stats
       </button>
     </div>
     <div class="navright muted">Logged in as: {{ you.name if you else 'Guest' }}</div>
@@ -359,6 +369,22 @@ CURRENT_PARTIAL = """
     <div class="card" id="scores" hx-get="{{ url_for('scores_partial', week_number=wk.number, season=season.code) }}" hx-trigger="load" hx-swap="outerHTML">
       Loading scores...
     </div>
+
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <h4 style="margin:0;">Season Leaders</h4>
+        <a href="#" hx-get="{{ url_for('tab_stats', season=season.code) }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">View all stats</a>
+      </div>
+      <div class="leader-grid" style="margin-top:10px;">
+        {% for stat in leader_stats %}
+          <div class="leader-stat">
+            <div class="leader-label">{{ stat['label'] }}</div>
+            <div class="leader-value">{{ stat['value'] }}</div>
+            <div class="leader-detail">{{ stat['detail'] }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
   </div>
 
   <div class="col">
@@ -473,6 +499,102 @@ SEASON_PARTIAL = """
       {% endfor %}
     </tbody>
   </table>
+</div>
+"""
+
+STATS_PARTIAL = """
+<div class="card">
+  <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
+    <h3 style="margin:0;">{{ selected_season.name }} Statistics</h3>
+    <form hx-get="{{ url_for('tab_stats') }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true"
+          style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <label>Season
+        <select name="season" onchange="this.form.requestSubmit()">
+          {% for season in seasons %}
+            <option value="{{ season.code }}" {% if season.id == selected_season.id %}selected{% endif %}>{{ season.name }}{% if season.is_archived %} (Archived){% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Player
+        <select name="player" onchange="this.form.requestSubmit()">
+          {% for player in players %}
+            <option value="{{ player.id }}" {% if selected_player and player.id == selected_player.id %}selected{% endif %}>{{ player.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Club
+        <select name="club" onchange="this.form.requestSubmit()">
+          <option value="">All clubs</option>
+          {% for club_name in club_names %}
+            <option value="{{ club_name }}" {% if club_filter == club_name %}selected{% endif %}>{{ club_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Minimum picks
+        <select name="min_picks" onchange="this.form.requestSubmit()">
+          {% for choice in [1, 3, 5, 10] %}
+            <option value="{{ choice }}" {% if min_picks == choice %}selected{% endif %}>{{ choice }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Club sort
+        <select name="club_sort" onchange="this.form.requestSubmit()">
+          <option value="best" {% if club_sort == 'best' %}selected{% endif %}>Best record</option>
+          <option value="worst" {% if club_sort == 'worst' %}selected{% endif %}>Worst record</option>
+          <option value="most" {% if club_sort == 'most' %}selected{% endif %}>Most picked</option>
+        </select>
+      </label>
+    </form>
+  </div>
+  <p class="muted">Only finalized weeks are included.</p>
+  <div class="leader-grid">
+    {% for stat in leader_stats %}
+      <div class="leader-stat">
+        <div class="leader-label">{{ stat['label'] }}</div>
+        <div class="leader-value">{{ stat['value'] }}</div>
+        <div class="leader-detail">{{ stat['detail'] }}</div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <h4>Head-to-Head{% if selected_player %} — {{ selected_player.name }}{% endif %}</h4>
+  <div class="table-scroll">
+    <table class="centered-table">
+      <thead><tr><th>Opponent</th><th>W-D-L</th><th>Correct</th><th>Incorrect</th><th>Draws</th><th>Net For</th><th>Net Against</th><th>$ Net</th></tr></thead>
+      <tbody>
+        {% for row in head_to_head %}
+          <tr>
+            <td>{{ row['opponent'] }}</td><td>{{ row['wins'] }}-{{ row['ties'] }}-{{ row['losses'] }}</td>
+            <td>{{ row['correct'] }}</td><td>{{ row['incorrect'] }}</td><td>{{ row['draws'] }}</td>
+            <td>{{ '%+d'|format(row['net_for']) }}</td><td>{{ '%+d'|format(row['net_against']) }}</td>
+            <td>{{ row['money_display'] }}</td>
+          </tr>
+        {% endfor %}
+        {% if not head_to_head %}<tr><td colspan="8" class="muted">No finalized head-to-head matchups yet.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h4>Club-Picking Record{% if selected_player %} — {{ selected_player.name }}{% endif %}</h4>
+  <div class="table-scroll">
+    <table class="centered-table">
+      <thead><tr><th>Club</th><th>Picks</th><th>Correct</th><th>Incorrect</th><th>Draws</th><th>Net</th><th>Accuracy</th></tr></thead>
+      <tbody>
+        {% for row in club_records %}
+          <tr>
+            <td>{{ row['club'] }}</td><td>{{ row['picks'] }}</td><td>{{ row['correct'] }}</td>
+            <td>{{ row['incorrect'] }}</td><td>{{ row['draws'] }}</td><td>{{ '%+d'|format(row['net']) }}</td>
+            <td>{{ row['accuracy_display'] }}</td>
+          </tr>
+        {% endfor %}
+        {% if not club_records %}<tr><td colspan="7" class="muted">No club records match these filters yet.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
 </div>
 """
 
@@ -1488,6 +1610,210 @@ def season_totals_finalized(db, season: Season) -> Dict[int, Dict[str,int]]:
         vals['net'] = vals['for'] - vals['against']
     return totals
 
+
+def head_to_head_for_player(db, season: Season, player: Player) -> List[Dict[str, Any]]:
+    rows: Dict[int, Dict[str, Any]] = {}
+    finalized_weeks = db.query(Week).filter_by(
+        season_id=season.id, status="finalized"
+    ).order_by(Week.number.asc()).all()
+    for week in finalized_weeks:
+        points = weekly_points_map(db, week)
+        records = weekly_pick_records(db, week)
+        matchups = db.query(Matchup).filter_by(week_id=week.id).all()
+        for matchup in matchups:
+            if player.id not in (matchup.player_a_id, matchup.player_b_id):
+                continue
+            opponent_id = (
+                matchup.player_b_id
+                if matchup.player_a_id == player.id
+                else matchup.player_a_id
+            )
+            opponent = db.get(Player, opponent_id)
+            row = rows.setdefault(opponent_id, {
+                "opponent": opponent.name,
+                "wins": 0,
+                "ties": 0,
+                "losses": 0,
+                "correct": 0,
+                "incorrect": 0,
+                "draws": 0,
+                "net_for": 0,
+                "net_against": 0,
+                "money_net": 0,
+            })
+            player_points = points.get(player.id, 0)
+            opponent_points = points.get(opponent_id, 0)
+            if player_points > opponent_points:
+                row["wins"] += 1
+            elif player_points < opponent_points:
+                row["losses"] += 1
+            else:
+                row["ties"] += 1
+            player_record = records.get(
+                player.id, {"correct": 0, "incorrect": 0, "draws": 0}
+            )
+            for key in ("correct", "incorrect", "draws"):
+                row[key] += player_record[key]
+            row["net_for"] += player_points
+            row["net_against"] += opponent_points
+
+    for row in rows.values():
+        row["money_net"] = (row["net_for"] - row["net_against"]) * 5
+        amount = row["money_net"]
+        row["money_display"] = f"{'+$' if amount >= 0 else '-$'}{abs(amount)}"
+    return sorted(rows.values(), key=lambda row: row["opponent"].lower())
+
+
+def club_records_for_player(
+    db,
+    season: Season,
+    player: Player,
+    club_filter: str = "",
+    min_picks: int = 1,
+    sort_mode: str = "best",
+) -> List[Dict[str, Any]]:
+    results = {
+        result.fixture_id: result.outcome
+        for result in db.query(Result).join(Fixture).join(Week).filter(
+            Week.season_id == season.id,
+            Week.status == "finalized",
+        )
+    }
+    picks = db.query(Pick).join(Matchup).join(Week).filter(
+        Week.season_id == season.id,
+        Week.status == "finalized",
+        Pick.player_id == player.id,
+    ).all()
+    records: Dict[str, Dict[str, Any]] = {}
+    for pick in picks:
+        outcome = results.get(pick.fixture_id)
+        if outcome is None:
+            continue
+        row = records.setdefault(pick.team, {
+            "club": pick.team,
+            "correct": 0,
+            "incorrect": 0,
+            "draws": 0,
+        })
+        if outcome == "Draw":
+            row["draws"] += 1
+        else:
+            winning_team = pick.fixture.home if outcome == "Home" else pick.fixture.away
+            row["correct" if pick.team == winning_team else "incorrect"] += 1
+
+    rows = []
+    for row in records.values():
+        row["picks"] = row["correct"] + row["incorrect"] + row["draws"]
+        row["net"] = row["correct"] - row["incorrect"]
+        decisions = row["correct"] + row["incorrect"]
+        row["accuracy"] = row["correct"] / decisions if decisions else 0.0
+        row["accuracy_display"] = f"{row['accuracy'] * 100:.1f}%" if decisions else "—"
+        if row["picks"] >= min_picks and (not club_filter or row["club"] == club_filter):
+            rows.append(row)
+
+    if sort_mode == "worst":
+        rows.sort(key=lambda row: (row["net"], row["accuracy"], -row["picks"], row["club"].lower()))
+    elif sort_mode == "most":
+        rows.sort(key=lambda row: (-row["picks"], -row["net"], row["club"].lower()))
+    else:
+        rows.sort(key=lambda row: (-row["net"], -row["accuracy"], -row["picks"], row["club"].lower()))
+    return rows
+
+
+def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
+    players = season_players(db, season)
+    finalized_weeks = db.query(Week).filter_by(
+        season_id=season.id, status="finalized"
+    ).order_by(Week.number.asc()).all()
+    no_data = {"value": "No one yet", "detail": "No finalized weeks"}
+    if not finalized_weeks:
+        return [
+            {"label": "Biggest weekly win", **no_data},
+            {"label": "Most correct picks", **no_data},
+            {"label": "Most perfect weeks", **no_data},
+            {"label": "Longest win streak", **no_data},
+        ]
+
+    biggest_win: Optional[Dict[str, Any]] = None
+    perfect_counts = {player.id: 0 for player in players}
+    current_streaks = {player.id: 0 for player in players}
+    longest_streaks = {player.id: 0 for player in players}
+    names = {player.id: player.name for player in players}
+
+    for week in finalized_weeks:
+        points = weekly_points_map(db, week)
+        records = weekly_pick_records(db, week)
+        for player in players:
+            record = records.get(
+                player.id, {"correct": 0, "incorrect": 0, "draws": 0}
+            )
+            if record == {"correct": 5, "incorrect": 0, "draws": 0}:
+                perfect_counts[player.id] += 1
+
+        for matchup in db.query(Matchup).filter_by(week_id=week.id).all():
+            a_points = points.get(matchup.player_a_id, 0)
+            b_points = points.get(matchup.player_b_id, 0)
+            margin = abs(a_points - b_points)
+            if margin:
+                winner_id = matchup.player_a_id if a_points > b_points else matchup.player_b_id
+                loser_id = matchup.player_b_id if winner_id == matchup.player_a_id else matchup.player_a_id
+                candidate = {
+                    "winner": names[winner_id],
+                    "loser": names[loser_id],
+                    "margin": margin,
+                    "week": week.number,
+                }
+                if biggest_win is None or margin > biggest_win["margin"]:
+                    biggest_win = candidate
+            for player_id, opponent_points in (
+                (matchup.player_a_id, b_points),
+                (matchup.player_b_id, a_points),
+            ):
+                if points.get(player_id, 0) > opponent_points:
+                    current_streaks[player_id] += 1
+                    longest_streaks[player_id] = max(
+                        longest_streaks[player_id], current_streaks[player_id]
+                    )
+                else:
+                    current_streaks[player_id] = 0
+
+    detailed = season_detailed_totals_finalized(db, season)
+    max_correct = max((detailed.get(player.id, {}).get("correct", 0) for player in players), default=0)
+    correct_leaders = [
+        player.name for player in players
+        if detailed.get(player.id, {}).get("correct", 0) == max_correct and max_correct > 0
+    ]
+    max_perfect = max(perfect_counts.values(), default=0)
+    perfect_leaders = [names[player_id] for player_id, count in perfect_counts.items() if count == max_perfect and max_perfect > 0]
+    max_streak = max(longest_streaks.values(), default=0)
+    streak_leaders = [names[player_id] for player_id, count in longest_streaks.items() if count == max_streak and max_streak > 0]
+
+    return [
+        {
+            "label": "Biggest weekly win",
+            "value": biggest_win["winner"] if biggest_win else "No one yet",
+            "detail": (
+                f"+{biggest_win['margin']} vs {biggest_win['loser']} · Week {biggest_win['week']}"
+                if biggest_win else "No matchup wins yet"
+            ),
+        },
+        {
+            "label": "Most correct picks",
+            "value": ", ".join(correct_leaders) if correct_leaders else "No one yet",
+            "detail": f"{max_correct} correct" if max_correct else "No completed picks yet",
+        },
+        {
+            "label": "Most perfect weeks",
+            "value": ", ".join(perfect_leaders) if perfect_leaders else "No one yet",
+            "detail": f"{max_perfect} perfect week{'s' if max_perfect != 1 else ''}" if max_perfect else "A perfect week is 5–0–0",
+        },
+        {
+            "label": "Longest win streak",
+            "value": ", ".join(streak_leaders) if streak_leaders else "No one yet",
+            "detail": f"{max_streak} week{'s' if max_streak != 1 else ''}" if max_streak else "No winning streak yet",
+        },
+    ]
+
 def count_results_for_week(db, wk: Week) -> Tuple[int,int]:
     total = db.query(Fixture).filter_by(week_id=wk.id).count()
     done = db.query(Result).join(Fixture).filter(Fixture.week_id==wk.id).count()
@@ -1532,7 +1858,13 @@ def tab_current():
     if wk is None:
         return f"<div class='card'>No weeks initialized for {season.name} yet.</div>"
     update_week_status(db, wk)
-    return render_template_string(CURRENT_PARTIAL, current_week=wk, season=season, you=you)
+    return render_template_string(
+        CURRENT_PARTIAL,
+        current_week=wk,
+        season=season,
+        leader_stats=season_leader_stats(db, season),
+        you=you,
+    )
 
 @app.get("/tab/open")
 def tab_open():
@@ -1773,6 +2105,69 @@ def tab_season():
     return render_template_string(SEASON_PARTIAL, season_rows=season_rows, players=players,
                                   weeks=weeks, weekly_points=weekly_points, you=you,
                                   seasons=seasons, selected_season=selected_season)
+
+
+@app.get("/tab/stats")
+def tab_stats():
+    db = SessionLocal()
+    you = current_player(db)
+    selected_season = requested_season(db)
+    if selected_season is None:
+        return "<div class='card'>No seasons initialized yet.</div>"
+    seasons = db.query(Season).order_by(Season.id.desc()).all()
+    players = season_players(db, selected_season)
+    requested_player_id = request.args.get("player", type=int)
+    selected_player = next(
+        (player for player in players if player.id == requested_player_id), None
+    )
+    if selected_player is None and you is not None:
+        selected_player = next((player for player in players if player.id == you.id), None)
+    if selected_player is None and players:
+        selected_player = players[0]
+
+    min_picks = request.args.get("min_picks", default=1, type=int)
+    if min_picks not in (1, 3, 5, 10):
+        min_picks = 1
+    club_sort = request.args.get("club_sort", "best")
+    if club_sort not in ("best", "worst", "most"):
+        club_sort = "best"
+    club_filter = request.args.get("club", "").strip()
+
+    head_to_head = []
+    club_records = []
+    club_names: List[str] = []
+    if selected_player is not None:
+        head_to_head = head_to_head_for_player(db, selected_season, selected_player)
+        all_club_records = club_records_for_player(
+            db, selected_season, selected_player, min_picks=1, sort_mode="most"
+        )
+        club_names = sorted(
+            (row["club"] for row in all_club_records), key=str.lower
+        )
+        club_records = club_records_for_player(
+            db,
+            selected_season,
+            selected_player,
+            club_filter=club_filter,
+            min_picks=min_picks,
+            sort_mode=club_sort,
+        )
+
+    return render_template_string(
+        STATS_PARTIAL,
+        seasons=seasons,
+        selected_season=selected_season,
+        players=players,
+        selected_player=selected_player,
+        head_to_head=head_to_head,
+        club_records=club_records,
+        club_names=club_names,
+        club_filter=club_filter,
+        min_picks=min_picks,
+        club_sort=club_sort,
+        leader_stats=season_leader_stats(db, selected_season),
+        you=you,
+    )
 
 # -------------------- Page shell --------------------
 @app.route("/")

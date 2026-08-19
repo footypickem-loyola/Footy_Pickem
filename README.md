@@ -46,6 +46,14 @@ anything. It refuses to overwrite a season that already contains weeks.
 
 Open <http://127.0.0.1:5000/join> after the import.
 
+## Season statistics
+
+The Current Week page includes a compact Season Leaders card for biggest weekly
+win, most correct picks, perfect weeks, and longest winning streak. The Stats tab
+adds player-filtered head-to-head records and club-picking records with club,
+minimum-picks, and best/worst/most-picked filters. Statistics use finalized weeks
+only and remain isolated by season.
+
 ## Automatic final scores
 
 The Admin page includes **Sync Final Scores**. Each synchronization uses one
