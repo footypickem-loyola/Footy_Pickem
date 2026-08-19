@@ -91,9 +91,27 @@ Set the same random value as the web service's `SYNC_SECRET` environment
 variable. The endpoint returns `403` for an incorrect secret and `503` when the
 server secret is not configured. Never put the secret in the URL or repository.
 
-The recommended production cadence is every two hours. A Railway cron service
-can call this endpoint and exit; the web service performs the database write on
-the service that owns the persistent volume.
+The production cadence is every 15 minutes on Saturday and Sunday and hourly
+Monday through Friday, using Eastern time. Create a separate Railway cron
+service from this repository with:
+
+```text
+Start Command: python trigger_score_sync.py
+Cron Schedule: */15 * * * *
+SYNC_URL: https://YOUR-APP.up.railway.app/tasks/sync-results
+SYNC_SECRET: the same secret configured on the web service
+SYNC_SCHEDULE_TIMEZONE: America/New_York
+```
+
+Railway starts the caller every 15 minutes. The caller syncs on every weekend
+run and exits without calling the API on weekday quarter-hour runs except at
+the top of each hour. This application-level Eastern-time check keeps the
+Saturday/Sunday boundary correct through daylight-saving changes even though
+Railway evaluates cron expressions in UTC. The caller prints its result and
+exits after every run. The web service performs the database write on the
+service that owns the persistent volume.
+Do not enable the cron schedule until the endpoint is deployed and Year 2 has
+been initialized as the writable active season.
 
 The command below remains available for maintenance when it runs inside a
 container that has the same database volume mounted:
@@ -134,3 +152,13 @@ verifying a separate backup.
 - Store `SYNC_SECRET` only as a Railway environment variable and send it in the `X-Sync-Secret` header.
 - Archived seasons reject pick and result writes at the server, not only in the UI.
 - Never commit room codes, Flask secrets, API keys, local databases, or `.env` files.
+
+## Production rollout order
+
+1. Run the final local smoke test.
+2. Back up and verify `/data/pickem.db` from the Railway volume.
+3. Merge `year-2-development` into `main` and deploy the web service.
+4. Confirm the archived Year 1 data is still readable.
+5. Initialize Year 2 through the protected Admin API import.
+6. Configure and enable the Railway cron service.
+7. Verify a successful automatic execution in the cron and web-service logs.
