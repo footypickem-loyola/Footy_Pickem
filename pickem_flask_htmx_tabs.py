@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import hmac
 import json
 import os
@@ -16,11 +17,20 @@ from urllib.request import Request, urlopen
 from flask import Flask, abort, flash, jsonify, make_response, redirect, render_template_string, request, session, url_for
 from flask_session import Session
 from sqlalchemy import (
-    create_engine, Column, Integer, String, ForeignKey, UniqueConstraint, DateTime, event
+    create_engine, Column, Integer, String, Text, ForeignKey, UniqueConstraint,
+    DateTime, event, func
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, scoped_session
 from jinja2 import DictLoader
 import pandas as pd
+
+from correspondent import (
+    DEFAULT_MODEL as DEFAULT_CORRESPONDENT_MODEL,
+    PROMPT_VERSION as CORRESPONDENT_PROMPT_VERSION,
+    CorrespondentError,
+    GeneratedRecap,
+    generate_weekly_recap,
+)
 
 FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
 FOOTBALL_DATA_PROVIDER = "football-data.org"
@@ -272,6 +282,7 @@ ADMIN_HTML = """
     .notice.error { background:#fef2f2; border:1px solid #fca5a5; }
     .api-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; }
     .api-stat { background:#f8fafc; border-radius:8px; padding:10px; }
+    .recap-body { white-space:pre-wrap; line-height:1.55; background:#f8fafc; border-radius:8px; padding:14px; }
   </style>
 </head>
 <body>
@@ -342,6 +353,59 @@ ADMIN_HTML = """
             </select>
           </label>
         </form>
+      </div>
+
+      <div class="card">
+        <h3>AI Correspondent — Week {{ week.number }}</h3>
+        {% if week.status == 'finalized' %}
+          <form method="post" action="{{ url_for('admin_generate_recap') }}">
+            <input type="hidden" name="week" value="{{ week.number }}">
+            <button class="btn primary" type="submit" {% if not openai_configured %}disabled{% endif %}>
+              {{ 'Regenerate Weekly Recap' if latest_recap else 'Generate Weekly Recap' }}
+            </button>
+          </form>
+          <p class="muted">
+            Model: {{ correspondent_model }}.
+            {% if not openai_configured %}Add OPENAI_API_KEY to enable generation.{% endif %}
+          </p>
+        {% else %}
+          <p class="muted">The recap can be generated after all ten results are final.</p>
+        {% endif %}
+
+        {% if latest_recap %}
+          <div class="notice {{ 'success' if latest_recap.status == 'ready' else 'error' }}">
+            Revision {{ latest_recap.revision }} — {{ latest_recap.status|capitalize }}
+          </div>
+          {% if latest_recap.status == 'ready' %}
+            <h4>{{ latest_recap.title }}</h4>
+            <div class="recap-body">{{ latest_recap.body_markdown }}</div>
+          {% elif latest_recap.error_message %}
+            <div class="recap-body">{{ latest_recap.error_message }}</div>
+          {% endif %}
+          <p class="muted">
+            Prompt {{ latest_recap.prompt_version }} · {{ latest_recap.model }} ·
+            {{ latest_recap.completed_at or latest_recap.created_at }}
+          </p>
+        {% else %}
+          <p class="muted">No recap has been generated for this week.</p>
+        {% endif %}
+
+        {% if recaps|length > 1 %}
+          <details>
+            <summary>Previous revisions</summary>
+            <table>
+              <thead><tr><th>Revision</th><th>Status</th><th>Title</th><th>Generated</th></tr></thead>
+              <tbody>
+                {% for recap in recaps[1:] %}
+                  <tr>
+                    <td>{{ recap.revision }}</td><td>{{ recap.status }}</td>
+                    <td>{{ recap.title or '—' }}</td><td>{{ recap.completed_at or recap.created_at }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </details>
+        {% endif %}
       </div>
 
       <div class="card">
@@ -953,6 +1017,28 @@ class ApiSyncState(Base):
     pending_matches = Column(Integer, nullable=False, default=0)
     unmatched_matches = Column(Integer, nullable=False, default=0)
     season = relationship("Season")
+
+
+class WeeklyRecap(Base):
+    __tablename__ = "weekly_recaps"
+    id = Column(Integer, primary_key=True)
+    week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False)
+    revision = Column(Integer, nullable=False)
+    status = Column(String, nullable=False, default="generating")
+    title = Column(String)
+    body_markdown = Column(Text)
+    context_json = Column(Text, nullable=False)
+    context_hash = Column(String, nullable=False)
+    prompt_version = Column(String, nullable=False)
+    model = Column(String, nullable=False)
+    provider_response_id = Column(String)
+    error_message = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    completed_at = Column(DateTime)
+    week = relationship("Week")
+    __table_args__ = (
+        UniqueConstraint("week_id", "revision", name="uix_weekly_recap_revision"),
+    )
 
 def _database_file_path(target_engine) -> Optional[Path]:
     """Return the SQLite database file path, excluding in-memory databases."""
@@ -1806,11 +1892,16 @@ def club_records_for_player(
     return rows
 
 
-def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
+def season_leader_stats(
+    db,
+    season: Season,
+    max_week_number: Optional[int] = None,
+) -> List[Dict[str, str]]:
     players = season_players(db, season)
-    finalized_weeks = db.query(Week).filter_by(
-        season_id=season.id, status="finalized"
-    ).order_by(Week.number.asc()).all()
+    week_query = db.query(Week).filter_by(season_id=season.id, status="finalized")
+    if max_week_number is not None:
+        week_query = week_query.filter(Week.number <= max_week_number)
+    finalized_weeks = week_query.order_by(Week.number.asc()).all()
     no_data = {"value": "No one yet", "detail": "No finalized weeks"}
     if not finalized_weeks:
         return [
@@ -1876,7 +1967,15 @@ def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
                     current_streaks[player_id] = 0
                     current_losing_streaks[player_id] = 0
 
-    detailed = season_detailed_totals_finalized(db, season)
+    detailed = {
+        player.id: {"correct": 0, "incorrect": 0, "draws": 0}
+        for player in players
+    }
+    for week in finalized_weeks:
+        records = weekly_pick_records(db, week)
+        for player in players:
+            for key in ("correct", "incorrect", "draws"):
+                detailed[player.id][key] += records.get(player.id, {}).get(key, 0)
     max_correct = max((detailed.get(player.id, {}).get("correct", 0) for player in players), default=0)
     correct_leaders = [
         player.name for player in players
@@ -1933,6 +2032,285 @@ def season_leader_stats(db, season: Season) -> List[Dict[str, str]]:
             "detail": f"{max_losing_streak} week{'s' if max_losing_streak != 1 else ''}" if max_losing_streak else "No losing streak yet",
         },
     ]
+
+
+def standings_through_week(
+    db,
+    season: Season,
+    max_week_number: int,
+) -> List[Dict[str, Any]]:
+    """Return structured standings using finalized weeks up to a cutoff."""
+    players = season_players(db, season)
+    rows = {
+        player.id: {
+            "player_id": player.id,
+            "player": player.name,
+            "points_for": 0,
+            "points_against": 0,
+            "net_points": 0,
+            "correct": 0,
+            "incorrect": 0,
+            "draws": 0,
+        }
+        for player in players
+    }
+    weeks = db.query(Week).filter(
+        Week.season_id == season.id,
+        Week.status == "finalized",
+        Week.number <= max_week_number,
+    ).order_by(Week.number.asc()).all()
+    for week in weeks:
+        for player_id, values in weekly_for_against(db, week).items():
+            if player_id not in rows:
+                continue
+            rows[player_id]["points_for"] += values["for"]
+            rows[player_id]["points_against"] += values["against"]
+        for player_id, record in weekly_pick_records(db, week).items():
+            if player_id not in rows:
+                continue
+            for key in ("correct", "incorrect", "draws"):
+                rows[player_id][key] += record[key]
+
+    standings = list(rows.values())
+    for row in standings:
+        row["net_points"] = row["points_for"] - row["points_against"]
+    standings.sort(
+        key=lambda row: (-row["net_points"], -row["correct"], row["player"].lower())
+    )
+    previous_key = None
+    current_rank = 1
+    for position, row in enumerate(standings, start=1):
+        rank_key = (row["net_points"], row["correct"])
+        if rank_key != previous_key:
+            current_rank = position
+            previous_key = rank_key
+        row["rank"] = current_rank
+    return standings
+
+
+def _pick_evaluation(pick: Pick, result: Result) -> str:
+    if result.outcome == "Draw":
+        return "draw"
+    winning_team = pick.fixture.home if result.outcome == "Home" else pick.fixture.away
+    return "correct" if pick.team == winning_team else "incorrect"
+
+
+def build_weekly_recap_context(db, week: Week) -> Dict[str, Any]:
+    """Build the complete factual record supplied to the V1 Correspondent."""
+    if week.status != "finalized":
+        raise ValueError("A recap can only be generated for a finalized week")
+    completed_results, total_fixtures = count_results_for_week(db, week)
+    if not total_fixtures or completed_results != total_fixtures:
+        raise ValueError("A recap requires a result for every fixture in the week")
+
+    season = week.season or db.get(Season, week.season_id)
+    players = season_players(db, season)
+    names = {player.id: player.name for player in players}
+    points = weekly_points_map(db, week)
+    records = weekly_pick_records(db, week)
+    results = {
+        result.fixture_id: result
+        for result in db.query(Result).join(Fixture).filter(Fixture.week_id == week.id)
+    }
+    fixtures = db.query(Fixture).filter_by(week_id=week.id).order_by(
+        Fixture.match_number.asc()
+    ).all()
+
+    fixture_rows = []
+    for fixture in fixtures:
+        result = results[fixture.id]
+        winning_team = None
+        if result.outcome == "Home":
+            winning_team = fixture.home
+        elif result.outcome == "Away":
+            winning_team = fixture.away
+        fixture_rows.append({
+            "fixture_id": fixture.id,
+            "match_number": fixture.match_number,
+            "home": fixture.home,
+            "away": fixture.away,
+            "kickoff_utc": fixture.kickoff_utc.isoformat() if fixture.kickoff_utc else None,
+            "home_score": result.home_score,
+            "away_score": result.away_score,
+            "outcome": result.outcome.lower(),
+            "winning_team": winning_team,
+            "result_source": result.source,
+        })
+
+    matchup_rows = []
+    for matchup in db.query(Matchup).filter_by(week_id=week.id).order_by(Matchup.id.asc()):
+        a_points = points.get(matchup.player_a_id, 0)
+        b_points = points.get(matchup.player_b_id, 0)
+        margin = abs(a_points - b_points)
+        winner_id = None
+        loser_id = None
+        if a_points > b_points:
+            winner_id, loser_id = matchup.player_a_id, matchup.player_b_id
+        elif b_points > a_points:
+            winner_id, loser_id = matchup.player_b_id, matchup.player_a_id
+
+        pick_rows = []
+        picks = db.query(Pick).filter_by(matchup_id=matchup.id).order_by(
+            Pick.created_at.asc(), Pick.id.asc()
+        ).all()
+        for pick in picks:
+            result = results[pick.fixture_id]
+            pick_rows.append({
+                "pick_id": pick.id,
+                "player_id": pick.player_id,
+                "player": names[pick.player_id],
+                "fixture_id": pick.fixture_id,
+                "match_number": pick.fixture.match_number,
+                "fixture": f"{pick.fixture.home} vs {pick.fixture.away}",
+                "team_picked": pick.team,
+                "evaluation": _pick_evaluation(pick, result),
+            })
+
+        matchup_rows.append({
+            "matchup_id": matchup.id,
+            "player_a": {
+                "player_id": matchup.player_a_id,
+                "player": names[matchup.player_a_id],
+                "points": a_points,
+                **records[matchup.player_a_id],
+            },
+            "player_b": {
+                "player_id": matchup.player_b_id,
+                "player": names[matchup.player_b_id],
+                "points": b_points,
+                **records[matchup.player_b_id],
+            },
+            "first_picker": names[matchup.first_picker_id],
+            "winner": names[winner_id] if winner_id else None,
+            "loser": names[loser_id] if loser_id else None,
+            "tied": winner_id is None,
+            "point_margin": margin,
+            "payout_dollars": margin * 5,
+            "picks": pick_rows,
+        })
+
+    standings_before = standings_through_week(db, season, week.number - 1)
+    standings_after = standings_through_week(db, season, week.number)
+    before_by_player = {row["player_id"]: row for row in standings_before}
+    completed_weeks_before = db.query(Week).filter(
+        Week.season_id == season.id,
+        Week.status == "finalized",
+        Week.number < week.number,
+    ).count()
+    rank_changes = []
+    if completed_weeks_before:
+        for row in standings_after:
+            previous_rank = before_by_player[row["player_id"]]["rank"]
+            rank_changes.append({
+                "player_id": row["player_id"],
+                "player": row["player"],
+                "rank_before": previous_rank,
+                "rank_after": row["rank"],
+                "places_moved": previous_rank - row["rank"],
+            })
+
+    player_summaries = []
+    for player in players:
+        record = records[player.id]
+        player_summaries.append({
+            "player_id": player.id,
+            "player": player.name,
+            "points": points.get(player.id, 0),
+            **record,
+        })
+
+    matchup_margins = [row["point_margin"] for row in matchup_rows]
+    largest_margin = max(matchup_margins, default=0)
+    smallest_margin = min(matchup_margins, default=0)
+    best_points = max((row["points"] for row in player_summaries), default=0)
+    worst_points = min((row["points"] for row in player_summaries), default=0)
+
+    return {
+        "schema_version": "weekly_recap.v1",
+        "season": {
+            "season_id": season.id,
+            "code": season.code,
+            "name": season.name,
+        },
+        "week": {
+            "week_id": week.id,
+            "number": week.number,
+            "status": week.status,
+            "fixture_count": total_fixtures,
+        },
+        "scoring_rules": {
+            "correct_pick_points": 1,
+            "incorrect_pick_points": -1,
+            "drawn_fixture_points": 0,
+            "payout_dollars_per_matchup_point": 5,
+        },
+        "fixtures": fixture_rows,
+        "players": player_summaries,
+        "matchups": matchup_rows,
+        "standings_before": standings_before,
+        "standings_after": standings_after,
+        "rank_changes": rank_changes,
+        "highlights": {
+            "biggest_matchups": [
+                row for row in matchup_rows if row["point_margin"] == largest_margin
+            ],
+            "closest_matchups": [
+                row for row in matchup_rows if row["point_margin"] == smallest_margin
+            ],
+            "best_weekly_performers": [
+                row for row in player_summaries if row["points"] == best_points
+            ],
+            "worst_weekly_performers": [
+                row for row in player_summaries if row["points"] == worst_points
+            ],
+            "perfect_pick_records": [
+                row for row in player_summaries
+                if row["correct"] == 5 and row["incorrect"] == 0 and row["draws"] == 0
+            ],
+            "season_leaders_after_week": season_leader_stats(
+                db, season, max_week_number=week.number
+            ),
+        },
+    }
+
+
+def generate_and_store_weekly_recap(db, week: Week) -> WeeklyRecap:
+    """Persist the fact snapshot, call the writer, and retain success or failure."""
+    context = build_weekly_recap_context(db, week)
+    context_json = json.dumps(context, ensure_ascii=False, sort_keys=True)
+    context_hash = hashlib.sha256(context_json.encode("utf-8")).hexdigest()
+    latest_revision = db.query(func.max(WeeklyRecap.revision)).filter_by(
+        week_id=week.id
+    ).scalar() or 0
+    model = (os.environ.get("OPENAI_MODEL") or DEFAULT_CORRESPONDENT_MODEL).strip()
+    recap = WeeklyRecap(
+        week_id=week.id,
+        revision=latest_revision + 1,
+        status="generating",
+        context_json=context_json,
+        context_hash=context_hash,
+        prompt_version=CORRESPONDENT_PROMPT_VERSION,
+        model=model,
+        created_at=utcnow(),
+    )
+    db.add(recap)
+    db.commit()
+
+    try:
+        generated = generate_weekly_recap(context, model=model)
+        recap.status = "ready"
+        recap.title = generated.title
+        recap.body_markdown = generated.body_markdown
+        recap.model = generated.model
+        recap.provider_response_id = generated.provider_response_id
+        recap.completed_at = utcnow()
+    except CorrespondentError as exc:
+        recap.status = "failed"
+        recap.error_message = str(exc)[:1000]
+        recap.completed_at = utcnow()
+    db.add(recap)
+    db.commit()
+    return recap
 
 def count_results_for_week(db, wk: Week) -> Tuple[int,int]:
     total = db.query(Fixture).filter_by(week_id=wk.id).count()
@@ -2011,6 +2389,7 @@ def admin():
     wk = None
     fixtures = []
     res_map = {}
+    recaps = []
     if weeks:
         sel = request.args.get("week", type=int)
         wk = season_week(db, season, sel) if sel else current_drafting_week(db, season)
@@ -2022,6 +2401,9 @@ def admin():
             result.fixture_id: result.outcome
             for result in db.query(Result).join(Fixture).filter(Fixture.week_id == wk.id)
         }
+        recaps = db.query(WeeklyRecap).filter_by(week_id=wk.id).order_by(
+            WeeklyRecap.revision.desc()
+        ).all()
 
     year_two = db.query(Season).filter_by(code="year-2").first()
     can_import_api = year_two is None or db.query(Week).filter_by(
@@ -2046,6 +2428,12 @@ def admin():
         api_last_success=format_utc_timestamp(
             None if api_state is None else api_state.last_success_at
         ),
+        openai_configured=bool(os.environ.get("OPENAI_API_KEY", "").strip()),
+        correspondent_model=(
+            os.environ.get("OPENAI_MODEL") or DEFAULT_CORRESPONDENT_MODEL
+        ).strip(),
+        recaps=recaps,
+        latest_recap=recaps[0] if recaps else None,
         can_import_api=can_import_api,
         default_players=",".join(player.name for player in defaults_from),
         default_room_code=wk.room_code if wk is not None else "",
@@ -2105,6 +2493,32 @@ def admin_sync_api_results():
     except (FootballDataError, RuntimeError) as exc:
         flash(str(exc), "error")
     return redirect(url_for("admin"))
+
+
+@app.post("/admin/generate-recap")
+def admin_generate_recap():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    db = SessionLocal()
+    season = active_season(db)
+    if season is None:
+        abort(404, "No active season")
+    week_number = request.form.get("week", type=int)
+    week = None if week_number is None else season_week(db, season, week_number)
+    if week is None:
+        abort(404, "Week not found")
+    try:
+        recap = generate_and_store_weekly_recap(db, week)
+        if recap.status == "ready":
+            flash(
+                f"Week {week.number} recap revision {recap.revision} generated.",
+                "success",
+            )
+        else:
+            flash(recap.error_message or "Recap generation failed", "error")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("admin", week=week.number))
 
 
 @app.post("/tasks/sync-results")
@@ -2583,6 +2997,9 @@ def _delete_season_weeks(db, season: Season) -> None:
         return
     fixture_ids = [row[0] for row in db.query(Fixture.id).filter(Fixture.week_id.in_(week_ids)).all()]
     matchup_ids = [row[0] for row in db.query(Matchup.id).filter(Matchup.week_id.in_(week_ids)).all()]
+    db.query(WeeklyRecap).filter(WeeklyRecap.week_id.in_(week_ids)).delete(
+        synchronize_session=False
+    )
     if fixture_ids:
         db.query(Result).filter(Result.fixture_id.in_(fixture_ids)).delete(synchronize_session=False)
     if matchup_ids:

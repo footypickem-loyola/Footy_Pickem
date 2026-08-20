@@ -55,6 +55,32 @@ for/against pick breakdowns, plus club-picking records with club, minimum-picks,
 and best/worst/most-picked filters. Statistics use finalized weeks only and
 remain isolated by season.
 
+## AI Correspondent V1
+
+The Python application can generate and retain an editorial recap for any
+finalized active-season week. Python builds the complete factual context from
+the game database; OpenAI is used only to select the interesting stories and
+write the recap. Score synchronization and week finalization never depend on
+the OpenAI request.
+
+Set the API configuration in the environment. Never put the key in source code
+or commit it to GitHub.
+
+```powershell
+$env:OPENAI_API_KEY="your-openai-api-key"
+$env:OPENAI_MODEL="gpt-5.6-luna"
+```
+
+`OPENAI_MODEL` is optional and defaults to `gpt-5.6-luna`. After all ten
+results for a week are final, open Admin, select the week, and click **Generate
+Weekly Recap**. Each attempt is stored as a new revision, including the exact
+JSON fact snapshot and prompt version used. A failed OpenAI request is recorded
+without changing picks, results, standings, payouts, or week status.
+
+The OpenAI transport is isolated in `correspondent/writer.py`. The versioned
+voice and editorial instructions live in
+`correspondent/prompts/weekly_recap_v1.md`.
+
 ## Arsenal pick banter
 
 After a successful Arsenal pick, the app fires a one-time HTMX response event
@@ -150,6 +176,7 @@ verifying a separate backup.
 - Keep `INIT_ON_START=0` in production except during an intentional, backed-up CSV initialization.
 - Store `FOOTBALL_DATA_API_KEY` only as a local or Railway environment variable.
 - Store `SYNC_SECRET` only as a Railway environment variable and send it in the `X-Sync-Secret` header.
+- Store `OPENAI_API_KEY` only as a local or Railway environment variable.
 - Archived seasons reject pick and result writes at the server, not only in the UI.
 - Never commit room codes, Flask secrets, API keys, local databases, or `.env` files.
 

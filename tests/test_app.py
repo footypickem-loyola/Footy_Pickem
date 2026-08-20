@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import tempfile
@@ -379,6 +380,106 @@ class PickemAppTests(unittest.TestCase):
             current_html.index('id="matchups"'),
         )
 
+    def test_recap_context_contains_only_deterministic_week_facts(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+
+        context = app_module.build_weekly_recap_context(db, week)
+
+        self.assertEqual(context["schema_version"], "weekly_recap.v1")
+        self.assertEqual(context["week"]["number"], 1)
+        self.assertEqual(len(context["fixtures"]), 10)
+        self.assertEqual(len(context["matchups"]), 3)
+        matchup_context = next(
+            row for row in context["matchups"] if row["matchup_id"] == matchup.id
+        )
+        self.assertEqual(matchup_context["winner"], player_a.name)
+        self.assertEqual(matchup_context["loser"], player_b.name)
+        self.assertEqual(matchup_context["point_margin"], 10)
+        self.assertEqual(matchup_context["payout_dollars"], 50)
+        self.assertEqual(len(matchup_context["picks"]), 10)
+        self.assertEqual(
+            {row["evaluation"] for row in matchup_context["picks"]},
+            {"correct", "incorrect"},
+        )
+        self.assertEqual(context["rank_changes"], [])
+
+    def test_recap_context_rejects_unfinalized_week(self):
+        db = app_module.SessionLocal()
+        week = db.query(app_module.Week).filter_by(number=1).one()
+
+        with self.assertRaisesRegex(ValueError, "finalized week"):
+            app_module.build_weekly_recap_context(db, week)
+
+    def test_recap_generation_stores_revisions_and_exact_context(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        generated = app_module.GeneratedRecap(
+            title="Week One Under Review",
+            body_markdown="A factual recap.",
+            model="test-model",
+            provider_response_id="resp_123",
+        )
+
+        with patch.object(
+            app_module, "generate_weekly_recap", return_value=generated
+        ):
+            first = app_module.generate_and_store_weekly_recap(db, week)
+            second = app_module.generate_and_store_weekly_recap(db, week)
+
+        self.assertEqual((first.revision, second.revision), (1, 2))
+        self.assertEqual(second.status, "ready")
+        self.assertEqual(second.title, "Week One Under Review")
+        self.assertEqual(second.provider_response_id, "resp_123")
+        stored_context = json.loads(second.context_json)
+        self.assertEqual(stored_context["week"]["number"], 1)
+        self.assertEqual(len(second.context_hash), 64)
+        self.assertEqual(
+            db.query(app_module.WeeklyRecap).filter_by(week_id=week.id).count(),
+            2,
+        )
+
+    def test_failed_recap_is_recorded_without_changing_game_data(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        pick_count = db.query(app_module.Pick).count()
+        result_count = db.query(app_module.Result).count()
+
+        with patch.object(
+            app_module,
+            "generate_weekly_recap",
+            side_effect=app_module.CorrespondentError("temporary API failure"),
+        ):
+            recap = app_module.generate_and_store_weekly_recap(db, week)
+
+        self.assertEqual(recap.status, "failed")
+        self.assertIn("temporary API failure", recap.error_message)
+        self.assertEqual(db.query(app_module.Pick).count(), pick_count)
+        self.assertEqual(db.query(app_module.Result).count(), result_count)
+        self.assertEqual(week.status, "finalized")
+
+    def test_admin_can_generate_and_review_saved_recap(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week_number = week.number
+        generated = app_module.GeneratedRecap(
+            title="The Week One Tribunal",
+            body_markdown="Nobody escaped scrutiny.",
+            model="test-model",
+        )
+
+        with app_module.app.test_client() as client, patch.object(
+            app_module, "generate_weekly_recap", return_value=generated
+        ):
+            with client.session_transaction() as admin_session:
+                admin_session[app_module.ADMIN_SESSION_KEY] = True
+            response = client.post(
+                "/admin/generate-recap",
+                data={"week": week_number},
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"The Week One Tribunal", response.data)
+        self.assertIn(b"Nobody escaped scrutiny.", response.data)
+        self.assertIn(b"Revision 1", response.data)
+
     def test_duplicate_week_numbers_are_isolated_by_season(self):
         db = app_module.SessionLocal()
         year_two = db.query(app_module.Season).filter_by(code="year-2").one()
@@ -546,8 +647,12 @@ class PickemAppTests(unittest.TestCase):
             fixture_columns = {
                 row[1] for row in connection.execute("PRAGMA table_info(fixtures)").fetchall()
             }
+            recap_table = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='weekly_recaps'"
+            ).fetchone()
             self.assertIn("external_match_id", fixture_columns)
             self.assertIn("kickoff_utc", fixture_columns)
+            self.assertEqual(recap_table, ("weekly_recaps",))
             self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM weeks WHERE number=1").fetchone()[0], 2)
             connection.close()
