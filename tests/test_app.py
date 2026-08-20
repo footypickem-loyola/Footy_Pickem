@@ -480,6 +480,31 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b"Nobody escaped scrutiny.", response.data)
         self.assertIn(b"Revision 1", response.data)
 
+    def test_admin_renders_recap_markdown_without_exposing_markup(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week_number = week.number
+        generated = app_module.GeneratedRecap(
+            title="The Weekly Tribunal",
+            body_markdown="#### Opening Brief\n\n**Marc** took the honours.",
+            model="test-model",
+        )
+
+        with app_module.app.test_client() as client, patch.object(
+            app_module, "generate_weekly_recap", return_value=generated
+        ):
+            with client.session_transaction() as admin_session:
+                admin_session[app_module.ADMIN_SESSION_KEY] = True
+            response = client.post(
+                "/admin/generate-recap",
+                data={"week": week_number},
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"<h4>Opening Brief</h4>", response.data)
+        self.assertIn(b"<strong>Marc</strong> took the honours.", response.data)
+        self.assertNotIn(b"**Marc**", response.data)
+
     def test_duplicate_week_numbers_are_isolated_by_season(self):
         db = app_module.SessionLocal()
         year_two = db.query(app_module.Season).filter_by(code="year-2").one()

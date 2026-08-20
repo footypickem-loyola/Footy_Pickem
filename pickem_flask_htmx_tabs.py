@@ -23,6 +23,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, scoped_session
 from jinja2 import DictLoader
 import pandas as pd
+import bleach
+import markdown
+from markupsafe import Markup
 
 from correspondent import (
     DEFAULT_MODEL as DEFAULT_CORRESPONDENT_MODEL,
@@ -378,7 +381,7 @@ ADMIN_HTML = """
           </div>
           {% if latest_recap.status == 'ready' %}
             <h4>{{ latest_recap.title }}</h4>
-            <div class="recap-body">{{ latest_recap.body_markdown }}</div>
+            <div class="recap-body">{{ latest_recap.body_markdown|recap_markdown }}</div>
           {% elif latest_recap.error_message %}
             <div class="recap-body">{{ latest_recap.error_message }}</div>
           {% endif %}
@@ -902,6 +905,24 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = SECRET
 app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
+
+
+def render_recap_markdown(value: Optional[str]) -> Markup:
+    """Render the Correspondent's Markdown using a deliberately small safe subset."""
+    rendered = markdown.markdown(value or "")
+    cleaned = bleach.clean(
+        rendered,
+        tags={
+            "p", "strong", "em", "h3", "h4", "h5",
+            "ul", "ol", "li", "blockquote", "br",
+        },
+        attributes={},
+        strip=True,
+    )
+    return Markup(cleaned)
+
+
+app.jinja_env.filters["recap_markdown"] = render_recap_markdown
 
 # For possible template inheritance later
 app.jinja_loader = DictLoader({'base.html': BASE_HTML})
