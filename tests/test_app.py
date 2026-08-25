@@ -118,6 +118,24 @@ class PickemAppTests(unittest.TestCase):
         db.commit()
         return db, week, matchup, player_a, player_b
 
+    def correspondent_ingest_payload(self, **overrides):
+        payload = {
+            "season_code": "year-2",
+            "week_number": 1,
+            "provider": "x",
+            "source_type": "curated_post",
+            "external_id": "x-post-123",
+            "canonical_url": "https://x.com/example/status/123",
+            "author_name": "Example Reporter",
+            "body_text": "A late winner settled the match.",
+            "published_at": "2026-08-16T18:30:00Z",
+            "submitted_by_player": "Steve",
+            "submission_note": "Potentially useful for the weekly recap.",
+            "metadata": {"language": "en", "engagement": 42},
+        }
+        payload.update(overrides)
+        return payload
+
     def test_snake_order_contains_back_to_back_turns(self):
         db = app_module.SessionLocal()
         matchup = db.query(app_module.Matchup).first()
@@ -555,6 +573,191 @@ class PickemAppTests(unittest.TestCase):
             app_module.build_weekly_recap_context_v2(
                 db, db.query(app_module.Week).filter_by(number=week_number).one()
             )
+
+    def test_correspondent_ingest_requires_dedicated_secret(self):
+        payload = self.correspondent_ingest_payload()
+        with app_module.app.test_client() as client:
+            with patch.dict(os.environ, {"CORRESPONDENT_INGEST_SECRET": ""}):
+                disabled = client.post(
+                    "/api/correspondent/sources",
+                    json=payload,
+                    headers={"X-Correspondent-Secret": "ingest-secret"},
+                )
+            with patch.dict(
+                os.environ, {"CORRESPONDENT_INGEST_SECRET": "ingest-secret"}
+            ):
+                missing = client.post("/api/correspondent/sources", json=payload)
+                wrong = client.post(
+                    "/api/correspondent/sources",
+                    json=payload,
+                    headers={"X-Correspondent-Secret": "wrong"},
+                )
+
+        self.assertEqual(disabled.status_code, 503)
+        self.assertEqual(missing.status_code, 403)
+        self.assertEqual(wrong.status_code, 403)
+        self.assertEqual(
+            app_module.SessionLocal().query(app_module.CorrespondentSource).count(),
+            0,
+        )
+
+    def test_correspondent_ingest_stores_normalized_source_without_game_writes(self):
+        db = app_module.SessionLocal()
+        core_counts_before = {
+            model.__tablename__: db.query(model).count()
+            for model in (
+                app_module.Player,
+                app_module.Season,
+                app_module.Week,
+                app_module.Fixture,
+                app_module.Matchup,
+                app_module.Pick,
+                app_module.Result,
+            )
+        }
+        with patch.dict(
+            os.environ,
+            {
+                "CORRESPONDENT_INGEST_SECRET": "ingest-secret",
+                "CORRESPONDENT_V2_ENABLED": "0",
+                "CORRESPONDENT_DEFAULT_VERSION": "v1",
+            },
+        ):
+            with app_module.app.test_client() as client:
+                response = client.post(
+                    "/api/correspondent/sources",
+                    json=self.correspondent_ingest_payload(),
+                    headers={"X-Correspondent-Secret": "ingest-secret"},
+                )
+
+        self.assertEqual(response.status_code, 201)
+        response_json = response.get_json()
+        self.assertTrue(response_json["ok"])
+        self.assertTrue(response_json["created"])
+        self.assertEqual(response_json["source"]["season_code"], "year-2")
+        self.assertEqual(response_json["source"]["week_number"], 1)
+        self.assertNotIn("ingest-secret", response.get_data(as_text=True))
+
+        source = db.query(app_module.CorrespondentSource).one()
+        self.assertEqual(source.provider, "x")
+        self.assertEqual(source.external_id, "x-post-123")
+        self.assertEqual(source.submitted_by.name, "Steve")
+        self.assertEqual(source.published_at.isoformat(), "2026-08-16T18:30:00")
+        self.assertEqual(json.loads(source.metadata_json)["engagement"], 42)
+        core_counts_after = {
+            model.__tablename__: db.query(model).count()
+            for model in (
+                app_module.Player,
+                app_module.Season,
+                app_module.Week,
+                app_module.Fixture,
+                app_module.Matchup,
+                app_module.Pick,
+                app_module.Result,
+            )
+        }
+        self.assertEqual(core_counts_after, core_counts_before)
+
+    def test_correspondent_ingest_is_idempotent_and_rejects_conflicts(self):
+        headers = {"X-Correspondent-Secret": "ingest-secret"}
+        payload = self.correspondent_ingest_payload()
+        conflicting_payload = self.correspondent_ingest_payload(
+            body_text="Different text for the same provider ID."
+        )
+        with patch.dict(
+            os.environ, {"CORRESPONDENT_INGEST_SECRET": "ingest-secret"}
+        ):
+            with app_module.app.test_client() as client:
+                created = client.post(
+                    "/api/correspondent/sources", json=payload, headers=headers
+                )
+                duplicate = client.post(
+                    "/api/correspondent/sources", json=payload, headers=headers
+                )
+                conflict = client.post(
+                    "/api/correspondent/sources",
+                    json=conflicting_payload,
+                    headers=headers,
+                )
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertFalse(duplicate.get_json()["created"])
+        self.assertEqual(
+            duplicate.get_json()["source"]["id"], created.get_json()["source"]["id"]
+        )
+        self.assertEqual(conflict.status_code, 409)
+        self.assertIn("different source data", conflict.get_json()["error"])
+        self.assertEqual(
+            app_module.SessionLocal().query(app_module.CorrespondentSource).count(),
+            1,
+        )
+
+    def test_correspondent_ingest_rejects_untrusted_shape_and_targets(self):
+        headers = {"X-Correspondent-Secret": "ingest-secret"}
+        with patch.dict(
+            os.environ, {"CORRESPONDENT_INGEST_SECRET": "ingest-secret"}
+        ):
+            with app_module.app.test_client() as client:
+                unknown_field = client.post(
+                    "/api/correspondent/sources",
+                    json=self.correspondent_ingest_payload(picks=["Arsenal"]),
+                    headers=headers,
+                )
+                wrong_season = client.post(
+                    "/api/correspondent/sources",
+                    json=self.correspondent_ingest_payload(season_code="year-1"),
+                    headers=headers,
+                )
+                manual_type = client.post(
+                    "/api/correspondent/sources",
+                    json=self.correspondent_ingest_payload(source_type="manual"),
+                    headers=headers,
+                )
+                unknown_player = client.post(
+                    "/api/correspondent/sources",
+                    json=self.correspondent_ingest_payload(
+                        submitted_by_player="Unknown Person"
+                    ),
+                    headers=headers,
+                )
+
+        self.assertEqual(unknown_field.status_code, 400)
+        self.assertIn("Unknown field", unknown_field.get_json()["error"])
+        self.assertEqual(wrong_season.status_code, 409)
+        self.assertEqual(manual_type.status_code, 400)
+        self.assertEqual(unknown_player.status_code, 400)
+        self.assertEqual(
+            app_module.SessionLocal().query(app_module.CorrespondentSource).count(),
+            0,
+        )
+
+    def test_correspondent_ingest_requires_json_and_limits_request_size(self):
+        headers = {"X-Correspondent-Secret": "ingest-secret"}
+        oversized_payload = self.correspondent_ingest_payload(body_text="x" * 26_000)
+        with patch.dict(
+            os.environ, {"CORRESPONDENT_INGEST_SECRET": "ingest-secret"}
+        ):
+            with app_module.app.test_client() as client:
+                wrong_content_type = client.post(
+                    "/api/correspondent/sources",
+                    data="{}",
+                    headers=headers,
+                    content_type="text/plain",
+                )
+                oversized = client.post(
+                    "/api/correspondent/sources",
+                    data=json.dumps(oversized_payload),
+                    headers=headers,
+                    content_type="application/json",
+                )
+
+        self.assertEqual(wrong_content_type.status_code, 415)
+        self.assertEqual(oversized.status_code, 413)
+        self.assertEqual(
+            app_module.SessionLocal().query(app_module.CorrespondentSource).count(),
+            0,
+        )
 
     def test_failed_recap_is_recorded_without_changing_game_data(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()

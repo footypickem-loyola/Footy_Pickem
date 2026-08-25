@@ -117,7 +117,56 @@ V2 code is isolated in:
 - `correspondent/writer_v2.py`
 - `correspondent/prompts/weekly_recap_v2.md`
 
-Automated n8n/X ingestion will be added after the manual prototype is accepted.
+The manual prototype remains the fallback while n8n/X workflows are added in
+separate, testable increments through the bridge below.
+
+### Correspondent source ingestion bridge
+
+The protected ingestion endpoint lets n8n send one normalized, untrusted source
+at a time without receiving admin credentials or access to game-state writes:
+
+```text
+POST /api/correspondent/sources
+Content-Type: application/json
+X-Correspondent-Secret: a-dedicated-random-secret
+```
+
+Set the same secret as `CORRESPONDENT_INGEST_SECRET` on the Flask service and in
+n8n. Keep this separate from `SYNC_SECRET`. If the ingestion secret is absent,
+the endpoint is disabled with HTTP 503. Incorrect or missing credentials return
+HTTP 403.
+
+Example normalized payload:
+
+```json
+{
+  "season_code": "year-2",
+  "week_number": 1,
+  "provider": "x",
+  "source_type": "curated_post",
+  "external_id": "x-post-123",
+  "canonical_url": "https://x.com/example/status/123",
+  "author_name": "Example Reporter",
+  "body_text": "A late winner settled the match.",
+  "published_at": "2026-08-16T18:30:00Z",
+  "submitted_by_player": null,
+  "submission_note": null,
+  "metadata": {"language": "en"}
+}
+```
+
+Allowed automated source types are `curated_post`, `member_dm`, and
+`match_news`. The endpoint accepts only the active, writable season and an
+existing week. It rejects unknown fields, including attempted pick, result,
+standings, or payout data. Repeating the same provider/external ID and payload
+returns the existing source with HTTP 200; reusing that ID for different data
+returns HTTP 409. A new source returns HTTP 201.
+
+The endpoint remains available when `CORRESPONDENT_V2_ENABLED=0`, allowing
+sources to be collected while V1 remains the visible/default Correspondent.
+Ingestion only adds rows to `correspondent_sources`; it cannot select a recap or
+change league data. Manual Admin entry remains available as the operational
+fallback.
 
 ## Arsenal pick banter
 
@@ -215,6 +264,8 @@ verifying a separate backup.
 - Store `FOOTBALL_DATA_API_KEY` only as a local or Railway environment variable.
 - Store `SYNC_SECRET` only as a Railway environment variable and send it in the `X-Sync-Secret` header.
 - Store `OPENAI_API_KEY` only as a local or Railway environment variable.
+- Store `CORRESPONDENT_INGEST_SECRET` only in Flask/n8n environment variables
+  and send it in the `X-Correspondent-Secret` header.
 - Archived seasons reject pick and result writes at the server, not only in the UI.
 - Never commit room codes, Flask secrets, API keys, local databases, or `.env` files.
 

@@ -5,11 +5,12 @@ import hmac
 import json
 import os
 import random
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -2507,6 +2508,39 @@ CORRESPONDENT_SOURCE_TYPES = {
     "match_news",
     "manual",
 }
+AUTOMATED_CORRESPONDENT_SOURCE_TYPES = CORRESPONDENT_SOURCE_TYPES - {"manual"}
+CORRESPONDENT_INGEST_ALLOWED_FIELDS = {
+    "season_code",
+    "week_number",
+    "provider",
+    "source_type",
+    "external_id",
+    "canonical_url",
+    "author_name",
+    "body_text",
+    "published_at",
+    "submitted_by_player",
+    "submission_note",
+    "metadata",
+}
+CORRESPONDENT_INGEST_REQUIRED_FIELDS = {
+    "season_code",
+    "week_number",
+    "provider",
+    "source_type",
+    "external_id",
+    "body_text",
+}
+CORRESPONDENT_INGEST_MAX_BODY_BYTES = 25_000
+CORRESPONDENT_PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+
+class CorrespondentIngestConflict(ValueError):
+    """Raised when an idempotency key is reused for different source data."""
+
+
+class CorrespondentIngestNotFound(ValueError):
+    """Raised when the requested application-owned target does not exist."""
 
 
 def accepted_correspondent_sources(db, week: Week) -> List[CorrespondentSource]:
@@ -2586,6 +2620,181 @@ def create_manual_correspondent_source(
     db.add(source)
     db.commit()
     return source
+
+
+def _required_ingest_text(payload: Mapping[str, Any], name: str, max_length: int) -> str:
+    value = payload.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
+    value = value.strip()
+    if len(value) > max_length:
+        raise ValueError(f"{name} must be {max_length:,} characters or fewer")
+    return value
+
+
+def _optional_ingest_text(payload: Mapping[str, Any], name: str, max_length: int) -> str:
+    value = payload.get(name)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string or null")
+    value = value.strip()
+    if len(value) > max_length:
+        raise ValueError(f"{name} must be {max_length:,} characters or fewer")
+    return value
+
+
+def _parse_correspondent_published_at(value: Any) -> Optional[datetime]:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError("published_at must be an ISO-8601 string or null")
+    normalized = value.strip()
+    if normalized.endswith(("Z", "z")):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        published_at = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError("published_at must be a valid ISO-8601 timestamp") from exc
+    if published_at.tzinfo is None:
+        raise ValueError("published_at must include a timezone")
+    return published_at.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def ingest_correspondent_source(
+    db,
+    payload: Mapping[str, Any],
+) -> Tuple[CorrespondentSource, bool]:
+    """Validate and idempotently store one normalized external source."""
+    if not isinstance(payload, Mapping):
+        raise ValueError("Request JSON must be an object")
+
+    unknown_fields = set(payload) - CORRESPONDENT_INGEST_ALLOWED_FIELDS
+    if unknown_fields:
+        raise ValueError(
+            "Unknown field(s): " + ", ".join(sorted(str(field) for field in unknown_fields))
+        )
+    missing_fields = CORRESPONDENT_INGEST_REQUIRED_FIELDS - set(payload)
+    if missing_fields:
+        raise ValueError(
+            "Missing required field(s): " + ", ".join(sorted(missing_fields))
+        )
+
+    season_code = _required_ingest_text(payload, "season_code", 80)
+    provider = _required_ingest_text(payload, "provider", 80).lower()
+    source_type = _required_ingest_text(payload, "source_type", 40).lower()
+    external_id = _required_ingest_text(payload, "external_id", 255)
+    body_text = _required_ingest_text(payload, "body_text", 5000)
+    canonical_url = _optional_ingest_text(payload, "canonical_url", 1000)
+    author_name = _optional_ingest_text(payload, "author_name", 160)
+    submitted_by_name = _optional_ingest_text(
+        payload, "submitted_by_player", 160
+    )
+    submission_note = _optional_ingest_text(payload, "submission_note", 1000)
+
+    week_number = payload.get("week_number")
+    if isinstance(week_number, bool) or not isinstance(week_number, int):
+        raise ValueError("week_number must be an integer")
+    if not 1 <= week_number <= 38:
+        raise ValueError("week_number must be between 1 and 38")
+    if provider == "manual" or not CORRESPONDENT_PROVIDER_PATTERN.fullmatch(provider):
+        raise ValueError(
+            "provider must use lowercase letters, numbers, dots, underscores, or hyphens"
+        )
+    if source_type not in AUTOMATED_CORRESPONDENT_SOURCE_TYPES:
+        raise ValueError("Unknown automated Correspondent source type")
+    if canonical_url and not canonical_url.lower().startswith(("https://", "http://")):
+        raise ValueError("canonical_url must begin with http:// or https://")
+
+    published_at = _parse_correspondent_published_at(payload.get("published_at"))
+    metadata = payload.get("metadata", {})
+    if not isinstance(metadata, dict):
+        raise ValueError("metadata must be a JSON object")
+    if any(not isinstance(key, str) for key in metadata):
+        raise ValueError("metadata keys must be strings")
+    try:
+        metadata_json = json.dumps(
+            metadata,
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("metadata must contain valid JSON values") from exc
+    if len(metadata_json.encode("utf-8")) > 10_000:
+        raise ValueError("metadata must be 10,000 bytes or fewer")
+
+    season = active_season(db)
+    if season is None or season.is_archived or season.code != season_code:
+        raise CorrespondentIngestConflict(
+            "Sources may only be added to the writable active season"
+        )
+    week = season_week(db, season, week_number)
+    if week is None:
+        raise CorrespondentIngestNotFound("Week not found")
+
+    submitted_by = None
+    if submitted_by_name:
+        submitted_by = next(
+            (
+                player
+                for player in season_players(db, season)
+                if player.name.casefold() == submitted_by_name.casefold()
+            ),
+            None,
+        )
+        if submitted_by is None:
+            raise ValueError("submitted_by_player is not a player in the active season")
+
+    normalized = json.dumps(
+        {
+            "external_id": external_id,
+            "source_type": source_type,
+            "url": canonical_url,
+            "author": author_name,
+            "text": body_text,
+            "published_at": None if published_at is None else published_at.isoformat(),
+            "submitted_by_player": None if submitted_by is None else submitted_by.name,
+            "note": submission_note,
+            "metadata": metadata,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    content_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    existing = db.query(CorrespondentSource).filter_by(
+        week_id=week.id,
+        provider=provider,
+        external_id=external_id,
+    ).first()
+    if existing:
+        if existing.content_hash == content_hash:
+            return existing, False
+        raise CorrespondentIngestConflict(
+            "provider and external_id already identify different source data"
+        )
+
+    source = CorrespondentSource(
+        week_id=week.id,
+        provider=provider,
+        source_type=source_type,
+        external_id=external_id,
+        canonical_url=canonical_url or None,
+        author_name=author_name or None,
+        body_text=body_text,
+        published_at=published_at,
+        submitted_by_player_id=None if submitted_by is None else submitted_by.id,
+        submission_note=submission_note or None,
+        metadata_json=metadata_json,
+        content_hash=content_hash,
+        status="accepted",
+        created_at=utcnow(),
+    )
+    db.add(source)
+    db.commit()
+    return source, True
 
 
 def build_weekly_recap_context_v2(db, week: Week) -> Dict[str, Any]:
@@ -3048,6 +3257,57 @@ def scheduled_sync_results():
     except (FootballDataError, RuntimeError) as exc:
         return jsonify(ok=False, error=str(exc)), 502
     return jsonify(ok=True, season=season.code, **summary)
+
+
+@app.post("/api/correspondent/sources")
+def ingest_correspondent_source_api():
+    """Accept one normalized, untrusted source from n8n or another ingester."""
+    expected_secret = os.environ.get("CORRESPONDENT_INGEST_SECRET", "").strip()
+    if not expected_secret:
+        return jsonify(ok=False, error="Correspondent ingestion is not configured"), 503
+
+    supplied_secret = request.headers.get("X-Correspondent-Secret", "")
+    if not hmac.compare_digest(supplied_secret, expected_secret):
+        return jsonify(ok=False, error="Forbidden"), 403
+    if (
+        request.content_length
+        and request.content_length > CORRESPONDENT_INGEST_MAX_BODY_BYTES
+    ):
+        return jsonify(ok=False, error="Request body is too large"), 413
+    if not request.is_json:
+        return jsonify(ok=False, error="Content-Type must be application/json"), 415
+    if len(request.get_data(cache=True)) > CORRESPONDENT_INGEST_MAX_BODY_BYTES:
+        return jsonify(ok=False, error="Request body is too large"), 413
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(ok=False, error="Request body must be a JSON object"), 400
+
+    db = SessionLocal()
+    try:
+        source, created = ingest_correspondent_source(db, payload)
+    except CorrespondentIngestNotFound as exc:
+        return jsonify(ok=False, error=str(exc)), 404
+    except CorrespondentIngestConflict as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+
+    week = db.get(Week, source.week_id)
+    season = None if week is None else db.get(Season, week.season_id)
+    return jsonify(
+        ok=True,
+        created=created,
+        source={
+            "id": source.id,
+            "season_code": None if season is None else season.code,
+            "week_number": None if week is None else week.number,
+            "provider": source.provider,
+            "source_type": source.source_type,
+            "external_id": source.external_id,
+            "status": source.status,
+        },
+    ), 201 if created else 200
 
 @app.post("/admin/set-results")
 def admin_set_results():
