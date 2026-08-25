@@ -32,7 +32,10 @@ from correspondent import (
     PROMPT_VERSION as CORRESPONDENT_PROMPT_VERSION,
     CorrespondentError,
     GeneratedRecap,
+    V2_PROMPT_VERSION,
+    build_v2_context,
     generate_weekly_recap,
+    generate_weekly_recap_v2,
 )
 
 FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
@@ -276,7 +279,7 @@ ADMIN_HTML = """
     .col { flex:1; min-width: 320px; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align:left; padding:6px 8px; border-bottom:1px solid #eee; }
-    select, input { padding:6px; border:1px solid #ccc; border-radius:6px; }
+    select, input, textarea { padding:6px; border:1px solid #ccc; border-radius:6px; font:inherit; }
     .btn { padding:8px 12px; border:1px solid #ccc; background:#f8f8f8; border-radius:8px; cursor:pointer; }
     .btn.primary { background:#0ea5e9; color:#fff; border-color:#0284c7; }
     .muted { color:#666; }
@@ -286,6 +289,10 @@ ADMIN_HTML = """
     .api-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; }
     .api-stat { background:#f8fafc; border-radius:8px; padding:10px; }
     .recap-body { white-space:pre-wrap; line-height:1.55; background:#f8fafc; border-radius:8px; padding:14px; }
+    .source-form { display:grid; gap:8px; }
+    .source-form textarea { width:min(100%,760px); min-height:110px; box-sizing:border-box; }
+    .version-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .official { color:#166534; font-weight:700; }
   </style>
 </head>
 <body>
@@ -361,15 +368,29 @@ ADMIN_HTML = """
       <div class="card">
         <h3>AI Correspondent — Week {{ week.number }}</h3>
         {% if week.status == 'finalized' %}
-          <form method="post" action="{{ url_for('admin_generate_recap') }}">
-            <input type="hidden" name="week" value="{{ week.number }}">
-            <button class="btn primary" type="submit" {% if not openai_configured %}disabled{% endif %}>
-              {{ 'Regenerate Weekly Recap' if latest_recap else 'Generate Weekly Recap' }}
-            </button>
-          </form>
+          <div class="version-actions">
+            <form method="post" action="{{ url_for('admin_generate_recap') }}">
+              <input type="hidden" name="week" value="{{ week.number }}">
+              <input type="hidden" name="version" value="v1">
+              <button class="btn {% if correspondent_default_version == 'v1' %}primary{% endif %}" type="submit" {% if not openai_configured %}disabled{% endif %}>
+                Generate V1 Recap
+              </button>
+            </form>
+            {% if correspondent_v2_enabled %}
+              <form method="post" action="{{ url_for('admin_generate_recap') }}">
+                <input type="hidden" name="week" value="{{ week.number }}">
+                <input type="hidden" name="version" value="v2">
+                <button class="btn {% if correspondent_default_version == 'v2' %}primary{% endif %}" type="submit"
+                        {% if not openai_configured or not correspondent_sources %}disabled{% endif %}>
+                  Generate V2 Recap
+                </button>
+              </form>
+            {% endif %}
+          </div>
           <p class="muted">
             Model: {{ correspondent_model }}.
             {% if not openai_configured %}Add OPENAI_API_KEY to enable generation.{% endif %}
+            {% if correspondent_v2_enabled and not correspondent_sources %}Add at least one source to enable V2.{% endif %}
           </p>
         {% else %}
           <p class="muted">The recap can be generated after all ten results are final.</p>
@@ -377,7 +398,12 @@ ADMIN_HTML = """
 
         {% if latest_recap %}
           <div class="notice {{ 'success' if latest_recap.status == 'ready' else 'error' }}">
-            Revision {{ latest_recap.revision }} — {{ latest_recap.status|capitalize }}
+            Revision {{ latest_recap.revision }} —
+            {{ latest_recap.correspondent_version|upper }} —
+            {{ latest_recap.status|capitalize }}
+            {% if selected_recap and selected_recap.id == latest_recap.id %}
+              <span class="official">· Official</span>
+            {% endif %}
           </div>
           {% if latest_recap.status == 'ready' %}
             <h4>{{ latest_recap.title }}</h4>
@@ -387,22 +413,38 @@ ADMIN_HTML = """
           {% endif %}
           <p class="muted">
             Prompt {{ latest_recap.prompt_version }} · {{ latest_recap.model }} ·
+            {{ latest_recap.source_count }} external source{{ '' if latest_recap.source_count == 1 else 's' }} ·
             {{ latest_recap.completed_at or latest_recap.created_at }}
           </p>
         {% else %}
           <p class="muted">No recap has been generated for this week.</p>
         {% endif %}
 
-        {% if recaps|length > 1 %}
+        {% if recaps %}
           <details>
-            <summary>Previous revisions</summary>
+            <summary>All recap revisions</summary>
             <table>
-              <thead><tr><th>Revision</th><th>Status</th><th>Title</th><th>Generated</th></tr></thead>
+              <thead><tr><th>Revision</th><th>Version</th><th>Status</th><th>Title</th><th>Official recap</th></tr></thead>
               <tbody>
-                {% for recap in recaps[1:] %}
+                {% for recap in recaps %}
                   <tr>
-                    <td>{{ recap.revision }}</td><td>{{ recap.status }}</td>
-                    <td>{{ recap.title or '—' }}</td><td>{{ recap.completed_at or recap.created_at }}</td>
+                    <td>{{ recap.revision }}</td>
+                    <td>{{ recap.correspondent_version|upper }}</td>
+                    <td>{{ recap.status }}</td>
+                    <td>{{ recap.title or '—' }}</td>
+                    <td>
+                      {% if selected_recap and selected_recap.id == recap.id %}
+                        <span class="official">Selected</span>
+                      {% elif recap.status == 'ready' %}
+                        <form method="post" action="{{ url_for('admin_select_recap') }}">
+                          <input type="hidden" name="week" value="{{ week.number }}">
+                          <input type="hidden" name="recap_id" value="{{ recap.id }}">
+                          <button class="btn" type="submit">Use this recap</button>
+                        </form>
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
                   </tr>
                 {% endfor %}
               </tbody>
@@ -410,6 +452,68 @@ ADMIN_HTML = """
           </details>
         {% endif %}
       </div>
+
+      {% if correspondent_v2_enabled %}
+      <div class="card">
+        <h3>Correspondent V2 Sources — Week {{ week.number }}</h3>
+        <p class="muted">
+          Manual source entry is the V2 prototype. Source text is stored as untrusted
+          material and cannot change picks, scores, standings, or payouts.
+        </p>
+        <form class="source-form" method="post" action="{{ url_for('admin_add_correspondent_source') }}">
+          <input type="hidden" name="week" value="{{ week.number }}">
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <label>Type
+              <select name="source_type">
+                <option value="curated_post">Curated X post</option>
+                <option value="member_dm">Member DM submission</option>
+                <option value="match_news">Match news</option>
+                <option value="manual">Other manual context</option>
+              </select>
+            </label>
+            <label>Author <input name="author_name" maxlength="160"></label>
+            <label>Source URL <input name="canonical_url" type="url" maxlength="1000"></label>
+          </div>
+          <label>Source text<br><textarea name="body_text" maxlength="5000" required></textarea></label>
+          <label>Optional submission note<br><textarea name="submission_note" maxlength="1000" style="min-height:70px;"></textarea></label>
+          <div><button class="btn" type="submit">Add V2 Source</button></div>
+        </form>
+
+        {% if correspondent_sources %}
+          <table style="margin-top:12px;">
+            <thead><tr><th>ID</th><th>Type</th><th>Author</th><th>Source</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody>
+              {% for source in correspondent_sources %}
+                <tr>
+                  <td>#{{ source.id }}</td>
+                  <td>{{ source.source_type }}</td>
+                  <td>{{ source.author_name or '—' }}</td>
+                  <td>
+                    {% if source.canonical_url %}<a href="{{ source.canonical_url }}" target="_blank" rel="noopener noreferrer">Open</a> · {% endif %}
+                    {{ source.body_text[:220] }}{% if source.body_text|length > 220 %}…{% endif %}
+                  </td>
+                  <td>{{ source.status }}</td>
+                  <td>
+                    <form method="post" action="{{ url_for('admin_set_correspondent_source_status', source_id=source.id) }}">
+                      <input type="hidden" name="week" value="{{ week.number }}">
+                      {% if source.status == 'accepted' %}
+                        <input type="hidden" name="status" value="excluded">
+                        <button class="btn" type="submit">Exclude</button>
+                      {% else %}
+                        <input type="hidden" name="status" value="accepted">
+                        <button class="btn" type="submit">Include</button>
+                      {% endif %}
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="muted">No external sources have been added for this week.</p>
+        {% endif %}
+      </div>
+      {% endif %}
 
       <div class="card">
         <h3>Results — Week {{ week.number }} ({{ week.status }})</h3>
@@ -457,6 +561,20 @@ ADMIN_HTML = """
 """
 
 ADMIN_SESSION_KEY = "is_admin"
+
+
+def correspondent_v2_enabled() -> bool:
+    return os.environ.get("CORRESPONDENT_V2_ENABLED", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def correspondent_default_version() -> str:
+    configured = os.environ.get("CORRESPONDENT_DEFAULT_VERSION", "v1").strip().lower()
+    if configured == "v2" and correspondent_v2_enabled():
+        return "v2"
+    return "v1"
+
 
 def is_admin_session() -> bool:
     return bool(session.get(ADMIN_SESSION_KEY, False))
@@ -1054,12 +1172,66 @@ class WeeklyRecap(Base):
     model = Column(String, nullable=False)
     provider_response_id = Column(String)
     error_message = Column(Text)
+    correspondent_version = Column(String, nullable=False, default="v1")
+    source_count = Column(Integer, nullable=False, default=0)
+    external_context_hash = Column(String)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     completed_at = Column(DateTime)
     week = relationship("Week")
     __table_args__ = (
         UniqueConstraint("week_id", "revision", name="uix_weekly_recap_revision"),
     )
+
+
+class CorrespondentSource(Base):
+    __tablename__ = "correspondent_sources"
+    id = Column(Integer, primary_key=True)
+    week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False)
+    fixture_id = Column(Integer, ForeignKey("fixtures.id"))
+    provider = Column(String, nullable=False)
+    source_type = Column(String, nullable=False)
+    external_id = Column(String)
+    canonical_url = Column(String)
+    author_name = Column(String)
+    body_text = Column(Text, nullable=False)
+    published_at = Column(DateTime)
+    submitted_by_player_id = Column(Integer, ForeignKey("players.id"))
+    submission_note = Column(Text)
+    metadata_json = Column(Text)
+    content_hash = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="accepted")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    week = relationship("Week")
+    fixture = relationship("Fixture")
+    submitted_by = relationship("Player")
+    __table_args__ = (
+        UniqueConstraint(
+            "week_id", "provider", "content_hash",
+            name="uix_correspondent_source_content",
+        ),
+    )
+
+
+class RecapSourceUsage(Base):
+    __tablename__ = "recap_source_usages"
+    id = Column(Integer, primary_key=True)
+    recap_id = Column(Integer, ForeignKey("weekly_recaps.id"), nullable=False)
+    source_id = Column(Integer, ForeignKey("correspondent_sources.id"), nullable=False)
+    recap = relationship("WeeklyRecap")
+    source = relationship("CorrespondentSource")
+    __table_args__ = (
+        UniqueConstraint("recap_id", "source_id", name="uix_recap_source_usage"),
+    )
+
+
+class WeeklyRecapSelection(Base):
+    __tablename__ = "weekly_recap_selections"
+    id = Column(Integer, primary_key=True)
+    week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False, unique=True)
+    recap_id = Column(Integer, ForeignKey("weekly_recaps.id"), nullable=False)
+    selected_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    week = relationship("Week")
+    recap = relationship("WeeklyRecap")
 
 def _database_file_path(target_engine) -> Optional[Path]:
     """Return the SQLite database file path, excluding in-memory databases."""
@@ -1224,6 +1396,40 @@ def ensure_database_schema(target_engine=engine) -> bool:
                 "ON fixtures(external_match_id) WHERE external_match_id IS NOT NULL"
             )
             raw.commit()
+
+        # V2 is additive: preserve every V1 recap and mark legacy rows as V1.
+        recap_exists = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='weekly_recaps'"
+        ).fetchone()
+        if recap_exists:
+            existing_recap_columns = {
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(weekly_recaps)").fetchall()
+            }
+            recap_columns = {
+                "correspondent_version": "VARCHAR DEFAULT 'v1'",
+                "source_count": "INTEGER DEFAULT 0",
+                "external_context_hash": "VARCHAR",
+            }
+            missing_recap_columns = [
+                (name, definition)
+                for name, definition in recap_columns.items()
+                if name not in existing_recap_columns
+            ]
+            if missing_recap_columns:
+                _backup_database(target_engine, "pre_correspondent_v2")
+                for name, definition in missing_recap_columns:
+                    cursor.execute(
+                        f"ALTER TABLE weekly_recaps ADD COLUMN {name} {definition}"
+                    )
+                cursor.execute(
+                    "UPDATE weekly_recaps SET correspondent_version='v1' "
+                    "WHERE correspondent_version IS NULL OR correspondent_version=''"
+                )
+                cursor.execute(
+                    "UPDATE weekly_recaps SET source_count=0 WHERE source_count IS NULL"
+                )
+                raw.commit()
     except Exception:
         raw.rollback()
         raise
@@ -2295,6 +2501,128 @@ def build_weekly_recap_context(db, week: Week) -> Dict[str, Any]:
     }
 
 
+CORRESPONDENT_SOURCE_TYPES = {
+    "curated_post",
+    "member_dm",
+    "match_news",
+    "manual",
+}
+
+
+def accepted_correspondent_sources(db, week: Week) -> List[CorrespondentSource]:
+    return db.query(CorrespondentSource).filter_by(
+        week_id=week.id,
+        status="accepted",
+    ).order_by(
+        CorrespondentSource.created_at.asc(),
+        CorrespondentSource.id.asc(),
+    ).all()
+
+
+def create_manual_correspondent_source(
+    db,
+    week: Week,
+    *,
+    source_type: str,
+    canonical_url: str,
+    author_name: str,
+    body_text: str,
+    submission_note: str = "",
+) -> CorrespondentSource:
+    """Validate and store one source without allowing it to touch game state."""
+    source_type = source_type.strip().lower()
+    canonical_url = canonical_url.strip()
+    author_name = author_name.strip()
+    body_text = body_text.strip()
+    submission_note = submission_note.strip()
+    if source_type not in CORRESPONDENT_SOURCE_TYPES:
+        raise ValueError("Unknown Correspondent source type")
+    if not body_text:
+        raise ValueError("Source text is required")
+    if len(body_text) > 5000:
+        raise ValueError("Source text must be 5,000 characters or fewer")
+    if len(author_name) > 160:
+        raise ValueError("Source author must be 160 characters or fewer")
+    if len(canonical_url) > 1000:
+        raise ValueError("Source URL must be 1,000 characters or fewer")
+    if canonical_url and not canonical_url.lower().startswith(("https://", "http://")):
+        raise ValueError("Source URL must begin with http:// or https://")
+    if len(submission_note) > 1000:
+        raise ValueError("Submission note must be 1,000 characters or fewer")
+
+    normalized = json.dumps(
+        {
+            "url": canonical_url,
+            "author": author_name,
+            "text": body_text,
+            "note": submission_note,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    content_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    existing = db.query(CorrespondentSource).filter_by(
+        week_id=week.id,
+        provider="manual",
+        content_hash=content_hash,
+    ).first()
+    if existing:
+        raise ValueError("That source has already been added")
+
+    source = CorrespondentSource(
+        week_id=week.id,
+        provider="manual",
+        source_type=source_type,
+        external_id=content_hash,
+        canonical_url=canonical_url or None,
+        author_name=author_name or None,
+        body_text=body_text,
+        submission_note=submission_note or None,
+        metadata_json="{}",
+        content_hash=content_hash,
+        status="accepted",
+        created_at=utcnow(),
+    )
+    db.add(source)
+    db.commit()
+    return source
+
+
+def build_weekly_recap_context_v2(db, week: Week) -> Dict[str, Any]:
+    """Add accepted external candidates around the unchanged V1 fact packet."""
+    league_context = build_weekly_recap_context(db, week)
+    return build_v2_context(league_context, accepted_correspondent_sources(db, week))
+
+
+def selected_weekly_recap(db, week: Week) -> Optional[WeeklyRecap]:
+    selection = db.query(WeeklyRecapSelection).filter_by(week_id=week.id).first()
+    return None if selection is None else db.get(WeeklyRecap, selection.recap_id)
+
+
+def _select_recap_if_none(db, week: Week, recap: WeeklyRecap) -> None:
+    if db.query(WeeklyRecapSelection).filter_by(week_id=week.id).first() is None:
+        db.add(WeeklyRecapSelection(
+            week_id=week.id,
+            recap_id=recap.id,
+            selected_at=utcnow(),
+        ))
+
+
+def select_weekly_recap(db, week: Week, recap: WeeklyRecap) -> WeeklyRecapSelection:
+    if recap.week_id != week.id:
+        raise ValueError("The recap does not belong to that week")
+    if recap.status != "ready":
+        raise ValueError("Only a completed recap can be selected")
+    selection = db.query(WeeklyRecapSelection).filter_by(week_id=week.id).first()
+    if selection is None:
+        selection = WeeklyRecapSelection(week_id=week.id)
+    selection.recap_id = recap.id
+    selection.selected_at = utcnow()
+    db.add(selection)
+    db.commit()
+    return selection
+
+
 def generate_and_store_weekly_recap(db, week: Week) -> WeeklyRecap:
     """Persist the fact snapshot, call the writer, and retain success or failure."""
     context = build_weekly_recap_context(db, week)
@@ -2312,6 +2640,8 @@ def generate_and_store_weekly_recap(db, week: Week) -> WeeklyRecap:
         context_hash=context_hash,
         prompt_version=CORRESPONDENT_PROMPT_VERSION,
         model=model,
+        correspondent_version="v1",
+        source_count=0,
         created_at=utcnow(),
     )
     db.add(recap)
@@ -2325,6 +2655,59 @@ def generate_and_store_weekly_recap(db, week: Week) -> WeeklyRecap:
         recap.model = generated.model
         recap.provider_response_id = generated.provider_response_id
         recap.completed_at = utcnow()
+        db.flush()
+        _select_recap_if_none(db, week, recap)
+    except CorrespondentError as exc:
+        recap.status = "failed"
+        recap.error_message = str(exc)[:1000]
+        recap.completed_at = utcnow()
+    db.add(recap)
+    db.commit()
+    return recap
+
+
+def generate_and_store_weekly_recap_v2(db, week: Week) -> WeeklyRecap:
+    """Generate V2 beside V1; a V2 attempt never replaces the selected recap."""
+    if not correspondent_v2_enabled():
+        raise ValueError("Correspondent V2 is not enabled")
+    context = build_weekly_recap_context_v2(db, week)
+    context_json = json.dumps(context, ensure_ascii=False, sort_keys=True)
+    context_hash = hashlib.sha256(context_json.encode("utf-8")).hexdigest()
+    external_json = json.dumps(
+        context["external_context"], ensure_ascii=False, sort_keys=True
+    )
+    external_context_hash = hashlib.sha256(external_json.encode("utf-8")).hexdigest()
+    latest_revision = db.query(func.max(WeeklyRecap.revision)).filter_by(
+        week_id=week.id
+    ).scalar() or 0
+    model = (os.environ.get("OPENAI_MODEL") or DEFAULT_CORRESPONDENT_MODEL).strip()
+    recap = WeeklyRecap(
+        week_id=week.id,
+        revision=latest_revision + 1,
+        status="generating",
+        context_json=context_json,
+        context_hash=context_hash,
+        prompt_version=V2_PROMPT_VERSION,
+        model=model,
+        correspondent_version="v2",
+        source_count=context["external_context"]["candidate_source_count"],
+        external_context_hash=external_context_hash,
+        created_at=utcnow(),
+    )
+    db.add(recap)
+    db.commit()
+
+    try:
+        generated = generate_weekly_recap_v2(context, model=model)
+        recap.status = "ready"
+        recap.title = generated.title
+        recap.body_markdown = generated.body_markdown
+        recap.model = generated.model
+        recap.provider_response_id = generated.provider_response_id
+        recap.completed_at = utcnow()
+        for source_id in generated.used_source_ids:
+            db.add(RecapSourceUsage(recap_id=recap.id, source_id=source_id))
+        _select_recap_if_none(db, week, recap)
     except CorrespondentError as exc:
         recap.status = "failed"
         recap.error_message = str(exc)[:1000]
@@ -2411,6 +2794,8 @@ def admin():
     fixtures = []
     res_map = {}
     recaps = []
+    correspondent_sources = []
+    selected_recap = None
     if weeks:
         sel = request.args.get("week", type=int)
         wk = season_week(db, season, sel) if sel else current_drafting_week(db, season)
@@ -2425,6 +2810,13 @@ def admin():
         recaps = db.query(WeeklyRecap).filter_by(week_id=wk.id).order_by(
             WeeklyRecap.revision.desc()
         ).all()
+        correspondent_sources = db.query(CorrespondentSource).filter_by(
+            week_id=wk.id
+        ).order_by(
+            CorrespondentSource.created_at.desc(),
+            CorrespondentSource.id.desc(),
+        ).all()
+        selected_recap = selected_weekly_recap(db, wk)
 
     year_two = db.query(Season).filter_by(code="year-2").first()
     can_import_api = year_two is None or db.query(Week).filter_by(
@@ -2455,6 +2847,10 @@ def admin():
         ).strip(),
         recaps=recaps,
         latest_recap=recaps[0] if recaps else None,
+        selected_recap=selected_recap,
+        correspondent_sources=correspondent_sources,
+        correspondent_v2_enabled=correspondent_v2_enabled(),
+        correspondent_default_version=correspondent_default_version(),
         can_import_api=can_import_api,
         default_players=",".join(player.name for player in defaults_from),
         default_room_code=wk.room_code if wk is not None else "",
@@ -2528,17 +2924,104 @@ def admin_generate_recap():
     week = None if week_number is None else season_week(db, season, week_number)
     if week is None:
         abort(404, "Week not found")
+    version = request.form.get(
+        "version", correspondent_default_version()
+    ).strip().lower()
     try:
-        recap = generate_and_store_weekly_recap(db, week)
+        if version == "v1":
+            recap = generate_and_store_weekly_recap(db, week)
+        elif version == "v2":
+            recap = generate_and_store_weekly_recap_v2(db, week)
+        else:
+            raise ValueError("Unknown Correspondent version")
         if recap.status == "ready":
             flash(
-                f"Week {week.number} recap revision {recap.revision} generated.",
+                f"Week {week.number} {version.upper()} recap revision "
+                f"{recap.revision} generated.",
                 "success",
             )
         else:
             flash(recap.error_message or "Recap generation failed", "error")
     except ValueError as exc:
         flash(str(exc), "error")
+    return redirect(url_for("admin", week=week.number))
+
+
+@app.post("/admin/correspondent-sources")
+def admin_add_correspondent_source():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    if not correspondent_v2_enabled():
+        abort(404, "Correspondent V2 is not enabled")
+    db = SessionLocal()
+    season = active_season(db)
+    if season is None:
+        abort(404, "No active season")
+    week_number = request.form.get("week", type=int)
+    week = None if week_number is None else season_week(db, season, week_number)
+    if week is None:
+        abort(404, "Week not found")
+    try:
+        source = create_manual_correspondent_source(
+            db,
+            week,
+            source_type=request.form.get("source_type", "manual"),
+            canonical_url=request.form.get("canonical_url", ""),
+            author_name=request.form.get("author_name", ""),
+            body_text=request.form.get("body_text", ""),
+            submission_note=request.form.get("submission_note", ""),
+        )
+        flash(f"Added Correspondent source #{source.id}.", "success")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("admin", week=week.number))
+
+
+@app.post("/admin/select-recap")
+def admin_select_recap():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    db = SessionLocal()
+    season = active_season(db)
+    if season is None:
+        abort(404, "No active season")
+    week_number = request.form.get("week", type=int)
+    recap_id = request.form.get("recap_id", type=int)
+    week = None if week_number is None else season_week(db, season, week_number)
+    recap = None if recap_id is None else db.get(WeeklyRecap, recap_id)
+    if week is None or recap is None:
+        abort(404, "Week or recap not found")
+    try:
+        select_weekly_recap(db, week, recap)
+        flash(
+            f"Revision {recap.revision} ({recap.correspondent_version.upper()}) "
+            "is now the official recap.",
+            "success",
+        )
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("admin", week=week.number))
+
+
+@app.post("/admin/correspondent-sources/<int:source_id>/status")
+def admin_set_correspondent_source_status(source_id: int):
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    if not correspondent_v2_enabled():
+        abort(404, "Correspondent V2 is not enabled")
+    db = SessionLocal()
+    season = active_season(db)
+    source = db.get(CorrespondentSource, source_id)
+    week = None if source is None else db.get(Week, source.week_id)
+    if season is None or source is None or week is None or week.season_id != season.id:
+        abort(404, "Correspondent source not found")
+    status = request.form.get("status", "").strip().lower()
+    if status not in {"accepted", "excluded"}:
+        abort(400, "Invalid Correspondent source status")
+    source.status = status
+    db.add(source)
+    db.commit()
+    flash(f"Source #{source.id} is now {status}.", "success")
     return redirect(url_for("admin", week=week.number))
 
 
@@ -3018,9 +3501,35 @@ def _delete_season_weeks(db, season: Season) -> None:
         return
     fixture_ids = [row[0] for row in db.query(Fixture.id).filter(Fixture.week_id.in_(week_ids)).all()]
     matchup_ids = [row[0] for row in db.query(Matchup.id).filter(Matchup.week_id.in_(week_ids)).all()]
+    recap_ids = [
+        row[0]
+        for row in db.query(WeeklyRecap.id).filter(
+            WeeklyRecap.week_id.in_(week_ids)
+        ).all()
+    ]
+    source_ids = [
+        row[0]
+        for row in db.query(CorrespondentSource.id).filter(
+            CorrespondentSource.week_id.in_(week_ids)
+        ).all()
+    ]
+    db.query(WeeklyRecapSelection).filter(
+        WeeklyRecapSelection.week_id.in_(week_ids)
+    ).delete(synchronize_session=False)
+    if recap_ids:
+        db.query(RecapSourceUsage).filter(
+            RecapSourceUsage.recap_id.in_(recap_ids)
+        ).delete(synchronize_session=False)
+    if source_ids:
+        db.query(RecapSourceUsage).filter(
+            RecapSourceUsage.source_id.in_(source_ids)
+        ).delete(synchronize_session=False)
     db.query(WeeklyRecap).filter(WeeklyRecap.week_id.in_(week_ids)).delete(
         synchronize_session=False
     )
+    db.query(CorrespondentSource).filter(
+        CorrespondentSource.week_id.in_(week_ids)
+    ).delete(synchronize_session=False)
     if fixture_ids:
         db.query(Result).filter(Result.fixture_id.in_(fixture_ids)).delete(synchronize_session=False)
     if matchup_ids:

@@ -21,6 +21,10 @@ Before adding football-data.org fields to an existing database, it also creates
 `*.pre_football_api.db`. The migration preserves all fixtures, picks, results, and
 season history.
 
+Before adding the Correspondent V2 recap fields to an existing V1 database, it
+creates `*.pre_correspondent_v2.db`. Existing recaps are retained and explicitly
+marked as V1.
+
 ## Start the app and import 2026–27 fixtures
 
 Set the API key only in the local environment. Never paste it into source code or
@@ -80,6 +84,40 @@ without changing picks, results, standings, payouts, or week status.
 The OpenAI transport is isolated in `correspondent/writer.py`. The versioned
 voice and editorial instructions live in
 `correspondent/prompts/weekly_recap_v1.md`.
+
+## AI Correspondent V2 prototype
+
+V2 runs beside V1 and does not replace it. Enable the manual-source prototype
+locally with:
+
+```powershell
+$env:CORRESPONDENT_V2_ENABLED="1"
+$env:CORRESPONDENT_DEFAULT_VERSION="v1"
+```
+
+Admin then shows separate **Generate V1 Recap** and **Generate V2 Recap**
+buttons. V2 requires at least one manually entered source for the selected
+week. Both versions are stored as independent revisions, and the first
+successful recap remains the official selection until an admin explicitly
+chooses **Use this recap**. Generating V2 never silently replaces a selected V1
+recap.
+
+Set `CORRESPONDENT_V2_ENABLED=0` to hide and disable V2 without a code rollback.
+Set `CORRESPONDENT_DEFAULT_VERSION=v2` only after V2 has been evaluated; changing
+it back to `v1` immediately restores V1 as the default generation choice.
+
+The V2 fact packet wraps the unchanged V1 league context with normalized,
+untrusted external candidates. The OpenAI response must return the IDs of any
+sources it actually used, and Python rejects unknown IDs. Source text and notes
+are never treated as application instructions and cannot modify game state.
+
+V2 code is isolated in:
+
+- `correspondent/context_v2.py`
+- `correspondent/writer_v2.py`
+- `correspondent/prompts/weekly_recap_v2.md`
+
+Automated n8n/X ingestion will be added after the manual prototype is accepted.
 
 ## Arsenal pick banter
 
