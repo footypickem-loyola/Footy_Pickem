@@ -575,6 +575,81 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn("Not used in revision 1", page)
         self.assertRegex(page, r"2 candidates\s*/\s*1 used")
 
+    def test_admin_can_view_older_recap_without_changing_official_selection(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week_number = week.number
+        source = app_module.create_manual_correspondent_source(
+            db,
+            week,
+            source_type="match_news",
+            canonical_url="https://example.com/late-winner",
+            author_name="Match Desk",
+            body_text="A stoppage-time goal settled the match.",
+        )
+        v2_generated = SimpleNamespace(
+            title="Older V2 Recap",
+            body_markdown="V2 body with match context.",
+            used_source_ids=(source.id,),
+            model="v2-test-model",
+            provider_response_id="resp_v2_view",
+        )
+        with patch.dict(os.environ, {"CORRESPONDENT_V2_ENABLED": "1"}), patch.object(
+            app_module, "generate_weekly_recap_v2", return_value=v2_generated
+        ):
+            v2_recap = app_module.generate_and_store_weekly_recap_v2(db, week)
+
+        v1_generated = app_module.GeneratedRecap(
+            title="Newest V1 Recap",
+            body_markdown="V1 body with league facts only.",
+            model="v1-test-model",
+        )
+        with patch.object(
+            app_module, "generate_weekly_recap", return_value=v1_generated
+        ):
+            v1_recap = app_module.generate_and_store_weekly_recap(db, week)
+
+        self.assertEqual(app_module.selected_weekly_recap(db, week).id, v2_recap.id)
+        week_id = week.id
+        v1_recap_id = v1_recap.id
+        v2_recap_id = v2_recap.id
+
+        with app_module.app.test_client() as client:
+            with client.session_transaction() as admin_session:
+                admin_session[app_module.ADMIN_SESSION_KEY] = True
+            default_view = client.get(f"/admin?week={week_number}")
+            v2_view = client.get(
+                f"/admin?week={week_number}&recap_id={v2_recap_id}"
+            )
+            invalid_view = client.get(
+                f"/admin?week={week_number}&recap_id={v1_recap_id + 1000}"
+            )
+
+        default_page = default_view.get_data(as_text=True)
+        v2_page = v2_view.get_data(as_text=True)
+        self.assertEqual(default_view.status_code, 200)
+        self.assertIn("Revision 2", default_page)
+        self.assertIn("Newest V1 Recap", default_page)
+        self.assertIn("V1 body with league facts only.", default_page)
+        self.assertNotIn("V2 body with match context.", default_page)
+        self.assertIn("View recap", default_page)
+
+        self.assertEqual(v2_view.status_code, 200)
+        self.assertIn("Revision 1", v2_page)
+        self.assertIn("Older V2 Recap", v2_page)
+        self.assertIn("V2 body with match context.", v2_page)
+        self.assertNotIn("V1 body with league facts only.", v2_page)
+        self.assertRegex(v2_page, r"1 candidate source\s*·\s*1 used")
+        self.assertRegex(v2_page, r"Revision 1\s*—\s*V2\s*—\s*Ready")
+        self.assertIn("· Viewing", v2_page)
+        self.assertIn("· Official", v2_page)
+        self.assertEqual(invalid_view.status_code, 404)
+        verification_db = app_module.SessionLocal()
+        verification_week = verification_db.get(app_module.Week, week_id)
+        self.assertEqual(
+            app_module.selected_weekly_recap(verification_db, verification_week).id,
+            v2_recap_id,
+        )
+
     def test_admin_v2_source_entry_is_feature_flagged(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
         week_number = week.number

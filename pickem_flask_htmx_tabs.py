@@ -397,38 +397,39 @@ ADMIN_HTML = """
           <p class="muted">The recap can be generated after all ten results are final.</p>
         {% endif %}
 
-        {% if latest_recap %}
-          <div class="notice {{ 'success' if latest_recap.status == 'ready' else 'error' }}">
-            Revision {{ latest_recap.revision }} —
-            {{ latest_recap.correspondent_version|upper }} —
-            {{ latest_recap.status|capitalize }}
-            {% if selected_recap and selected_recap.id == latest_recap.id %}
+        {% if displayed_recap %}
+          <div class="notice {{ 'success' if displayed_recap.status == 'ready' else 'error' }}">
+            Revision {{ displayed_recap.revision }} —
+            {{ displayed_recap.correspondent_version|upper }} —
+            {{ displayed_recap.status|capitalize }}
+            <span class="muted">· Viewing</span>
+            {% if selected_recap and selected_recap.id == displayed_recap.id %}
               <span class="official">· Official</span>
             {% endif %}
           </div>
-          {% if latest_recap.status == 'ready' %}
-            <h4>{{ latest_recap.title }}</h4>
-            <div class="recap-body">{{ latest_recap.body_markdown|recap_markdown }}</div>
-          {% elif latest_recap.error_message %}
-            <div class="recap-body">{{ latest_recap.error_message }}</div>
+          {% if displayed_recap.status == 'ready' %}
+            <h4>{{ displayed_recap.title }}</h4>
+            <div class="recap-body">{{ displayed_recap.body_markdown|recap_markdown }}</div>
+          {% elif displayed_recap.error_message %}
+            <div class="recap-body">{{ displayed_recap.error_message }}</div>
           {% endif %}
           <p class="muted">
-            Prompt {{ latest_recap.prompt_version }} · {{ latest_recap.model }} ·
-            {% if latest_recap.correspondent_version == 'v2' %}
-              {{ latest_recap.source_count }} candidate source{{ '' if latest_recap.source_count == 1 else 's' }} ·
-              {{ recap_used_source_counts.get(latest_recap.id, 0) }} used ·
+            Prompt {{ displayed_recap.prompt_version }} · {{ displayed_recap.model }} ·
+            {% if displayed_recap.correspondent_version == 'v2' %}
+              {{ displayed_recap.source_count }} candidate source{{ '' if displayed_recap.source_count == 1 else 's' }} ·
+              {{ recap_used_source_counts.get(displayed_recap.id, 0) }} used ·
             {% endif %}
-            {{ latest_recap.completed_at or latest_recap.created_at }}
+            {{ displayed_recap.completed_at or displayed_recap.created_at }}
           </p>
         {% else %}
           <p class="muted">No recap has been generated for this week.</p>
         {% endif %}
 
         {% if recaps %}
-          <details>
+          <details {% if displayed_recap and latest_recap and displayed_recap.id != latest_recap.id %}open{% endif %}>
             <summary>All recap revisions</summary>
             <table>
-              <thead><tr><th>Revision</th><th>Version</th><th>Status</th><th>Title</th><th>Sources</th><th>Official recap</th></tr></thead>
+              <thead><tr><th>Revision</th><th>Version</th><th>Status</th><th>Title</th><th>Sources</th><th>View</th><th>Official recap</th></tr></thead>
               <tbody>
                 {% for recap in recaps %}
                   <tr>
@@ -442,6 +443,13 @@ ADMIN_HTML = """
                         {{ recap_used_source_counts.get(recap.id, 0) }} used
                       {% else %}
                         —
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if displayed_recap and displayed_recap.id == recap.id %}
+                        <span class="official">Viewing</span>
+                      {% else %}
+                        <a class="btn" href="{{ url_for('admin', week=week.number, recap_id=recap.id) }}">View recap</a>
                       {% endif %}
                     </td>
                     <td>
@@ -3028,6 +3036,7 @@ def admin():
     correspondent_sources = []
     selected_recap = None
     latest_recap = None
+    displayed_recap = None
     latest_v2_recap = None
     recap_used_source_counts = {}
     latest_v2_used_source_ids = set()
@@ -3046,6 +3055,18 @@ def admin():
             WeeklyRecap.revision.desc()
         ).all()
         latest_recap = recaps[0] if recaps else None
+        requested_recap_id = request.args.get("recap_id", type=int)
+        if request.args.get("recap_id") is not None and requested_recap_id is None:
+            abort(404, "Recap not found")
+        if requested_recap_id is None:
+            displayed_recap = latest_recap
+        else:
+            displayed_recap = next(
+                (recap for recap in recaps if recap.id == requested_recap_id),
+                None,
+            )
+            if displayed_recap is None:
+                abort(404, "Recap not found")
         latest_v2_recap = next(
             (
                 recap for recap in recaps
@@ -3103,6 +3124,7 @@ def admin():
         ).strip(),
         recaps=recaps,
         latest_recap=latest_recap,
+        displayed_recap=displayed_recap,
         selected_recap=selected_recap,
         latest_v2_recap=latest_v2_recap,
         recap_used_source_counts=recap_used_source_counts,
