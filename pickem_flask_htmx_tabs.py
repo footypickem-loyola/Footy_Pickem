@@ -414,7 +414,10 @@ ADMIN_HTML = """
           {% endif %}
           <p class="muted">
             Prompt {{ latest_recap.prompt_version }} · {{ latest_recap.model }} ·
-            {{ latest_recap.source_count }} external source{{ '' if latest_recap.source_count == 1 else 's' }} ·
+            {% if latest_recap.correspondent_version == 'v2' %}
+              {{ latest_recap.source_count }} candidate source{{ '' if latest_recap.source_count == 1 else 's' }} ·
+              {{ recap_used_source_counts.get(latest_recap.id, 0) }} used ·
+            {% endif %}
             {{ latest_recap.completed_at or latest_recap.created_at }}
           </p>
         {% else %}
@@ -425,7 +428,7 @@ ADMIN_HTML = """
           <details>
             <summary>All recap revisions</summary>
             <table>
-              <thead><tr><th>Revision</th><th>Version</th><th>Status</th><th>Title</th><th>Official recap</th></tr></thead>
+              <thead><tr><th>Revision</th><th>Version</th><th>Status</th><th>Title</th><th>Sources</th><th>Official recap</th></tr></thead>
               <tbody>
                 {% for recap in recaps %}
                   <tr>
@@ -433,6 +436,14 @@ ADMIN_HTML = """
                     <td>{{ recap.correspondent_version|upper }}</td>
                     <td>{{ recap.status }}</td>
                     <td>{{ recap.title or '—' }}</td>
+                    <td>
+                      {% if recap.correspondent_version == 'v2' %}
+                        {{ recap.source_count }} candidate{{ '' if recap.source_count == 1 else 's' }} /
+                        {{ recap_used_source_counts.get(recap.id, 0) }} used
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
                     <td>
                       {% if selected_recap and selected_recap.id == recap.id %}
                         <span class="official">Selected</span>
@@ -482,7 +493,7 @@ ADMIN_HTML = """
 
         {% if correspondent_sources %}
           <table style="margin-top:12px;">
-            <thead><tr><th>ID</th><th>Type</th><th>Author</th><th>Source</th><th>Status</th><th>Action</th></tr></thead>
+            <thead><tr><th>ID</th><th>Type</th><th>Author</th><th>Source</th><th>Status</th><th>Latest V2 recap</th><th>Action</th></tr></thead>
             <tbody>
               {% for source in correspondent_sources %}
                 <tr>
@@ -494,6 +505,17 @@ ADMIN_HTML = """
                     {{ source.body_text[:220] }}{% if source.body_text|length > 220 %}…{% endif %}
                   </td>
                   <td>{{ source.status }}</td>
+                  <td>
+                    {% if latest_v2_recap %}
+                      {% if source.id in latest_v2_used_source_ids %}
+                        <span class="official">Used in revision {{ latest_v2_recap.revision }}</span>
+                      {% else %}
+                        <span class="muted">Not used in revision {{ latest_v2_recap.revision }}</span>
+                      {% endif %}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
                   <td>
                     <form method="post" action="{{ url_for('admin_set_correspondent_source_status', source_id=source.id) }}">
                       <input type="hidden" name="week" value="{{ week.number }}">
@@ -3005,6 +3027,10 @@ def admin():
     recaps = []
     correspondent_sources = []
     selected_recap = None
+    latest_recap = None
+    latest_v2_recap = None
+    recap_used_source_counts = {}
+    latest_v2_used_source_ids = set()
     if weeks:
         sel = request.args.get("week", type=int)
         wk = season_week(db, season, sel) if sel else current_drafting_week(db, season)
@@ -3019,6 +3045,27 @@ def admin():
         recaps = db.query(WeeklyRecap).filter_by(week_id=wk.id).order_by(
             WeeklyRecap.revision.desc()
         ).all()
+        latest_recap = recaps[0] if recaps else None
+        latest_v2_recap = next(
+            (
+                recap for recap in recaps
+                if recap.correspondent_version == "v2" and recap.status == "ready"
+            ),
+            None,
+        )
+        recap_ids = [recap.id for recap in recaps]
+        recap_used_source_ids = {recap_id: set() for recap_id in recap_ids}
+        if recap_ids:
+            for usage in db.query(RecapSourceUsage).filter(
+                RecapSourceUsage.recap_id.in_(recap_ids)
+            ):
+                recap_used_source_ids[usage.recap_id].add(usage.source_id)
+        recap_used_source_counts = {
+            recap_id: len(source_ids)
+            for recap_id, source_ids in recap_used_source_ids.items()
+        }
+        if latest_v2_recap is not None:
+            latest_v2_used_source_ids = recap_used_source_ids[latest_v2_recap.id]
         correspondent_sources = db.query(CorrespondentSource).filter_by(
             week_id=wk.id
         ).order_by(
@@ -3055,8 +3102,11 @@ def admin():
             os.environ.get("OPENAI_MODEL") or DEFAULT_CORRESPONDENT_MODEL
         ).strip(),
         recaps=recaps,
-        latest_recap=recaps[0] if recaps else None,
+        latest_recap=latest_recap,
         selected_recap=selected_recap,
+        latest_v2_recap=latest_v2_recap,
+        recap_used_source_counts=recap_used_source_counts,
+        latest_v2_used_source_ids=latest_v2_used_source_ids,
         correspondent_sources=correspondent_sources,
         correspondent_v2_enabled=correspondent_v2_enabled(),
         correspondent_default_version=correspondent_default_version(),

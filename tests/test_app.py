@@ -531,6 +531,50 @@ class PickemAppTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "at least one accepted source"):
                 app_module.generate_and_store_weekly_recap_v2(db, week)
 
+    def test_admin_distinguishes_candidate_and_used_v2_sources(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week_number = week.number
+        used_source = app_module.create_manual_correspondent_source(
+            db,
+            week,
+            source_type="match_news",
+            canonical_url="https://example.com/used",
+            author_name="Used Reporter",
+            body_text="A late winner changed the matchup.",
+        )
+        app_module.create_manual_correspondent_source(
+            db,
+            week,
+            source_type="curated_post",
+            canonical_url="https://example.com/not-used",
+            author_name="Unused Reporter",
+            body_text="A valid source that did not improve the article.",
+        )
+        generated = SimpleNamespace(
+            title="Sources Under Review",
+            body_markdown="Only one source materially improved the recap.",
+            used_source_ids=(used_source.id,),
+            model="test-model",
+            provider_response_id="resp_sources",
+        )
+        with patch.dict(os.environ, {"CORRESPONDENT_V2_ENABLED": "1"}), patch.object(
+            app_module, "generate_weekly_recap_v2", return_value=generated
+        ):
+            app_module.generate_and_store_weekly_recap_v2(db, week)
+
+        with app_module.app.test_client() as client:
+            with client.session_transaction() as admin_session:
+                admin_session[app_module.ADMIN_SESSION_KEY] = True
+            with patch.dict(os.environ, {"CORRESPONDENT_V2_ENABLED": "1"}):
+                response = client.get(f"/admin?week={week_number}")
+
+        page = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertRegex(page, r"2 candidate sources\s*·\s*1 used")
+        self.assertIn("Used in revision 1", page)
+        self.assertIn("Not used in revision 1", page)
+        self.assertRegex(page, r"2 candidates\s*/\s*1 used")
+
     def test_admin_v2_source_entry_is_feature_flagged(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
         week_number = week.number
