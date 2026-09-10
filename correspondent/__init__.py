@@ -13,6 +13,12 @@ from .writer_v2 import (
     GeneratedRecapV2,
     generate_weekly_recap_v2,
 )
+from .classifier import (
+    CLASSIFIER_PROMPT_VERSION,
+    ClassificationBatch,
+    SourceClassification,
+    classify_candidate_sources,
+)
 
 __all__ = [
     "DEFAULT_MODEL",
@@ -24,4 +30,8 @@ __all__ = [
     "V2_PROMPT_VERSION",
     "GeneratedRecapV2",
     "generate_weekly_recap_v2",
+    "CLASSIFIER_PROMPT_VERSION",
+    "ClassificationBatch",
+    "SourceClassification",
+    "classify_candidate_sources",
 ]

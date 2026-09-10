@@ -19,10 +19,13 @@ def _isoformat(value: Any) -> str | None:
     return str(value)
 
 
-def serialize_source(source: Any) -> dict[str, Any]:
+def serialize_source(
+    source: Any,
+    classification: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Return the bounded source shape that may be sent to the writer."""
     submitter = getattr(source, "submitted_by", None)
-    return {
+    serialized = {
         "source_id": source.id,
         "provider": source.provider,
         "source_type": source.source_type,
@@ -33,14 +36,24 @@ def serialize_source(source: Any) -> dict[str, Any]:
         "submitted_by": None if submitter is None else submitter.name,
         "submission_note": source.submission_note,
     }
+    if classification is not None:
+        serialized["classification"] = dict(classification)
+    return serialized
 
 
 def build_v2_context(
     league_context: Mapping[str, Any],
     sources: Iterable[Any],
+    classifications: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Combine authoritative V1 facts with normalized external candidates."""
-    candidates = [serialize_source(source) for source in sources]
+    candidates = [
+        serialize_source(
+            source,
+            None if classifications is None else classifications.get(source.id),
+        )
+        for source in sources
+    ]
     if not candidates:
         raise ValueError("Correspondent V2 requires at least one accepted source")
     return {
