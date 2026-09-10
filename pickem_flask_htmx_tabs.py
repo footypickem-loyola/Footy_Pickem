@@ -29,12 +29,16 @@ import markdown
 from markupsafe import Markup
 
 from correspondent import (
+    CLASSIFIER_PROMPT_VERSION,
     DEFAULT_MODEL as DEFAULT_CORRESPONDENT_MODEL,
     PROMPT_VERSION as CORRESPONDENT_PROMPT_VERSION,
+    ClassificationBatch,
     CorrespondentError,
     GeneratedRecap,
+    SourceClassification,
     V2_PROMPT_VERSION,
     build_v2_context,
+    classify_candidate_sources,
     generate_weekly_recap,
     generate_weekly_recap_v2,
 )
@@ -1239,6 +1243,39 @@ class CorrespondentSource(Base):
         UniqueConstraint(
             "week_id", "provider", "content_hash",
             name="uix_correspondent_source_content",
+        ),
+    )
+
+
+class CorrespondentSourceClassification(Base):
+    """Versioned, auditable semantic classification for one stored source."""
+
+    __tablename__ = "correspondent_source_classifications"
+    id = Column(Integer, primary_key=True)
+    source_id = Column(
+        Integer,
+        ForeignKey("correspondent_sources.id"),
+        nullable=False,
+    )
+    prompt_version = Column(String, nullable=False)
+    pass_number = Column(Integer, nullable=False)
+    pickem_impact = Column(String, nullable=False)
+    editorial_functions_json = Column(Text, nullable=False)
+    article_use = Column(String, nullable=False)
+    confidence = Column(String, nullable=False)
+    route = Column(String, nullable=False)
+    reason_codes_json = Column(Text, nullable=False)
+    reason = Column(Text, nullable=False)
+    model = Column(String, nullable=False)
+    provider_response_id = Column(String)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    source = relationship("CorrespondentSource")
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "prompt_version",
+            "pass_number",
+            name="uix_source_classification_version_pass",
         ),
     )
 
@@ -2562,6 +2599,8 @@ CORRESPONDENT_INGEST_REQUIRED_FIELDS = {
     "body_text",
 }
 CORRESPONDENT_INGEST_MAX_BODY_BYTES = 25_000
+CORRESPONDENT_BATCH_MAX_BODY_BYTES = 10_000_000
+CORRESPONDENT_BATCH_MAX_SOURCES = 1_000
 CORRESPONDENT_PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 
@@ -2581,6 +2620,196 @@ def accepted_correspondent_sources(db, week: Week) -> List[CorrespondentSource]:
         CorrespondentSource.created_at.asc(),
         CorrespondentSource.id.asc(),
     ).all()
+
+
+def _correspondent_source_metadata(source: CorrespondentSource) -> Dict[str, Any]:
+    try:
+        metadata = json.loads(source.metadata_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def correspondent_source_is_article_candidate(source: CorrespondentSource) -> bool:
+    """Apply the approved structural routing without deleting the raw source."""
+    metadata = _correspondent_source_metadata(source)
+    approved_routing = metadata.get("approved_routing")
+    if isinstance(approved_routing, Mapping):
+        article_candidate = approved_routing.get("article_candidate")
+        if isinstance(article_candidate, bool):
+            return article_candidate
+
+    objective_audit = metadata.get("objective_audit")
+    if isinstance(objective_audit, Mapping):
+        if objective_audit.get("is_retweet") is True:
+            return False
+        reference_types = objective_audit.get("reference_types")
+        if isinstance(reference_types, list) and "retweeted" in reference_types:
+            return False
+
+    references = metadata.get("referenced_tweets")
+    if isinstance(references, list):
+        for reference in references:
+            if isinstance(reference, Mapping) and reference.get("type") == "retweeted":
+                return False
+    return True
+
+
+def classification_candidate_sources(
+    db,
+    week: Week,
+) -> Tuple[List[Dict[str, Any]], List[CorrespondentSource]]:
+    """Return model-ready candidates and signal-only sources from durable rows."""
+    candidates: List[Dict[str, Any]] = []
+    signal_only: List[CorrespondentSource] = []
+    for source in accepted_correspondent_sources(db, week):
+        if not correspondent_source_is_article_candidate(source):
+            signal_only.append(source)
+            continue
+        candidates.append({
+            "source_id": source.id,
+            "provider": source.provider,
+            "source_type": source.source_type,
+            "external_id": source.external_id,
+            "canonical_url": source.canonical_url,
+            "author": source.author_name,
+            "text": source.body_text,
+            "published_at": (
+                source.published_at.isoformat() if source.published_at else None
+            ),
+            "metadata": _correspondent_source_metadata(source),
+        })
+    return candidates, signal_only
+
+
+def _classification_as_input(classification: SourceClassification) -> Dict[str, Any]:
+    return {
+        "pickem_impact": classification.pickem_impact,
+        "editorial_functions": list(classification.editorial_functions),
+        "article_use": classification.article_use,
+        "confidence": classification.confidence,
+        "route": classification.route,
+        "reason_codes": list(classification.reason_codes),
+        "reason": classification.reason,
+    }
+
+
+def store_source_classification(
+    db,
+    classification: SourceClassification,
+    batch: ClassificationBatch,
+) -> CorrespondentSourceClassification:
+    """Idempotently store one classifier decision and its explanation."""
+    record = db.query(CorrespondentSourceClassification).filter_by(
+        source_id=classification.source_id,
+        prompt_version=CLASSIFIER_PROMPT_VERSION,
+        pass_number=batch.pass_number,
+    ).first()
+    if record is None:
+        record = CorrespondentSourceClassification(
+            source_id=classification.source_id,
+            prompt_version=CLASSIFIER_PROMPT_VERSION,
+            pass_number=batch.pass_number,
+            created_at=utcnow(),
+        )
+    record.pickem_impact = classification.pickem_impact
+    record.editorial_functions_json = json.dumps(
+        list(classification.editorial_functions),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    record.article_use = classification.article_use
+    record.confidence = classification.confidence
+    record.route = classification.route
+    record.reason_codes_json = json.dumps(
+        list(classification.reason_codes),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    record.reason = classification.reason
+    record.model = batch.model
+    record.provider_response_id = batch.provider_response_id
+    db.add(record)
+    return record
+
+
+def _classification_batches(
+    candidates: List[Dict[str, Any]],
+    batch_size: int,
+) -> Iterable[List[Dict[str, Any]]]:
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+        raise ValueError("batch_size must be a positive integer")
+    for start in range(0, len(candidates), batch_size):
+        yield candidates[start:start + batch_size]
+
+
+def classify_and_store_week_sources(
+    db,
+    week: Week,
+    *,
+    client: Any = None,
+    model: Optional[str] = None,
+    batch_size: int = 20,
+) -> Dict[str, Any]:
+    """Run the approved two-pass classifier and persist every decision."""
+    league_context = build_weekly_recap_context(db, week)
+    candidates, signal_only = classification_candidate_sources(db, week)
+    if not candidates:
+        raise ValueError("No article-candidate sources are available for classification")
+
+    first_pass: Dict[int, SourceClassification] = {}
+    for candidate_batch in _classification_batches(candidates, batch_size):
+        result = classify_candidate_sources(
+            candidate_batch,
+            league_context,
+            pass_number=1,
+            client=client,
+            model=model,
+        )
+        for classification in result.classifications:
+            first_pass[classification.source_id] = classification
+            store_source_classification(db, classification, result)
+        db.commit()
+
+    candidates_by_id = {candidate["source_id"]: candidate for candidate in candidates}
+    review_candidates: List[Dict[str, Any]] = []
+    for source_id, classification in first_pass.items():
+        if classification.route != "AUTOMATED_REVIEW":
+            continue
+        enriched = dict(candidates_by_id[source_id])
+        enriched["initial_classification"] = _classification_as_input(classification)
+        review_candidates.append(enriched)
+
+    second_pass: Dict[int, SourceClassification] = {}
+    for candidate_batch in _classification_batches(review_candidates, batch_size):
+        result = classify_candidate_sources(
+            candidate_batch,
+            league_context,
+            pass_number=2,
+            client=client,
+            model=model,
+        )
+        for classification in result.classifications:
+            second_pass[classification.source_id] = classification
+            store_source_classification(db, classification, result)
+        db.commit()
+
+    effective = dict(first_pass)
+    effective.update(second_pass)
+    route_counts: Dict[str, int] = {}
+    for classification in effective.values():
+        route_counts[classification.route] = route_counts.get(classification.route, 0) + 1
+
+    return {
+        "stored_sources": len(candidates) + len(signal_only),
+        "article_candidates": len(candidates),
+        "signal_only_sources": len(signal_only),
+        "first_pass_classifications": len(first_pass),
+        "automated_reviews": len(review_candidates),
+        "second_pass_classifications": len(second_pass),
+        "effective_route_counts": route_counts,
+        "prompt_version": CLASSIFIER_PROMPT_VERSION,
+    }
 
 
 def create_manual_correspondent_source(
@@ -2694,6 +2923,8 @@ def _parse_correspondent_published_at(value: Any) -> Optional[datetime]:
 def ingest_correspondent_source(
     db,
     payload: Mapping[str, Any],
+    *,
+    commit: bool = True,
 ) -> Tuple[CorrespondentSource, bool]:
     """Validate and idempotently store one normalized external source."""
     if not isinstance(payload, Mapping):
@@ -2823,14 +3054,115 @@ def ingest_correspondent_source(
         created_at=utcnow(),
     )
     db.add(source)
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return source, True
 
 
+def effective_source_classifications(
+    db,
+    week: Week,
+) -> Dict[int, CorrespondentSourceClassification]:
+    """Return the latest completed classifier pass for each source in a week."""
+    records = db.query(CorrespondentSourceClassification).join(
+        CorrespondentSource,
+        CorrespondentSource.id == CorrespondentSourceClassification.source_id,
+    ).filter(
+        CorrespondentSource.week_id == week.id,
+        CorrespondentSourceClassification.prompt_version
+        == CLASSIFIER_PROMPT_VERSION,
+    ).order_by(
+        CorrespondentSourceClassification.source_id.asc(),
+        CorrespondentSourceClassification.pass_number.asc(),
+    ).all()
+    effective: Dict[int, CorrespondentSourceClassification] = {}
+    for record in records:
+        effective[record.source_id] = record
+    return effective
+
+
+def _classification_for_writer(
+    record: CorrespondentSourceClassification,
+) -> Dict[str, Any]:
+    try:
+        editorial_functions = json.loads(record.editorial_functions_json)
+    except (TypeError, json.JSONDecodeError):
+        editorial_functions = []
+    try:
+        reason_codes = json.loads(record.reason_codes_json)
+    except (TypeError, json.JSONDecodeError):
+        reason_codes = []
+    return {
+        "prompt_version": record.prompt_version,
+        "pass_number": record.pass_number,
+        "pickem_impact": record.pickem_impact,
+        "editorial_functions": editorial_functions,
+        "article_use": record.article_use,
+        "confidence": record.confidence,
+        "route": record.route,
+        "reason_codes": reason_codes,
+        "reason": record.reason,
+    }
+
+
+def writer_candidate_sources(
+    db,
+    week: Week,
+) -> Tuple[List[CorrespondentSource], Dict[int, Dict[str, Any]]]:
+    """Select only approved, classified sources for the V2 writer."""
+    structural_candidates = [
+        source
+        for source in accepted_correspondent_sources(db, week)
+        if correspondent_source_is_article_candidate(source)
+    ]
+    if not structural_candidates:
+        raise ValueError("Correspondent V2 requires at least one accepted source")
+
+    effective = effective_source_classifications(db, week)
+    automated_candidates = [
+        source for source in structural_candidates if source.provider != "manual"
+    ]
+    if not effective:
+        if automated_candidates:
+            raise ValueError(
+                "Automated Correspondent sources must be classified before V2 generation"
+            )
+        return structural_candidates, {}
+
+    missing_ids = [
+        source.id for source in structural_candidates if source.id not in effective
+    ]
+    if missing_ids:
+        raise ValueError(
+            "All Correspondent candidates must complete classification before V2 generation"
+        )
+
+    selected: List[CorrespondentSource] = []
+    classification_context: Dict[int, Dict[str, Any]] = {}
+    for source in structural_candidates:
+        record = effective[source.id]
+        if record.route not in {"ADVANCE", "ADVANCE_LOW_CONFIDENCE"}:
+            continue
+        if record.article_use == "NO_USE":
+            continue
+        selected.append(source)
+        classification_context[source.id] = _classification_for_writer(record)
+    if not selected:
+        raise ValueError("No classified Correspondent sources advanced to the V2 writer")
+    return selected, classification_context
+
+
 def build_weekly_recap_context_v2(db, week: Week) -> Dict[str, Any]:
-    """Add accepted external candidates around the unchanged V1 fact packet."""
+    """Add approved external candidates around the unchanged V1 fact packet."""
     league_context = build_weekly_recap_context(db, week)
-    return build_v2_context(league_context, accepted_correspondent_sources(db, week))
+    sources, classifications = writer_candidate_sources(db, week)
+    return build_v2_context(
+        league_context,
+        sources,
+        classifications=classifications,
+    )
 
 
 def selected_weekly_recap(db, week: Week) -> Optional[WeeklyRecap]:
@@ -3381,6 +3713,85 @@ def ingest_correspondent_source_api():
         },
     ), 201 if created else 200
 
+
+@app.post("/api/correspondent/sources/batch")
+def ingest_correspondent_source_batch_api():
+    """Atomically accept one bounded gameweek batch from n8n."""
+    expected_secret = os.environ.get("CORRESPONDENT_INGEST_SECRET", "").strip()
+    if not expected_secret:
+        return jsonify(ok=False, error="Correspondent ingestion is not configured"), 503
+
+    supplied_secret = request.headers.get("X-Correspondent-Secret", "")
+    if not hmac.compare_digest(supplied_secret, expected_secret):
+        return jsonify(ok=False, error="Forbidden"), 403
+    if (
+        request.content_length
+        and request.content_length > CORRESPONDENT_BATCH_MAX_BODY_BYTES
+    ):
+        return jsonify(ok=False, error="Request body is too large"), 413
+    if not request.is_json:
+        return jsonify(ok=False, error="Content-Type must be application/json"), 415
+    if len(request.get_data(cache=True)) > CORRESPONDENT_BATCH_MAX_BODY_BYTES:
+        return jsonify(ok=False, error="Request body is too large"), 413
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(ok=False, error="Request body must be a JSON object"), 400
+    unknown_fields = set(payload) - {"sources"}
+    if unknown_fields:
+        return jsonify(
+            ok=False,
+            error="Unknown batch field(s): "
+            + ", ".join(sorted(str(field) for field in unknown_fields)),
+        ), 400
+    sources = payload.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return jsonify(ok=False, error="sources must be a non-empty array"), 400
+    if len(sources) > CORRESPONDENT_BATCH_MAX_SOURCES:
+        return jsonify(
+            ok=False,
+            error=(
+                "sources must contain no more than "
+                f"{CORRESPONDENT_BATCH_MAX_SOURCES:,} items"
+            ),
+        ), 400
+
+    db = SessionLocal()
+    results: List[Tuple[CorrespondentSource, bool]] = []
+    failed_index: Optional[int] = None
+    try:
+        for failed_index, source_payload in enumerate(sources):
+            results.append(
+                ingest_correspondent_source(db, source_payload, commit=False)
+            )
+        db.commit()
+    except CorrespondentIngestNotFound as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc), failed_index=failed_index), 404
+    except CorrespondentIngestConflict as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc), failed_index=failed_index), 409
+    except ValueError as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc), failed_index=failed_index), 400
+
+    created_count = sum(1 for _, created in results if created)
+    return jsonify(
+        ok=True,
+        received=len(sources),
+        created=created_count,
+        existing=len(sources) - created_count,
+        sources=[
+            {
+                "id": source.id,
+                "external_id": source.external_id,
+                "created": created,
+            }
+            for source, created in results
+        ],
+    ), 201 if created_count else 200
+
+
 @app.post("/admin/set-results")
 def admin_set_results():
     if not is_admin_session():
@@ -3855,6 +4266,9 @@ def _delete_season_weeks(db, season: Season) -> None:
     if source_ids:
         db.query(RecapSourceUsage).filter(
             RecapSourceUsage.source_id.in_(source_ids)
+        ).delete(synchronize_session=False)
+        db.query(CorrespondentSourceClassification).filter(
+            CorrespondentSourceClassification.source_id.in_(source_ids)
         ).delete(synchronize_session=False)
     db.query(WeeklyRecap).filter(WeeklyRecap.week_id.in_(week_ids)).delete(
         synchronize_session=False

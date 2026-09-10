@@ -168,6 +168,42 @@ Ingestion only adds rows to `correspondent_sources`; it cannot select a recap or
 change league data. Manual Admin entry remains available as the operational
 fallback.
 
+For a complete n8n collection, use the atomic batch endpoint:
+
+```text
+POST /api/correspondent/sources/batch
+Content-Type: application/json
+X-Correspondent-Secret: the-same-dedicated-secret
+
+{"sources": [/* normalized source objects using the shape above */]}
+```
+
+The batch accepts between 1 and 1,000 sources and is capped at 10 MB. Every
+source is validated before the transaction commits. If any item fails, the
+entire batch is rolled back and the response identifies its zero-based
+`failed_index`. Repeating an identical successful batch is safe: existing
+provider/external-ID pairs are returned without creating duplicate rows.
+
+### Semantic classification
+
+Automated sources must complete semantic classification before they can reach
+the V2 writer. Bare retweets remain stored as attention signals but are not
+article candidates. Originals, replies, and quote posts with added commentary
+remain eligible for classification.
+
+The classifier records separate, explainable fields for Pick 'Em impact,
+editorial function, article use, confidence, routing, reason codes, and a
+plain-English reason. Low-confidence first-pass decisions receive an automated
+second pass. If that pass remains uncertain, the source advances with an
+explicit low-confidence label rather than waiting for manual review.
+
+The versioned classifier instructions live in
+`correspondent/prompts/semantic_classifier_v1.md`; the transport and strict
+response validation live in `correspondent/classifier.py`. Only `ADVANCE` and
+`ADVANCE_LOW_CONFIDENCE` sources are supplied to the V2 writer. Analysis,
+statistical evidence, informed reaction, and season narratives may advance even
+when they do not describe a discrete match event.
+
 ## Arsenal pick banter
 
 After a successful Arsenal pick, the app fires a one-time HTMX response event
