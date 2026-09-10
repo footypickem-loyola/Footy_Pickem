@@ -1,0 +1,306 @@
+{
+  "name": "Correspondent V2 – X Gameweek Collector",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1b5a7d65-6469-457d-8fc0-cfe0aa5a3011",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-920, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "02ef4bba-0940-4ea5-a646-20c2d4074c59",
+              "name": "season_code",
+              "value": "v2-staging",
+              "type": "string"
+            },
+            {
+              "id": "8d0e720a-a318-40a7-9aac-9cc56d752025",
+              "name": "week_number",
+              "value": 2,
+              "type": "number"
+            },
+            {
+              "id": "af029ab1-1c29-4702-b30b-cd9c2d7c5980",
+              "name": "window_start_utc",
+              "value": "REPLACE_WITH_ISO_8601_START",
+              "type": "string"
+            },
+            {
+              "id": "1218c0d6-6fbf-403a-bd25-8a4fe8d33f61",
+              "name": "window_end_utc",
+              "value": "REPLACE_WITH_ISO_8601_END",
+              "type": "string"
+            },
+            {
+              "id": "5185b20d-b90b-4af9-a4c4-a910ba91aa13",
+              "name": "mode",
+              "value": "mock",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "97df7ae0-93a7-45c4-b274-fbb6ae1b2312",
+      "name": "Collector Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-700, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "22a835a6-50b2-4614-917e-5260f4c75bcc",
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "live",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "dbb938ca-4a0a-483f-b32f-c085034076cb",
+      "name": "Live Mode?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-480, 0]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.x.com/2/users/{{$env.X_USER_ID}}/timelines/reverse_chronological",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "max_results",
+              "value": "100"
+            },
+            {
+              "name": "start_time",
+              "value": "={{ $('Collector Config').item.json.window_start_utc }}"
+            },
+            {
+              "name": "end_time",
+              "value": "={{ $('Collector Config').item.json.window_end_utc }}"
+            },
+            {
+              "name": "tweet.fields",
+              "value": "id,text,author_id,created_at,conversation_id,referenced_tweets,public_metrics,entities"
+            },
+            {
+              "name": "expansions",
+              "value": "author_id,referenced_tweets.id,referenced_tweets.id.author_id"
+            },
+            {
+              "name": "user.fields",
+              "value": "id,name,username,verified"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.X_USER_ACCESS_TOKEN}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "pagination_token",
+                    "value": "={{ $response.body.meta.next_token }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.meta?.next_token }}",
+              "limitPagesFetched": true,
+              "maxRequests": 10,
+              "requestInterval": 0
+            }
+          }
+        }
+      },
+      "id": "d6af3643-b5dd-47da-8716-d456688c4417",
+      "name": "Fetch X Home Timeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-220, -120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Collector Config').first().json;\nconst pages = $input.all();\nconst seen = new Set();\nconst posts = [];\nconst authors = new Map();\n\nfor (const item of pages) {\n  const page = item.json ?? {};\n  for (const user of (page.includes?.users ?? [])) {\n    authors.set(String(user.id), user);\n  }\n  for (const post of (page.data ?? [])) {\n    const id = String(post.id ?? '');\n    if (!id || seen.has(id)) continue;\n    seen.add(id);\n    posts.push(post);\n    if (posts.length >= 1000) break;\n  }\n  if (posts.length >= 1000) break;\n}\n\nconst sources = posts.map(post => {\n  const author = authors.get(String(post.author_id ?? '')) ?? {};\n  const refs = Array.isArray(post.referenced_tweets) ? post.referenced_tweets : [];\n  const isBareRetweet = refs.some(r => r.type === 'retweeted') && /^RT\\s+@/i.test(post.text ?? '');\n  const isReply = refs.some(r => r.type === 'replied_to');\n  const isQuote = refs.some(r => r.type === 'quoted');\n  return {\n    season_code: cfg.season_code,\n    week_number: Number(cfg.week_number),\n    provider: 'x',\n    source_type: 'curated_post',\n    external_id: String(post.id),\n    canonical_url: author.username ? `https://x.com/${author.username}/status/${post.id}` : null,\n    author_name: author.name || author.username || null,\n    body_text: String(post.text ?? ''),\n    published_at: post.created_at || null,\n    metadata: {\n      x_author_id: post.author_id || null,\n      x_username: author.username || null,\n      conversation_id: post.conversation_id || null,\n      referenced_tweets: refs,\n      public_metrics: post.public_metrics || {},\n      entities: post.entities || {},\n      bare_retweet: isBareRetweet,\n      reply: isReply,\n      quote_post: isQuote\n    }\n  };\n});\n\nreturn [{\n  json: {\n    sources,\n    collected_count: sources.length,\n    hit_ceiling: sources.length >= 1000,\n    mode: 'live'\n  }\n}];"
+      },
+      "id": "9e327192-4a94-4f41-b389-72d51294b5a6",
+      "name": "Normalize and Deduplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [40, -120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Collector Config').first().json;\nconst now = new Date().toISOString();\nconst samples = [\n  { id: 'mock-001', text: 'Arsenal controlled the match with confidence and Odegaard dictated the tempo.', author_id: 'mock-user-1', created_at: now, conversation_id: 'mock-001', referenced_tweets: [], public_metrics: { like_count: 10, repost_count: 2, reply_count: 1, quote_count: 0 } },\n  { id: 'mock-002', text: 'Late equaliser changes the complexion of the weekend.', author_id: 'mock-user-2', created_at: now, conversation_id: 'mock-002', referenced_tweets: [], public_metrics: { like_count: 5, repost_count: 1, reply_count: 0, quote_count: 0 } },\n  { id: 'mock-003', text: 'RT @example Routine repost for retweet filtering test', author_id: 'mock-user-3', created_at: now, conversation_id: 'mock-003', referenced_tweets: [{ type: 'retweeted', id: 'original-003' }], public_metrics: {} }\n];\nconst usernames = { 'mock-user-1': 'analyst_one', 'mock-user-2': 'reporter_two', 'mock-user-3': 'reposter_three' };\nconst sources = samples.map(post => ({\n  season_code: cfg.season_code,\n  week_number: Number(cfg.week_number),\n  provider: 'x',\n  source_type: 'curated_post',\n  external_id: post.id,\n  canonical_url: `https://x.com/${usernames[post.author_id]}/status/${post.id}`,\n  author_name: usernames[post.author_id],\n  body_text: post.text,\n  published_at: post.created_at,\n  metadata: {\n    x_author_id: post.author_id,\n    x_username: usernames[post.author_id],\n    conversation_id: post.conversation_id,\n    referenced_tweets: post.referenced_tweets,\n    public_metrics: post.public_metrics,\n    bare_retweet: post.referenced_tweets.some(r => r.type === 'retweeted') && /^RT\\s+@/i.test(post.text),\n    reply: post.referenced_tweets.some(r => r.type === 'replied_to'),\n    quote_post: post.referenced_tweets.some(r => r.type === 'quoted')\n  }\n}));\nreturn [{ json: { sources, collected_count: sources.length, hit_ceiling: false, mode: 'mock' } }];"
+      },
+      "id": "bf817e95-d9a2-4696-bb33-70b96addba7a",
+      "name": "Mock X Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-220, 140]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://footypickemv2staging-production.up.railway.app/api/correspondent/sources/batch",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Correspondent-Secret",
+              "value": "={{ $env.CORRESPONDENT_INGEST_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ sources: $json.sources }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "9f4cbc55-ff4f-4b9c-a234-3dcbfe69cab1",
+      "name": "Persist to Python Staging",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [300, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a4573a71-7504-4474-b21f-629ff8d6a038",
+              "leftValue": "={{ $('Normalize and Deduplicate').isExecuted ? $('Normalize and Deduplicate').first().json.hit_ceiling : false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2c1f99b0-fc96-4526-a284-5ac66955e167",
+      "name": "Hit 1,000 Post Ceiling?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [540, 0]
+    },
+    {
+      "parameters": {},
+      "id": "076d757d-af96-436a-a8ae-64bb93e834be",
+      "name": "Ceiling Alert Placeholder",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [780, -100]
+    },
+    {
+      "parameters": {},
+      "id": "2273e5e0-0172-4597-b847-30438beb5ec6",
+      "name": "Collection Complete",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [780, 100]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{"node": "Collector Config", "type": "main", "index": 0}]]
+    },
+    "Collector Config": {
+      "main": [[{"node": "Live Mode?", "type": "main", "index": 0}]]
+    },
+    "Live Mode?": {
+      "main": [
+        [{"node": "Fetch X Home Timeline", "type": "main", "index": 0}],
+        [{"node": "Mock X Pages", "type": "main", "index": 0}]
+      ]
+    },
+    "Fetch X Home Timeline": {
+      "main": [[{"node": "Normalize and Deduplicate", "type": "main", "index": 0}]]
+    },
+    "Normalize and Deduplicate": {
+      "main": [[{"node": "Persist to Python Staging", "type": "main", "index": 0}]]
+    },
+    "Mock X Pages": {
+      "main": [[{"node": "Persist to Python Staging", "type": "main", "index": 0}]]
+    },
+    "Persist to Python Staging": {
+      "main": [[{"node": "Hit 1,000 Post Ceiling?", "type": "main", "index": 0}]]
+    },
+    "Hit 1,000 Post Ceiling?": {
+      "main": [
+        [{"node": "Ceiling Alert Placeholder", "type": "main", "index": 0}],
+        [{"node": "Collection Complete", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "ce0f20bb-0d99-49fe-a8bd-cfc69d3e7d4c",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "recoveredFromProjectHistory": true,
+    "liveCallsRequire": [
+      "X_USER_ID",
+      "X_USER_ACCESS_TOKEN"
+    ]
+  },
+  "tags": []
+}
