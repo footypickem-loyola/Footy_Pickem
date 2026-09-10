@@ -777,6 +777,253 @@ class PickemAppTests(unittest.TestCase):
         }
         self.assertEqual(core_counts_after, core_counts_before)
 
+    def test_structural_routing_keeps_retweets_as_signal_only(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        original, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="original-1",
+                body_text="Arsenal played with the confidence of champions.",
+                metadata={
+                    "approved_routing": {
+                        "article_candidate": True,
+                        "routing_type": "original_candidate",
+                    }
+                },
+            ),
+        )
+        retweet, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="retweet-1",
+                body_text="RT @reporter: Arsenal played with confidence.",
+                metadata={
+                    "approved_routing": {
+                        "article_candidate": False,
+                        "attention_signal_only": True,
+                        "routing_type": "retweet_signal_only",
+                    },
+                    "objective_audit": {
+                        "is_retweet": True,
+                        "canonical_retweet_id": "original-1",
+                    },
+                },
+            ),
+        )
+
+        candidates, signal_only = app_module.classification_candidate_sources(db, week)
+
+        self.assertEqual([candidate["source_id"] for candidate in candidates], [original.id])
+        self.assertEqual([source.id for source in signal_only], [retweet.id])
+        self.assertEqual(db.query(app_module.CorrespondentSource).count(), 2)
+
+    def test_two_pass_classifier_persists_explainable_decisions(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        analysis_source, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="analysis-1",
+                body_text="The champions played with confidence, fluidity and depth.",
+                metadata={"approved_routing": {"article_candidate": True}},
+            ),
+        )
+        uncertain_source, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="statistics-1",
+                body_text="The midfielder completed 176 passes and created three chances.",
+                metadata={"approved_routing": {"article_candidate": True}},
+            ),
+        )
+        signal_source, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="retweet-2",
+                body_text="RT @stats: 176 passes.",
+                metadata={
+                    "approved_routing": {
+                        "article_candidate": False,
+                        "attention_signal_only": True,
+                    }
+                },
+            ),
+        )
+
+        def fake_classify(candidates, league_context, *, pass_number, **kwargs):
+            if pass_number == 1:
+                classifications = []
+                for candidate in candidates:
+                    if candidate["source_id"] == analysis_source.id:
+                        classifications.append(app_module.SourceClassification(
+                            source_id=analysis_source.id,
+                            pickem_impact="P1_MATCH_SHAPING",
+                            editorial_functions=("ANALYSIS", "SEASON_NARRATIVE"),
+                            article_use="LEAD",
+                            confidence="HIGH",
+                            route="ADVANCE",
+                            reason_codes=("RELEVANT_ANALYSIS",),
+                            reason="Explains the performance and its season meaning.",
+                        ))
+                    else:
+                        classifications.append(app_module.SourceClassification(
+                            source_id=uncertain_source.id,
+                            pickem_impact="P2_CONTEXTUAL",
+                            editorial_functions=("FACT", "STAT_EVIDENCE"),
+                            article_use="SUPPORT",
+                            confidence="LOW",
+                            route="AUTOMATED_REVIEW",
+                            reason_codes=("INSUFFICIENT_CONTEXT",),
+                            reason="Useful statistics but the fixture link needs confirmation.",
+                        ))
+                return app_module.ClassificationBatch(
+                    classifications=tuple(classifications),
+                    pass_number=1,
+                    model="test-model",
+                    provider_response_id="resp_first",
+                )
+
+            self.assertEqual(len(candidates), 1)
+            self.assertIn("initial_classification", candidates[0])
+            return app_module.ClassificationBatch(
+                classifications=(app_module.SourceClassification(
+                    source_id=uncertain_source.id,
+                    pickem_impact="P2_CONTEXTUAL",
+                    editorial_functions=("FACT", "STAT_EVIDENCE"),
+                    article_use="SUPPORT",
+                    confidence="LOW",
+                    route="ADVANCE_LOW_CONFIDENCE",
+                    reason_codes=("STATISTICAL_EVIDENCE", "INSUFFICIENT_CONTEXT"),
+                    reason="Retain the useful statistics with low-confidence routing.",
+                ),),
+                pass_number=2,
+                model="test-model",
+                provider_response_id="resp_second",
+            )
+
+        with patch.object(app_module, "classify_candidate_sources", side_effect=fake_classify):
+            summary = app_module.classify_and_store_week_sources(
+                db,
+                week,
+                client=object(),
+                model="test-model",
+                batch_size=20,
+            )
+
+        self.assertEqual(summary["stored_sources"], 3)
+        self.assertEqual(summary["article_candidates"], 2)
+        self.assertEqual(summary["signal_only_sources"], 1)
+        self.assertEqual(summary["automated_reviews"], 1)
+        self.assertEqual(summary["second_pass_classifications"], 1)
+        self.assertEqual(summary["effective_route_counts"], {
+            "ADVANCE": 1,
+            "ADVANCE_LOW_CONFIDENCE": 1,
+        })
+        records = db.query(app_module.CorrespondentSourceClassification).order_by(
+            app_module.CorrespondentSourceClassification.source_id,
+            app_module.CorrespondentSourceClassification.pass_number,
+        ).all()
+        self.assertEqual(len(records), 3)
+        self.assertEqual(
+            [record.pass_number for record in records if record.source_id == uncertain_source.id],
+            [1, 2],
+        )
+        self.assertEqual(
+            db.query(app_module.CorrespondentSourceClassification).filter_by(
+                source_id=signal_source.id
+            ).count(),
+            0,
+        )
+
+    def test_v2_writer_receives_only_sources_that_advanced_classification(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        analysis_source, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="analysis-advanced",
+                body_text="Arsenal played with belief, fluidity and unusual depth.",
+                metadata={"approved_routing": {"article_candidate": True}},
+            ),
+        )
+        advertisement_source, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="advertisement-stopped",
+                body_text="Use our discount code to buy a shirt.",
+                metadata={"approved_routing": {"article_candidate": True}},
+            ),
+        )
+        retweet_source, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="retweet-signal",
+                body_text="RT @columnist: Arsenal played with belief.",
+                metadata={
+                    "approved_routing": {
+                        "article_candidate": False,
+                        "attention_signal_only": True,
+                    }
+                },
+            ),
+        )
+        batch = app_module.ClassificationBatch(
+            classifications=(),
+            pass_number=1,
+            model="test-model",
+            provider_response_id="resp_writer_candidates",
+        )
+        app_module.store_source_classification(
+            db,
+            app_module.SourceClassification(
+                source_id=analysis_source.id,
+                pickem_impact="P1_MATCH_SHAPING",
+                editorial_functions=("ANALYSIS", "SEASON_NARRATIVE"),
+                article_use="LEAD",
+                confidence="HIGH",
+                route="ADVANCE",
+                reason_codes=("RELEVANT_ANALYSIS",),
+                reason="Strong analysis explains both the performance and wider story.",
+            ),
+            batch,
+        )
+        app_module.store_source_classification(
+            db,
+            app_module.SourceClassification(
+                source_id=advertisement_source.id,
+                pickem_impact="P3_IRRELEVANT",
+                editorial_functions=("BACKGROUND",),
+                article_use="NO_USE",
+                confidence="HIGH",
+                route="STOP",
+                reason_codes=("ADVERTISING",),
+                reason="Advertising does not improve the recap.",
+            ),
+            batch,
+        )
+        db.commit()
+
+        context = app_module.build_weekly_recap_context_v2(db, week)
+
+        candidates = context["external_context"]["candidate_sources"]
+        self.assertEqual([candidate["source_id"] for candidate in candidates], [
+            analysis_source.id
+        ])
+        self.assertEqual(
+            candidates[0]["classification"]["editorial_functions"],
+            ["ANALYSIS", "SEASON_NARRATIVE"],
+        )
+        self.assertEqual(candidates[0]["classification"]["article_use"], "LEAD")
+        self.assertNotEqual(candidates[0]["source_id"], retweet_source.id)
+
+    def test_automated_sources_cannot_reach_writer_before_classification(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(external_id="needs-classification"),
+        )
+
+        with self.assertRaisesRegex(ValueError, "must be classified"):
+            app_module.build_weekly_recap_context_v2(db, week)
+
     def test_correspondent_ingest_is_idempotent_and_rejects_conflicts(self):
         headers = {"X-Correspondent-Secret": "ingest-secret"}
         payload = self.correspondent_ingest_payload()
@@ -810,6 +1057,128 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(
             app_module.SessionLocal().query(app_module.CorrespondentSource).count(),
             1,
+        )
+
+    def test_correspondent_batch_ingest_is_atomic_and_idempotent(self):
+        headers = {"X-Correspondent-Secret": "ingest-secret"}
+        sources = [
+            self.correspondent_ingest_payload(
+                external_id="original-1",
+                body_text="Arsenal are playing with the belief of champions.",
+                metadata={
+                    "approved_routing": {
+                        "article_candidate": True,
+                        "routing_type": "original_candidate",
+                    }
+                },
+            ),
+            self.correspondent_ingest_payload(
+                external_id="quote-1",
+                body_text="This passing performance explains the midfield control.",
+                metadata={
+                    "approved_routing": {
+                        "article_candidate": True,
+                        "routing_type": "quote_candidate",
+                    },
+                    "referenced_tweets": [
+                        {"type": "quoted", "id": "statistics-1"}
+                    ],
+                },
+            ),
+            self.correspondent_ingest_payload(
+                external_id="retweet-1",
+                body_text="RT @reporter: Arsenal believe.",
+                metadata={
+                    "approved_routing": {
+                        "article_candidate": False,
+                        "attention_signal_only": True,
+                        "routing_type": "retweet_signal_only",
+                    },
+                    "referenced_tweets": [
+                        {"type": "retweeted", "id": "original-1"}
+                    ],
+                },
+            ),
+        ]
+
+        with patch.dict(
+            os.environ, {"CORRESPONDENT_INGEST_SECRET": "ingest-secret"}
+        ):
+            with app_module.app.test_client() as client:
+                created = client.post(
+                    "/api/correspondent/sources/batch",
+                    json={"sources": sources},
+                    headers=headers,
+                )
+                duplicate = client.post(
+                    "/api/correspondent/sources/batch",
+                    json={"sources": sources},
+                    headers=headers,
+                )
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.get_json()["received"], 3)
+        self.assertEqual(created.get_json()["created"], 3)
+        self.assertEqual(created.get_json()["existing"], 0)
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertEqual(duplicate.get_json()["created"], 0)
+        self.assertEqual(duplicate.get_json()["existing"], 3)
+
+        db = app_module.SessionLocal()
+        week = db.query(app_module.Week).filter_by(number=1).one()
+        candidates, signal_only = app_module.classification_candidate_sources(db, week)
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual(len(signal_only), 1)
+        self.assertEqual(db.query(app_module.CorrespondentSource).count(), 3)
+
+    def test_correspondent_batch_rejects_everything_when_one_item_is_invalid(self):
+        headers = {"X-Correspondent-Secret": "ingest-secret"}
+        valid = self.correspondent_ingest_payload(external_id="valid-first")
+        invalid = self.correspondent_ingest_payload(external_id="invalid-second")
+        invalid.pop("body_text")
+
+        with patch.dict(
+            os.environ, {"CORRESPONDENT_INGEST_SECRET": "ingest-secret"}
+        ):
+            with app_module.app.test_client() as client:
+                response = client.post(
+                    "/api/correspondent/sources/batch",
+                    json={"sources": [valid, invalid]},
+                    headers=headers,
+                )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["failed_index"], 1)
+        self.assertIn("Missing required field", response.get_json()["error"])
+        self.assertEqual(
+            app_module.SessionLocal().query(app_module.CorrespondentSource).count(),
+            0,
+        )
+
+    def test_correspondent_batch_requires_secret_and_enforces_ceiling(self):
+        payload = {"sources": [self.correspondent_ingest_payload()]}
+        oversized_batch = {
+            "sources": [self.correspondent_ingest_payload()] * 1_001
+        }
+        with patch.dict(
+            os.environ, {"CORRESPONDENT_INGEST_SECRET": "ingest-secret"}
+        ):
+            with app_module.app.test_client() as client:
+                forbidden = client.post(
+                    "/api/correspondent/sources/batch", json=payload
+                )
+                over_ceiling = client.post(
+                    "/api/correspondent/sources/batch",
+                    json=oversized_batch,
+                    headers={"X-Correspondent-Secret": "ingest-secret"},
+                )
+
+        self.assertEqual(forbidden.status_code, 403)
+        self.assertEqual(over_ceiling.status_code, 400)
+        self.assertIn("no more than 1,000", over_ceiling.get_json()["error"])
+        self.assertEqual(
+            app_module.SessionLocal().query(app_module.CorrespondentSource).count(),
+            0,
         )
 
     def test_correspondent_ingest_rejects_untrusted_shape_and_targets(self):
