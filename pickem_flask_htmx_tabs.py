@@ -481,9 +481,22 @@ ADMIN_HTML = """
       <div class="card">
         <h3>Correspondent V2 Sources — Week {{ week.number }}</h3>
         <p class="muted">
-          Manual source entry is the V2 prototype. Source text is stored as untrusted
-          material and cannot change picks, scores, standings, or payouts.
+          Source text is stored as untrusted material and cannot change picks, scores,
+          standings, or payouts. Workflow: ingest sources, classify them, inspect the
+          results below, then generate the V2 recap.
         </p>
+        <div style="padding:12px; margin:12px 0; border:1px solid #bae6fd; border-radius:8px; background:#f0f9ff;">
+          <form method="post" action="{{ url_for('admin_classify_correspondent_sources') }}">
+            <input type="hidden" name="week" value="{{ week.number }}">
+            <button class="btn primary" type="submit"
+                    {% if not openai_configured or not correspondent_sources %}disabled{% endif %}>
+              Classify Sources
+            </button>
+          </form>
+          <p class="muted" style="margin:8px 0 0;">
+            Classification is separate from recap generation and does not select an official recap.
+          </p>
+        </div>
         <form class="source-form" method="post" action="{{ url_for('admin_add_correspondent_source') }}">
           <input type="hidden" name="week" value="{{ week.number }}">
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -505,7 +518,7 @@ ADMIN_HTML = """
 
         {% if correspondent_sources %}
           <table style="margin-top:12px;">
-            <thead><tr><th>ID</th><th>Type</th><th>Author</th><th>Source</th><th>Status</th><th>Latest V2 recap</th><th>Action</th></tr></thead>
+            <thead><tr><th>ID</th><th>Type</th><th>Author</th><th>Source</th><th>Status</th><th>Classification</th><th>Latest V2 recap</th><th>Action</th></tr></thead>
             <tbody>
               {% for source in correspondent_sources %}
                 <tr>
@@ -517,6 +530,21 @@ ADMIN_HTML = """
                     {{ source.body_text[:220] }}{% if source.body_text|length > 220 %}…{% endif %}
                   </td>
                   <td>{{ source.status }}</td>
+                  <td>
+                    {% set classification = correspondent_classifications.get(source.id) %}
+                    {% if classification %}
+                      <strong>{{ classification.route }}</strong><br>
+                      <span class="muted">
+                        {{ classification.pickem_impact }} · {{ classification.article_use }} ·
+                        {{ classification.confidence }}<br>{{ classification.reason }}
+                      </span>
+                    {% elif source.id in correspondent_signal_only_source_ids %}
+                      <strong>SIGNAL_ONLY</strong><br>
+                      <span class="muted">Structural routing; not sent to the article classifier.</span>
+                    {% else %}
+                      <span class="muted">Not classified</span>
+                    {% endif %}
+                  </td>
                   <td>
                     {% if latest_v2_recap %}
                       {% if source.id in latest_v2_used_source_ids %}
@@ -3366,6 +3394,8 @@ def admin():
     res_map = {}
     recaps = []
     correspondent_sources = []
+    correspondent_classifications = {}
+    correspondent_signal_only_source_ids = set()
     selected_recap = None
     latest_recap = None
     displayed_recap = None
@@ -3425,6 +3455,13 @@ def admin():
             CorrespondentSource.created_at.desc(),
             CorrespondentSource.id.desc(),
         ).all()
+        correspondent_classifications = effective_source_classifications(db, wk)
+        correspondent_signal_only_source_ids = {
+            source.id
+            for source in correspondent_sources
+            if source.status == "accepted"
+            and not correspondent_source_is_article_candidate(source)
+        }
         selected_recap = selected_weekly_recap(db, wk)
 
     year_two = db.query(Season).filter_by(code="year-2").first()
@@ -3462,6 +3499,8 @@ def admin():
         recap_used_source_counts=recap_used_source_counts,
         latest_v2_used_source_ids=latest_v2_used_source_ids,
         correspondent_sources=correspondent_sources,
+        correspondent_classifications=correspondent_classifications,
+        correspondent_signal_only_source_ids=correspondent_signal_only_source_ids,
         correspondent_v2_enabled=correspondent_v2_enabled(),
         correspondent_default_version=correspondent_default_version(),
         can_import_api=can_import_api,
@@ -3556,6 +3595,43 @@ def admin_generate_recap():
         else:
             flash(recap.error_message or "Recap generation failed", "error")
     except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("admin", week=week.number))
+
+
+@app.post("/admin/classify-correspondent-sources")
+def admin_classify_correspondent_sources():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    if not correspondent_v2_enabled():
+        abort(404, "Correspondent V2 is not enabled")
+    db = SessionLocal()
+    season = active_season(db)
+    if season is None:
+        abort(404, "No active season")
+    week_number = request.form.get("week", type=int)
+    week = None if week_number is None else season_week(db, season, week_number)
+    if week is None:
+        abort(404, "Week not found")
+    try:
+        summary = classify_and_store_week_sources(db, week)
+        route_counts = ", ".join(
+            f"{route}={count}"
+            for route, count in sorted(summary.get("effective_route_counts", {}).items())
+        ) or "none"
+        flash(
+            f"Week {week.number} sources classified: "
+            f"stored_sources={summary.get('stored_sources', 0)}; "
+            f"article_candidates={summary.get('article_candidates', 0)}; "
+            f"signal_only_sources={summary.get('signal_only_sources', 0)}; "
+            f"first_pass_classifications={summary.get('first_pass_classifications', 0)}; "
+            f"automated_reviews={summary.get('automated_reviews', 0)}; "
+            f"second_pass_classifications={summary.get('second_pass_classifications', 0)}; "
+            f"effective_route_counts={route_counts}; "
+            f"prompt_version={summary.get('prompt_version', 'unknown')}.",
+            "success",
+        )
+    except (ValueError, CorrespondentError) as exc:
         flash(str(exc), "error")
     return redirect(url_for("admin", week=week.number))
 

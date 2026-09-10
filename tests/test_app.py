@@ -682,6 +682,7 @@ class PickemAppTests(unittest.TestCase):
         self.assertNotIn(b"Correspondent V2 Sources", hidden.data)
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Correspondent V2 Sources", response.data)
+        self.assertIn(b"Classify Sources", response.data)
         self.assertIn(b"Generate V2 Recap", response.data)
         self.assertNotIn(b"<script>bad()</script>", response.data)
         self.assertEqual(db.query(app_module.CorrespondentSource).count(), 1)
@@ -933,6 +934,133 @@ class PickemAppTests(unittest.TestCase):
             ).count(),
             0,
         )
+
+    def test_admin_classification_requires_authentication(self):
+        with app_module.app.test_client() as client, patch.object(
+            app_module, "classify_and_store_week_sources"
+        ) as classify:
+            with patch.dict(os.environ, {"CORRESPONDENT_V2_ENABLED": "1"}):
+                response = client.post(
+                    "/admin/classify-correspondent-sources",
+                    data={"week": 1},
+                )
+
+        self.assertEqual(response.status_code, 403)
+        classify.assert_not_called()
+
+    def test_admin_classification_requires_v2_feature_flag(self):
+        with app_module.app.test_client() as client, patch.object(
+            app_module, "classify_and_store_week_sources"
+        ) as classify:
+            with client.session_transaction() as admin_session:
+                admin_session[app_module.ADMIN_SESSION_KEY] = True
+            with patch.dict(os.environ, {"CORRESPONDENT_V2_ENABLED": "0"}):
+                response = client.post(
+                    "/admin/classify-correspondent-sources",
+                    data={"week": 1},
+                )
+
+        self.assertEqual(response.status_code, 404)
+        classify.assert_not_called()
+
+    def test_admin_classification_runs_for_selected_week_without_generating_recap(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        official = app_module.WeeklyRecap(
+            week_id=week.id,
+            revision=1,
+            status="ready",
+            title="Existing official recap",
+            body_markdown="Keep this selected.",
+            context_json="{}",
+            context_hash="existing-context",
+            prompt_version="existing-prompt",
+            model="test-model",
+            correspondent_version="v1",
+            source_count=0,
+        )
+        db.add(official)
+        db.flush()
+        db.add(app_module.WeeklyRecapSelection(
+            week_id=week.id,
+            recap_id=official.id,
+        ))
+        db.commit()
+        week_id = week.id
+        week_number = week.number
+        official_id = official.id
+        db.close()
+        summary = {
+            "stored_sources": 4,
+            "article_candidates": 3,
+            "signal_only_sources": 1,
+            "first_pass_classifications": 3,
+            "automated_reviews": 1,
+            "second_pass_classifications": 1,
+            "effective_route_counts": {"ADVANCE": 2, "STOP": 1},
+            "prompt_version": "classifier-test-v2",
+        }
+
+        with app_module.app.test_client() as client, patch.object(
+            app_module,
+            "classify_and_store_week_sources",
+            return_value=summary,
+        ) as classify, patch.object(
+            app_module, "generate_and_store_weekly_recap_v2"
+        ) as generate_v2:
+            with client.session_transaction() as admin_session:
+                admin_session[app_module.ADMIN_SESSION_KEY] = True
+            with patch.dict(os.environ, {"CORRESPONDENT_V2_ENABLED": "1"}):
+                response = client.post(
+                    "/admin/classify-correspondent-sources",
+                    data={"week": week_number},
+                    follow_redirects=True,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        classify.assert_called_once()
+        self.assertEqual(classify.call_args.args[1].id, week_id)
+        generate_v2.assert_not_called()
+        verification_db = app_module.SessionLocal()
+        selection = verification_db.query(app_module.WeeklyRecapSelection).filter_by(
+            week_id=week_id
+        ).one()
+        self.assertEqual(selection.recap_id, official_id)
+        self.assertEqual(verification_db.query(app_module.WeeklyRecap).count(), 1)
+        verification_db.close()
+        for expected in (
+            b"stored_sources=4",
+            b"article_candidates=3",
+            b"signal_only_sources=1",
+            b"first_pass_classifications=3",
+            b"automated_reviews=1",
+            b"second_pass_classifications=1",
+            b"effective_route_counts=ADVANCE=2, STOP=1",
+            b"prompt_version=classifier-test-v2",
+        ):
+            self.assertIn(expected, response.data)
+
+    def test_admin_classification_handles_classifier_failures(self):
+        for error in (
+            ValueError("No article candidates"),
+            app_module.CorrespondentError("temporary classifier failure"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                with app_module.app.test_client() as client, patch.object(
+                    app_module,
+                    "classify_and_store_week_sources",
+                    side_effect=error,
+                ):
+                    with client.session_transaction() as admin_session:
+                        admin_session[app_module.ADMIN_SESSION_KEY] = True
+                    with patch.dict(os.environ, {"CORRESPONDENT_V2_ENABLED": "1"}):
+                        response = client.post(
+                            "/admin/classify-correspondent-sources",
+                            data={"week": 1},
+                            follow_redirects=True,
+                        )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(str(error).encode(), response.data)
 
     def test_v2_writer_receives_only_sources_that_advanced_classification(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
