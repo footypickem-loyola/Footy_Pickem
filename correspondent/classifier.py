@@ -11,9 +11,9 @@ from typing import Any, Iterable, Mapping, Optional
 from .writer import DEFAULT_MODEL, CorrespondentError
 
 
-CLASSIFIER_PROMPT_VERSION = "semantic-classifier-v1"
+CLASSIFIER_PROMPT_VERSION = "semantic-classifier-v2"
 CLASSIFIER_PROMPT_PATH = (
-    Path(__file__).resolve().parent / "prompts" / "semantic_classifier_v1.md"
+    Path(__file__).resolve().parent / "prompts" / "semantic_classifier_v2.md"
 )
 
 PICKEM_IMPACTS = (
