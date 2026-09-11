@@ -13,6 +13,15 @@ os.environ["DB_PATH"] = f"sqlite:///{Path(TEST_DIR.name) / 'test.db'}"
 os.environ["INIT_ON_START"] = "0"
 
 import pickem_flask_htmx_tabs as app_module  # noqa: E402
+from scripts.copy_week1_correspondent_sources import (  # noqa: E402
+    MaintenanceSafetyError,
+    WINDOW_END,
+    WINDOW_START,
+    copy_sources as copy_week1_correspondent_sources,
+    matching_sources as matching_week1_correspondent_sources,
+    resolve_week1 as resolve_copy_week1,
+    validated_staging_db_path,
+)
 
 
 class FakeResponse:
@@ -223,6 +232,55 @@ class PickemAppTests(unittest.TestCase):
             },
             "error": None,
         })
+
+    def add_archived_year_one_week(self, db, *, archived=1, active=0):
+        season = app_module.Season(
+            code="year-1",
+            name="2025–26",
+            is_active=active,
+            is_archived=archived,
+            api_season_year=2025,
+        )
+        db.add(season)
+        db.flush()
+        week = app_module.Week(
+            season_id=season.id,
+            number=1,
+            room_code="OLDYEAR",
+            status="finalized",
+        )
+        db.add(week)
+        db.commit()
+        return season, week
+
+    def add_copy_source(
+        self,
+        db,
+        week,
+        *,
+        external_id,
+        published_at,
+        status="accepted",
+        submitted_by_player_id=None,
+    ):
+        source = app_module.CorrespondentSource(
+            week_id=week.id,
+            provider="x",
+            source_type="curated_post",
+            external_id=external_id,
+            canonical_url=f"https://x.com/example/status/{external_id}",
+            author_name=f"Author {external_id}",
+            body_text=f"Source text {external_id}",
+            published_at=published_at,
+            submitted_by_player_id=submitted_by_player_id,
+            submission_note=f"Note {external_id}",
+            metadata_json=json.dumps({"external_id": external_id}),
+            content_hash=f"hash-{external_id}",
+            status=status,
+        )
+        db.add(source)
+        db.commit()
+        return source
 
     def test_snake_order_contains_back_to_back_turns(self):
         db = app_module.SessionLocal()
@@ -957,6 +1015,135 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual([candidate["source_id"] for candidate in candidates], [original.id])
         self.assertEqual([source.id for source in signal_only], [retweet.id])
         self.assertEqual(db.query(app_module.CorrespondentSource).count(), 2)
+
+    def test_week1_copy_script_refuses_production_database(self):
+        with self.assertRaisesRegex(MaintenanceSafetyError, "pickem_staging.db"):
+            validated_staging_db_path("sqlite:////data/pickem.db")
+        guarded_path = Path(TEST_DIR.name) / "pickem_staging.db"
+        guarded_path.touch()
+        self.assertEqual(
+            validated_staging_db_path(f"sqlite:///{guarded_path}"),
+            guarded_path.resolve(),
+        )
+
+    def test_week1_copy_script_requires_archived_source_and_active_destination(self):
+        db, destination_week, matchup, player_a, player_b = (
+            self.finalize_one_sided_matchup()
+        )
+        self.add_archived_year_one_week(db, archived=0)
+
+        with self.assertRaisesRegex(MaintenanceSafetyError, "archived and inactive"):
+            resolve_copy_week1(db, app_module)
+
+    def test_week1_copy_script_filters_dates_inclusively(self):
+        db = app_module.SessionLocal()
+        _season, source_week = self.add_archived_year_one_week(db)
+        included_start = self.add_copy_source(
+            db,
+            source_week,
+            external_id="window-start",
+            published_at=WINDOW_START,
+        )
+        included_end = self.add_copy_source(
+            db,
+            source_week,
+            external_id="window-end",
+            published_at=WINDOW_END,
+        )
+        self.add_copy_source(
+            db,
+            source_week,
+            external_id="before-window",
+            published_at=WINDOW_START.replace(day=20),
+        )
+        self.add_copy_source(
+            db,
+            source_week,
+            external_id="after-window",
+            published_at=WINDOW_END.replace(day=24),
+        )
+        self.add_copy_source(
+            db,
+            source_week,
+            external_id="excluded-in-window",
+            published_at=WINDOW_START,
+            status="excluded",
+        )
+
+        matches = matching_week1_correspondent_sources(
+            db,
+            app_module,
+            source_week.id,
+        )
+
+        self.assertEqual(
+            [source.id for source in matches],
+            [included_start.id, included_end.id],
+        )
+
+    def test_week1_copy_script_is_idempotent_and_copies_only_raw_sources(self):
+        db, destination_week, matchup, destination_player, player_b = (
+            self.finalize_one_sided_matchup()
+        )
+        _season, source_week = self.add_archived_year_one_week(db)
+        outsider = app_module.Player(name="Old Season Only")
+        db.add(outsider)
+        db.commit()
+        valid_source = self.add_copy_source(
+            db,
+            source_week,
+            external_id="copy-valid-player",
+            published_at=WINDOW_START,
+            submitted_by_player_id=destination_player.id,
+        )
+        invalid_source = self.add_copy_source(
+            db,
+            source_week,
+            external_id="copy-invalid-player",
+            published_at=WINDOW_END,
+            submitted_by_player_id=outsider.id,
+        )
+
+        first = copy_week1_correspondent_sources(
+            db,
+            app_module,
+            dry_run=False,
+            backup_path=Path("verified-staging-backup.db"),
+        )
+        second = copy_week1_correspondent_sources(
+            db,
+            app_module,
+            dry_run=False,
+            backup_path=Path("verified-staging-backup.db"),
+        )
+
+        self.assertEqual(first["source_matching_count"], 2)
+        self.assertEqual(first["destination_copied_count"], 2)
+        self.assertEqual(first["inserted"], 2)
+        self.assertEqual(first["skipped"], 0)
+        self.assertEqual(first["classification_count"], 0)
+        self.assertEqual(first["jobs_created"], 0)
+        self.assertEqual(first["destination_result_count"], 10)
+        self.assertEqual(second["inserted"], 0)
+        self.assertEqual(second["skipped"], 2)
+        destination_sources = db.query(app_module.CorrespondentSource).filter_by(
+            week_id=destination_week.id
+        ).order_by(app_module.CorrespondentSource.external_id.asc()).all()
+        self.assertEqual(len(destination_sources), 2)
+        copied_by_external_id = {
+            source.external_id: source for source in destination_sources
+        }
+        copied_valid = copied_by_external_id[valid_source.external_id]
+        copied_invalid = copied_by_external_id[invalid_source.external_id]
+        self.assertEqual(copied_valid.submitted_by_player_id, destination_player.id)
+        self.assertIsNone(copied_invalid.submitted_by_player_id)
+        self.assertEqual(copied_valid.metadata_json, valid_source.metadata_json)
+        self.assertEqual(copied_invalid.content_hash, invalid_source.content_hash)
+        self.assertEqual(
+            db.query(app_module.CorrespondentSourceClassification).count(),
+            0,
+        )
+        self.assertEqual(db.query(app_module.CorrespondentClassificationJob).count(), 0)
 
     def test_batch_submission_uses_responses_jsonl_and_preserves_signal_only(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
