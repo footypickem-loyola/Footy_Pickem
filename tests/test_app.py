@@ -233,20 +233,30 @@ class PickemAppTests(unittest.TestCase):
             "error": None,
         })
 
-    def add_archived_year_one_week(self, db, *, archived=1, active=0):
+    def add_archived_year_one_week(
+        self,
+        db,
+        *,
+        archived=1,
+        active=0,
+        code="year-1",
+        name="2025–26",
+        api_season_year=2025,
+        room_code="OLDYEAR",
+    ):
         season = app_module.Season(
-            code="year-1",
-            name="2025–26",
+            code=code,
+            name=name,
             is_active=active,
             is_archived=archived,
-            api_season_year=2025,
+            api_season_year=api_season_year,
         )
         db.add(season)
         db.flush()
         week = app_module.Week(
             season_id=season.id,
             number=1,
-            room_code="OLDYEAR",
+            room_code=room_code,
             status="finalized",
         )
         db.add(week)
@@ -1026,13 +1036,52 @@ class PickemAppTests(unittest.TestCase):
             guarded_path.resolve(),
         )
 
-    def test_week1_copy_script_requires_archived_source_and_active_destination(self):
-        db, destination_week, matchup, player_a, player_b = (
-            self.finalize_one_sided_matchup()
+    def test_week1_copy_script_discovers_source_season_from_matching_rows(self):
+        db = app_module.SessionLocal()
+        source_season, source_week = self.add_archived_year_one_week(
+            db,
+            archived=0,
+            code="prior-staging",
+            name="Prior staging season",
+            api_season_year=None,
         )
-        self.add_archived_year_one_week(db, archived=0)
+        self.add_copy_source(
+            db,
+            source_week,
+            external_id="discover-source-season",
+            published_at=WINDOW_START,
+        )
 
-        with self.assertRaisesRegex(MaintenanceSafetyError, "archived and inactive"):
+        resolved_source, resolved_destination = resolve_copy_week1(db, app_module)
+
+        self.assertEqual(resolved_source.id, source_week.id)
+        self.assertEqual(resolved_source.season_id, source_season.id)
+        self.assertNotEqual(resolved_source.season_id, resolved_destination.season_id)
+
+    def test_week1_copy_script_rejects_ambiguous_source_seasons(self):
+        db = app_module.SessionLocal()
+        _first_season, first_week = self.add_archived_year_one_week(db)
+        _second_season, second_week = self.add_archived_year_one_week(
+            db,
+            code="prior-staging",
+            name="Prior staging season",
+            api_season_year=None,
+            room_code="PRIORSTG",
+        )
+        self.add_copy_source(
+            db,
+            first_week,
+            external_id="ambiguous-first",
+            published_at=WINDOW_START,
+        )
+        self.add_copy_source(
+            db,
+            second_week,
+            external_id="ambiguous-second",
+            published_at=WINDOW_END,
+        )
+
+        with self.assertRaisesRegex(MaintenanceSafetyError, "More than one"):
             resolve_copy_week1(db, app_module)
 
     def test_week1_copy_script_filters_dates_inclusively(self):
@@ -1144,6 +1193,37 @@ class PickemAppTests(unittest.TestCase):
             0,
         )
         self.assertEqual(db.query(app_module.CorrespondentClassificationJob).count(), 0)
+
+    def test_week1_copy_script_rolls_back_insert_on_verification_failure(self):
+        db, destination_week, matchup, player_a, player_b = (
+            self.finalize_one_sided_matchup()
+        )
+        _season, source_week = self.add_archived_year_one_week(db)
+        source = self.add_copy_source(
+            db,
+            source_week,
+            external_id="rollback-on-verification",
+            published_at=WINDOW_START,
+        )
+
+        with patch(
+            "scripts.copy_week1_correspondent_sources.destination_result_count",
+            side_effect=[10, 9],
+        ):
+            with self.assertRaisesRegex(MaintenanceSafetyError, "game state changed"):
+                copy_week1_correspondent_sources(
+                    db,
+                    app_module,
+                    dry_run=False,
+                    backup_path=Path("verified-staging-backup.db"),
+                )
+
+        copied = db.query(app_module.CorrespondentSource).filter_by(
+            week_id=destination_week.id,
+            provider=source.provider,
+            content_hash=source.content_hash,
+        ).all()
+        self.assertEqual(copied, [])
 
     def test_batch_submission_uses_responses_jsonl_and_preserves_signal_only(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()

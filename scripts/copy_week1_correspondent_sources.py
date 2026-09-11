@@ -14,7 +14,6 @@ from typing import Any, Optional
 from sqlalchemy.engine import make_url
 
 
-SOURCE_SEASON_CODE = "year-1"
 DESTINATION_SEASON_CODE = "year-2"
 WINDOW_START = datetime(2026, 8, 21, 0, 0, 0)
 WINDOW_END = datetime(2026, 8, 23, 23, 59, 59)
@@ -73,17 +72,8 @@ def print_seasons(db: Any, app_module: Any) -> list[Any]:
 
 
 def resolve_week1(db: Any, app_module: Any) -> tuple[Any, Any]:
-    """Resolve archived Year 1 and the sole active Year 2, then their Week 1 rows."""
+    """Resolve the unique source-bearing Week 1 and sole active Year 2 Week 1."""
     seasons = print_seasons(db, app_module)
-    source_seasons = [season for season in seasons if season.code == SOURCE_SEASON_CODE]
-    if len(source_seasons) != 1:
-        raise MaintenanceSafetyError("Expected exactly one year-1 source season")
-    source_season = source_seasons[0]
-    if bool(source_season.is_active) or not bool(source_season.is_archived):
-        raise MaintenanceSafetyError("The year-1 source season must be archived and inactive")
-    if source_season.api_season_year not in {None, 2025}:
-        raise MaintenanceSafetyError("The year-1 source is not the 2025-26 season")
-
     active_seasons = [
         season for season in seasons
         if bool(season.is_active) and not bool(season.is_archived)
@@ -96,18 +86,42 @@ def resolve_week1(db: Any, app_module: Any) -> tuple[Any, Any]:
     if destination_season.api_season_year not in {None, 2026}:
         raise MaintenanceSafetyError("The year-2 destination is not the 2026-27 season")
 
-    source_week = db.query(app_module.Week).filter_by(
-        season_id=source_season.id,
-        number=1,
-    ).one_or_none()
     destination_week = db.query(app_module.Week).filter_by(
         season_id=destination_season.id,
         number=1,
     ).one_or_none()
-    if source_week is None:
-        raise MaintenanceSafetyError("Archived year-1 Week 1 was not found")
     if destination_week is None:
         raise MaintenanceSafetyError("Active year-2 Week 1 was not found")
+
+    source_candidates = []
+    for season in seasons:
+        if season.id == destination_season.id:
+            continue
+        week = db.query(app_module.Week).filter_by(
+            season_id=season.id,
+            number=1,
+        ).one_or_none()
+        if week is None:
+            continue
+        source_count = len(matching_sources(db, app_module, week.id))
+        if source_count:
+            source_candidates.append((season, week, source_count))
+
+    print("Source Week 1 candidates with matching accepted sources:")
+    for season, _week, source_count in source_candidates:
+        print(
+            f"  id={season.id} code={season.code!r} name={season.name!r} "
+            f"matching_sources={source_count}"
+        )
+    if not source_candidates:
+        raise MaintenanceSafetyError(
+            "No non-destination Week 1 contains matching accepted sources"
+        )
+    if len(source_candidates) != 1:
+        raise MaintenanceSafetyError(
+            "More than one non-destination source season contains matching accepted sources"
+        )
+    _source_season, source_week, _source_count = source_candidates[0]
     return source_week, destination_week
 
 
@@ -216,32 +230,44 @@ def copy_sources(
         db.add_all(inserted_rows)
         db.flush()
         inserted_ids = [row.id for row in inserted_rows]
+        source_count_after = len(matching_sources(db, app_module, source_week.id))
+        source_keys = {(source.provider, source.content_hash) for source in sources}
+        destination_copied_count = sum(
+            (row.provider, row.content_hash) in source_keys
+            for row in db.query(app_module.CorrespondentSource).filter_by(
+                week_id=destination_week.id
+            ).all()
+        )
+        classification_count = (
+            db.query(app_module.CorrespondentSourceClassification).filter(
+                app_module.CorrespondentSourceClassification.source_id.in_(inserted_ids),
+                app_module.CorrespondentSourceClassification.prompt_version
+                == CLASSIFIER_PROMPT_VERSION,
+            ).count()
+            if inserted_ids
+            else 0
+        )
+        jobs_created = (
+            db.query(app_module.CorrespondentClassificationJob).count() - jobs_before
+        )
+        final_result_count = destination_result_count(
+            db,
+            app_module,
+            destination_week.id,
+        )
+        if source_count_after != source_matching_count:
+            raise MaintenanceSafetyError("Source matching count changed during the copy")
+        if classification_count != 0 or jobs_created != 0:
+            raise MaintenanceSafetyError("The raw-source copy created classifier state")
+        if (
+            destination_week.status != "finalized"
+            or final_result_count != original_result_count
+        ):
+            raise MaintenanceSafetyError("Destination game state changed during the copy")
         db.commit()
     except Exception:
         db.rollback()
         raise
-
-    source_count_after = len(matching_sources(db, app_module, source_week.id))
-    source_keys = {(source.provider, source.content_hash) for source in sources}
-    destination_copied_count = sum(
-        (row.provider, row.content_hash) in source_keys
-        for row in db.query(app_module.CorrespondentSource).filter_by(
-            week_id=destination_week.id
-        ).all()
-    )
-    classification_count = db.query(app_module.CorrespondentSourceClassification).filter(
-        app_module.CorrespondentSourceClassification.source_id.in_(inserted_ids),
-        app_module.CorrespondentSourceClassification.prompt_version
-        == CLASSIFIER_PROMPT_VERSION,
-    ).count() if inserted_ids else 0
-    jobs_created = db.query(app_module.CorrespondentClassificationJob).count() - jobs_before
-    final_result_count = destination_result_count(db, app_module, destination_week.id)
-    if source_count_after != source_matching_count:
-        raise MaintenanceSafetyError("Source matching count changed during the copy")
-    if classification_count != 0 or jobs_created != 0:
-        raise MaintenanceSafetyError("The raw-source copy created classifier state")
-    if destination_week.status != "finalized" or final_result_count != original_result_count:
-        raise MaintenanceSafetyError("Destination game state changed during the copy")
 
     print(f"Source matching count unchanged: {source_count_after}")
     print(f"Destination copied count: {destination_copied_count}")
