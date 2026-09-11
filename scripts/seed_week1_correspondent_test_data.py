@@ -255,6 +255,18 @@ def build_pick_plan(
     return planned
 
 
+def synthetic_pick_points(fixture: Any, outcome: Optional[str], team: str) -> int:
+    if outcome is None:
+        return 0
+    if outcome == "Draw":
+        winning_pick = "Draw"
+    elif outcome == "Home":
+        winning_pick = fixture.home
+    else:
+        winning_pick = fixture.away
+    return 1 if team == winning_pick else -1
+
+
 def plan_metrics(planned: list[Any], fixtures: list[Any], results: list[Any]) -> dict[str, Any]:
     fixture_by_id = {fixture.id: fixture for fixture in fixtures}
     result_by_fixture = {result.fixture_id: result for result in results}
@@ -263,14 +275,11 @@ def plan_metrics(planned: list[Any], fixtures: list[Any], results: list[Any]) ->
     for pick in planned:
         fixture = fixture_by_id[pick.fixture_id]
         outcome = result_by_fixture[pick.fixture_id].outcome
-        if outcome == "Draw":
-            continue
-        winner = fixture.home if outcome == "Home" else fixture.away
-        if pick.team == winner:
-            points[pick.player_id] += 1
+        delta = synthetic_pick_points(fixture, outcome, pick.team)
+        points[pick.player_id] += delta
+        if delta == 1:
             correct += 1
-        else:
-            points[pick.player_id] -= 1
+        elif delta == -1:
             incorrect += 1
     margins = {
         matchup_id: abs(points[player_a] - points[player_b])

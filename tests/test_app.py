@@ -308,7 +308,7 @@ class PickemAppTests(unittest.TestCase):
         db.commit()
         return source
 
-    def build_correspondent_seed_destination(self):
+    def build_correspondent_seed_destination(self, *, result_outcomes=None):
         app_module.SessionLocal.remove()
         app_module.Base.metadata.drop_all(app_module.engine)
         app_module.Base.metadata.create_all(app_module.engine)
@@ -338,6 +338,7 @@ class PickemAppTests(unittest.TestCase):
             SEED_EXPECTED_FIXTURES.items(),
             start=1,
         ):
+            outcome = (result_outcomes or {}).get(fixture_id, "Home")
             db.add(app_module.Fixture(
                 id=fixture_id,
                 week_id=week.id,
@@ -347,8 +348,8 @@ class PickemAppTests(unittest.TestCase):
             ))
             db.add(app_module.Result(
                 fixture_id=fixture_id,
-                outcome="Home",
-                home_score=2,
+                outcome=outcome,
+                home_score=1 if outcome == "Draw" else 2,
                 away_score=1,
                 source="manual",
             ))
@@ -1454,6 +1455,23 @@ class PickemAppTests(unittest.TestCase):
                 app_module,
                 dry_run=True,
             )
+
+    def test_week1_correspondent_seed_scores_draw_picks_as_win_or_loss(self):
+        db, week = self.build_correspondent_seed_destination(
+            result_outcomes={fixture_id: "Draw" for fixture_id in SEED_EXPECTED_FIXTURES}
+        )
+
+        summary = seed_correspondent_week1(
+            db,
+            app_module,
+            dry_run=True,
+        )
+
+        self.assertEqual(summary["points"], {1: 5, 2: 1, 3: -5, 4: 5, 5: 5, 6: -1})
+        self.assertEqual(summary["margins"], {115: 10, 116: 0, 117: 2})
+        self.assertEqual(summary["correct"], 20)
+        self.assertEqual(summary["incorrect"], 10)
+        self.assertEqual(db.query(app_module.Pick).count(), 0)
 
     def test_batch_submission_uses_responses_jsonl_and_preserves_signal_only(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
