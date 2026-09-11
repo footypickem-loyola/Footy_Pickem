@@ -32,6 +32,12 @@ from scripts.seed_week1_correspondent_test_data import (  # noqa: E402
     seed_week1 as seed_correspondent_week1,
     validated_staging_db_path as validated_seed_staging_db_path,
 )
+from scripts.reset_week1_classifier_v2_state import (  # noqa: E402
+    MaintenanceSafetyError as ResetMaintenanceSafetyError,
+    reset_week1_classifier_state,
+    target_scope as reset_target_scope,
+    validated_staging_db_path as validated_reset_staging_db_path,
+)
 
 
 class FakeResponse:
@@ -363,6 +369,151 @@ class PickemAppTests(unittest.TestCase):
             ))
         db.commit()
         return db, week
+
+    def build_classifier_reset_state(self):
+        db, week = self.build_correspondent_seed_destination()
+        with patch("builtins.print"):
+            seed_correspondent_week1(
+                db,
+                app_module,
+                dry_run=False,
+                backup_path=Path("verified-staging-backup.db"),
+            )
+        active_season = db.query(app_module.Season).filter_by(code="year-2").one()
+        archived_season = app_module.Season(
+            id=2,
+            code="v2-staging",
+            name="Archived V2 staging",
+            is_active=0,
+            is_archived=1,
+            api_season_year=2025,
+        )
+        db.add(archived_season)
+        db.flush()
+        archived_week = app_module.Week(
+            id=2,
+            season_id=archived_season.id,
+            number=1,
+            room_code="ARCHV2",
+            status="finalized",
+        )
+        db.add(archived_week)
+        db.flush()
+
+        def add_source(source_id, source_week, suffix):
+            source = app_module.CorrespondentSource(
+                id=source_id,
+                week_id=source_week.id,
+                provider="x",
+                source_type="curated_post",
+                external_id=f"reset-{suffix}",
+                canonical_url=f"https://x.com/example/status/reset-{suffix}",
+                author_name="Reset Test",
+                body_text=f"Reset source {suffix}",
+                content_hash=f"reset-hash-{suffix}",
+                status="accepted",
+            )
+            db.add(source)
+            return source
+
+        target_one = add_source(1001, week, "target-one")
+        target_two = add_source(1002, week, "target-two")
+        archived_source = add_source(1003, archived_week, "archived")
+        db.add(app_module.WeeklyRecap(
+            id=3001,
+            week_id=week.id,
+            revision=1,
+            status="completed",
+            title="Preserved recap",
+            body_markdown="Preserve me",
+            context_json="{}",
+            context_hash="reset-context",
+            prompt_version="correspondent-v2",
+            model="test-model",
+            correspondent_version="v2",
+            source_count=0,
+        ))
+        db.flush()
+
+        def add_classification(classification_id, source, prompt_version, pass_number=1):
+            row = app_module.CorrespondentSourceClassification(
+                id=classification_id,
+                source_id=source.id,
+                prompt_version=prompt_version,
+                pass_number=pass_number,
+                pickem_impact="P1_MATCH_SHAPING",
+                editorial_functions_json='["FACT"]',
+                article_use="SUPPORT",
+                confidence="HIGH",
+                route="ADVANCE",
+                reason_codes_json='["MATCH_EVENT"]',
+                reason="Reset test classification",
+                model="test-model",
+            )
+            db.add(row)
+            return row
+
+        add_classification(4001, target_one, "semantic-classifier-v2")
+        add_classification(4002, target_two, "semantic-classifier-v2", pass_number=2)
+        preserved_v1 = add_classification(4003, target_one, "semantic-classifier-v1")
+        archived_classification = add_classification(
+            4004,
+            archived_source,
+            "semantic-classifier-v2",
+        )
+
+        def add_job(job_id, season, job_week, prompt_version, pass_number, source):
+            job = app_module.CorrespondentClassificationJob(
+                id=job_id,
+                season_id=season.id,
+                week_id=job_week.id,
+                prompt_version=prompt_version,
+                pass_number=pass_number,
+                model="test-model",
+                openai_batch_id=f"batch-reset-{job_id}",
+                status="completed",
+                total_count=1,
+                completed_count=1,
+                failed_count=0,
+            )
+            db.add(job)
+            db.flush()
+            item = app_module.CorrespondentClassificationJobItem(
+                id=job_id + 1000,
+                job_id=job.id,
+                source_id=source.id,
+                custom_id=f"custom-reset-{job_id}",
+                status="completed",
+            )
+            db.add(item)
+            return job, item
+
+        target_job_one, target_item_one = add_job(
+            5001, active_season, week, "semantic-classifier-v2", 1, target_one
+        )
+        target_job_two, target_item_two = add_job(
+            5002, active_season, week, "semantic-classifier-v2", 2, target_two
+        )
+        preserved_v1_job, preserved_v1_item = add_job(
+            5003, active_season, week, "semantic-classifier-v1", 1, target_one
+        )
+        archived_job, archived_item = add_job(
+            5004, archived_season, archived_week, "semantic-classifier-v2", 1,
+            archived_source,
+        )
+        db.commit()
+        return db, active_season, week, {
+            "target_classification_ids": {4001, 4002},
+            "target_job_ids": {target_job_one.id, target_job_two.id},
+            "target_item_ids": {target_item_one.id, target_item_two.id},
+            "preserved_v1_classification_id": preserved_v1.id,
+            "preserved_v1_job_id": preserved_v1_job.id,
+            "preserved_v1_item_id": preserved_v1_item.id,
+            "archived_classification_id": archived_classification.id,
+            "archived_job_id": archived_job.id,
+            "archived_item_id": archived_item.id,
+            "raw_source_ids": {target_one.id, target_two.id, archived_source.id},
+        }
 
     def test_snake_order_contains_back_to_back_turns(self):
         db = app_module.SessionLocal()
@@ -1472,6 +1623,167 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(summary["correct"], 20)
         self.assertEqual(summary["incorrect"], 10)
         self.assertEqual(db.query(app_module.Pick).count(), 0)
+
+    def test_week1_classifier_reset_refuses_non_staging_database(self):
+        with self.assertRaisesRegex(ResetMaintenanceSafetyError, "pickem_staging.db"):
+            validated_reset_staging_db_path("sqlite:////data/pickem.db")
+        guarded_path = Path(TEST_DIR.name) / "pickem_staging.db"
+        guarded_path.touch()
+        self.assertEqual(
+            validated_reset_staging_db_path(f"sqlite:///{guarded_path}"),
+            guarded_path.resolve(),
+        )
+
+    def test_week1_classifier_reset_dry_run_makes_no_changes(self):
+        db, season, week, expected = self.build_classifier_reset_state()
+        before = {
+            "sources": db.query(app_module.CorrespondentSource).count(),
+            "classifications": db.query(app_module.CorrespondentSourceClassification).count(),
+            "jobs": db.query(app_module.CorrespondentClassificationJob).count(),
+            "items": db.query(app_module.CorrespondentClassificationJobItem).count(),
+        }
+
+        with patch("builtins.print"):
+            summary = reset_week1_classifier_state(
+                db,
+                app_module,
+                dry_run=True,
+            )
+
+        self.assertTrue(summary["dry_run"])
+        self.assertEqual(summary["target_classifications"], 2)
+        self.assertEqual(summary["target_jobs"], 2)
+        self.assertEqual(summary["target_job_items"], 2)
+        self.assertEqual(
+            {
+                "sources": db.query(app_module.CorrespondentSource).count(),
+                "classifications": db.query(app_module.CorrespondentSourceClassification).count(),
+                "jobs": db.query(app_module.CorrespondentClassificationJob).count(),
+                "items": db.query(app_module.CorrespondentClassificationJobItem).count(),
+            },
+            before,
+        )
+
+    def test_week1_classifier_reset_deletes_only_target_scope(self):
+        db, season, week, expected = self.build_classifier_reset_state()
+
+        with patch("builtins.print"):
+            summary = reset_week1_classifier_state(
+                db,
+                app_module,
+                dry_run=False,
+                backup_path=Path("verified-staging-backup.db"),
+            )
+
+        self.assertEqual(summary["deleted_classifications"], 2)
+        self.assertEqual(summary["deleted_jobs"], 2)
+        self.assertEqual(summary["deleted_job_items"], 2)
+        remaining_target = reset_target_scope(db, app_module, season, week)
+        self.assertEqual(remaining_target["classification_ids"], set())
+        self.assertEqual(remaining_target["job_ids"], set())
+        self.assertEqual(remaining_target["item_ids"], set())
+        self.assertEqual(
+            {row.id for row in db.query(app_module.CorrespondentSource).all()},
+            {1001, 1002, 1003},
+        )
+        self.assertEqual(
+            {row.id for row in db.query(app_module.CorrespondentSourceClassification).all()},
+            {4003, 4004},
+        )
+        self.assertEqual(
+            {row.id for row in db.query(app_module.CorrespondentClassificationJob).all()},
+            {5003, 5004},
+        )
+        self.assertEqual(
+            {row.id for row in db.query(app_module.CorrespondentClassificationJobItem).all()},
+            {6003, 6004},
+        )
+        self.assertEqual(db.query(app_module.Pick).count(), 30)
+        self.assertEqual(db.query(app_module.WeeklyRecap).count(), 1)
+
+    def test_week1_classifier_reset_preserves_archived_v2_staging_state(self):
+        db, season, week, expected = self.build_classifier_reset_state()
+        archived_season = db.query(app_module.Season).filter_by(code="v2-staging").one()
+        archived_week_ids = {
+            row.id for row in db.query(app_module.Week).filter_by(
+                season_id=archived_season.id
+            ).all()
+        }
+        archived_source_ids = {
+            row.id for row in db.query(app_module.CorrespondentSource).filter(
+                app_module.CorrespondentSource.week_id.in_(archived_week_ids)
+            ).all()
+        }
+        before = {
+            "classifications": {
+                row.id for row in db.query(app_module.CorrespondentSourceClassification).filter(
+                    app_module.CorrespondentSourceClassification.source_id.in_(
+                        archived_source_ids
+                    )
+                ).all()
+            },
+            "jobs": {
+                row.id for row in db.query(app_module.CorrespondentClassificationJob).filter_by(
+                    season_id=archived_season.id
+                ).all()
+            },
+        }
+
+        with patch("builtins.print"):
+            reset_week1_classifier_state(
+                db,
+                app_module,
+                dry_run=False,
+                backup_path=Path("verified-staging-backup.db"),
+            )
+
+        after = {
+            "classifications": {
+                row.id for row in db.query(app_module.CorrespondentSourceClassification).filter(
+                    app_module.CorrespondentSourceClassification.source_id.in_(
+                        archived_source_ids
+                    )
+                ).all()
+            },
+            "jobs": {
+                row.id for row in db.query(app_module.CorrespondentClassificationJob).filter_by(
+                    season_id=archived_season.id
+                ).all()
+            },
+        }
+        self.assertEqual(after, before)
+        self.assertEqual(after, {"classifications": {4004}, "jobs": {5004}})
+        self.assertEqual(
+            db.query(app_module.CorrespondentClassificationJobItem).filter_by(
+                job_id=5004
+            ).count(),
+            1,
+        )
+
+    def test_week1_classifier_reset_rolls_back_on_invariant_failure(self):
+        db, season, week, expected = self.build_classifier_reset_state()
+
+        with patch(
+            "scripts.reset_week1_classifier_v2_state.verify_reset_state",
+            side_effect=ResetMaintenanceSafetyError("simulated invariant failure"),
+        ):
+            with self.assertRaisesRegex(
+                ResetMaintenanceSafetyError,
+                "simulated invariant failure",
+            ):
+                reset_week1_classifier_state(
+                    db,
+                    app_module,
+                    dry_run=False,
+                    backup_path=Path("verified-staging-backup.db"),
+                )
+
+        target = reset_target_scope(db, app_module, season, week)
+        self.assertEqual(target["classification_ids"], expected["target_classification_ids"])
+        self.assertEqual(target["job_ids"], expected["target_job_ids"])
+        self.assertEqual(target["item_ids"], expected["target_item_ids"])
+        self.assertEqual(db.query(app_module.CorrespondentSource).count(), 3)
+        self.assertEqual(db.query(app_module.Pick).count(), 30)
 
     def test_batch_submission_uses_responses_jsonl_and_preserves_signal_only(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
