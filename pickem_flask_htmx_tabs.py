@@ -2961,6 +2961,7 @@ TERMINAL_CLASSIFICATION_JOB_STATUSES = frozenset({
     "expired",
     "cancelled",
 })
+CLASSIFICATION_IMPORT_CHUNK_SIZE = 50
 
 
 def _openai_value(value: Any, name: str, default: Any = None) -> Any:
@@ -3238,6 +3239,15 @@ def _import_classification_file(
 ) -> int:
     items_by_custom_id = {item.custom_id: item for item in job.items}
     imported = 0
+    pending_changes = 0
+
+    def record_change() -> None:
+        nonlocal pending_changes
+        pending_changes += 1
+        if pending_changes >= CLASSIFICATION_IMPORT_CHUNK_SIZE:
+            db.commit()
+            pending_changes = 0
+
     for raw_line in _download_openai_file_text(openai_client, file_id).splitlines():
         if not raw_line.strip():
             continue
@@ -3245,11 +3255,13 @@ def _import_classification_file(
             line = json.loads(raw_line)
         except json.JSONDecodeError as exc:
             job.error_message = f"OpenAI Batch file contains invalid JSONL: {exc}"
+            record_change()
             continue
         custom_id = line.get("custom_id") if isinstance(line, Mapping) else None
         item = items_by_custom_id.get(custom_id)
         if item is None:
             job.error_message = f"OpenAI Batch returned unknown custom_id: {custom_id}"
+            record_change()
             continue
         if item.status == "completed" and item.imported_at is not None:
             continue
@@ -3260,6 +3272,7 @@ def _import_classification_file(
         if error_file or line.get("error") is not None or status_code != 200:
             item.status = "failed"
             item.error_message = _batch_error_message(line)
+            record_change()
             continue
         response_body = response.get("body")
         try:
@@ -3278,12 +3291,14 @@ def _import_classification_file(
         except (CorrespondentError, TypeError, ValueError) as exc:
             item.status = "failed"
             item.error_message = f"Classification import failed: {exc}"
+            record_change()
             continue
         item.status = "completed"
         item.provider_response_id = result.provider_response_id
         item.error_message = None
         item.imported_at = utcnow()
         imported += 1
+        record_change()
     db.commit()
     return imported
 

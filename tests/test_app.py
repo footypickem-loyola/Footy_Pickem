@@ -1222,6 +1222,110 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(retry.total_count, 1)
         self.assertEqual([item.source_id for item in retry.items], [failed.id])
 
+    def test_multi_chunk_batch_import_resumes_idempotently_after_failure(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        sources = []
+        for index in range(app_module.CLASSIFICATION_IMPORT_CHUNK_SIZE + 1):
+            source, _ = app_module.ingest_correspondent_source(
+                db,
+                self.correspondent_ingest_payload(
+                    external_id=f"chunked-{index}",
+                    body_text=f"Approved article candidate number {index}.",
+                    metadata={"approved_routing": {"article_candidate": True}},
+                ),
+            )
+            sources.append(source)
+        openai = FakeOpenAIClient()
+        job = app_module.submit_week_classification_batch(
+            db,
+            week,
+            client=openai,
+            model="test-model",
+        )
+        custom_ids = {item.source_id: item.custom_id for item in job.items}
+        output_file_id = "file-output-chunked"
+        openai.files.contents[output_file_id] = "\n".join(
+            self.batch_output_line(
+                custom_ids[source.id],
+                self.batch_classification(source.id),
+                f"resp-chunked-{source.id}",
+            )
+            for source in sources
+        ) + "\n"
+        openai.batches.remote[job.openai_batch_id] = SimpleNamespace(
+            id=job.openai_batch_id,
+            status="completed",
+            output_file_id=output_file_id,
+            error_file_id=None,
+            request_counts=SimpleNamespace(
+                total=len(sources),
+                completed=len(sources),
+                failed=0,
+            ),
+        )
+        original_store = app_module.store_source_classification
+        store_calls = 0
+
+        def fail_after_first_chunk(*args, **kwargs):
+            nonlocal store_calls
+            store_calls += 1
+            if store_calls == app_module.CLASSIFICATION_IMPORT_CHUNK_SIZE + 1:
+                raise RuntimeError("simulated interruption after committed chunk")
+            return original_store(*args, **kwargs)
+
+        with patch.object(
+            app_module,
+            "store_source_classification",
+            side_effect=fail_after_first_chunk,
+        ):
+            app_module.sync_week_classification_jobs(
+                db,
+                week,
+                client=openai,
+                create_second_pass=False,
+            )
+
+        self.assertEqual(
+            db.query(app_module.CorrespondentSourceClassification).count(),
+            app_module.CLASSIFICATION_IMPORT_CHUNK_SIZE,
+        )
+        self.assertEqual(
+            db.query(app_module.CorrespondentClassificationJobItem).filter_by(
+                status="completed"
+            ).count(),
+            app_module.CLASSIFICATION_IMPORT_CHUNK_SIZE,
+        )
+
+        resumed = app_module.sync_week_classification_jobs(
+            db,
+            week,
+            client=openai,
+            create_second_pass=False,
+        )
+        self.assertEqual(resumed["classifications_imported"], 1)
+        self.assertEqual(
+            db.query(app_module.CorrespondentSourceClassification).count(),
+            len(sources),
+        )
+        self.assertEqual(
+            db.query(app_module.CorrespondentClassificationJobItem).filter_by(
+                status="completed"
+            ).count(),
+            len(sources),
+        )
+
+        repeated = app_module.sync_week_classification_jobs(
+            db,
+            week,
+            client=openai,
+            create_second_pass=False,
+        )
+        self.assertEqual(repeated["classifications_imported"], 0)
+        self.assertEqual(
+            db.query(app_module.CorrespondentSourceClassification).count(),
+            len(sources),
+        )
+
     def test_two_pass_classifier_persists_explainable_decisions(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
         analysis_source, _ = app_module.ingest_correspondent_source(
