@@ -34,6 +34,7 @@ from scripts.seed_week1_correspondent_test_data import (  # noqa: E402
 )
 from scripts.reset_week1_classifier_v2_state import (  # noqa: E402
     MaintenanceSafetyError as ResetMaintenanceSafetyError,
+    legacy_staging_state,
     reset_week1_classifier_state,
     target_scope as reset_target_scope,
     validated_staging_db_path as validated_reset_staging_db_path,
@@ -380,24 +381,24 @@ class PickemAppTests(unittest.TestCase):
                 backup_path=Path("verified-staging-backup.db"),
             )
         active_season = db.query(app_module.Season).filter_by(code="year-2").one()
-        archived_season = app_module.Season(
+        legacy_staging_season = app_module.Season(
             id=2,
             code="v2-staging",
-            name="Archived V2 staging",
+            name="Legacy V2 staging",
             is_active=0,
-            is_archived=1,
+            is_archived=0,
             api_season_year=2025,
         )
-        db.add(archived_season)
+        db.add(legacy_staging_season)
         db.flush()
-        archived_week = app_module.Week(
+        legacy_staging_week = app_module.Week(
             id=2,
-            season_id=archived_season.id,
+            season_id=legacy_staging_season.id,
             number=1,
             room_code="ARCHV2",
             status="finalized",
         )
-        db.add(archived_week)
+        db.add(legacy_staging_week)
         db.flush()
 
         def add_source(source_id, source_week, suffix):
@@ -418,7 +419,7 @@ class PickemAppTests(unittest.TestCase):
 
         target_one = add_source(1001, week, "target-one")
         target_two = add_source(1002, week, "target-two")
-        archived_source = add_source(1003, archived_week, "archived")
+        archived_source = add_source(1003, legacy_staging_week, "archived")
         db.add(app_module.WeeklyRecap(
             id=3001,
             week_id=week.id,
@@ -498,7 +499,8 @@ class PickemAppTests(unittest.TestCase):
             5003, active_season, week, "semantic-classifier-v1", 1, target_one
         )
         archived_job, archived_item = add_job(
-            5004, archived_season, archived_week, "semantic-classifier-v2", 1,
+            5004, legacy_staging_season, legacy_staging_week,
+            "semantic-classifier-v2", 1,
             archived_source,
         )
         db.commit()
@@ -1701,12 +1703,17 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(db.query(app_module.Pick).count(), 30)
         self.assertEqual(db.query(app_module.WeeklyRecap).count(), 1)
 
-    def test_week1_classifier_reset_preserves_archived_v2_staging_state(self):
+    def test_week1_classifier_reset_preserves_inactive_v2_staging_state(self):
         db, season, week, expected = self.build_classifier_reset_state()
-        archived_season = db.query(app_module.Season).filter_by(code="v2-staging").one()
+        legacy_staging_season = db.query(app_module.Season).filter_by(
+            code="v2-staging"
+        ).one()
+        self.assertFalse(bool(legacy_staging_season.is_active))
+        self.assertFalse(bool(legacy_staging_season.is_archived))
+        full_snapshot_before = legacy_staging_state(db, app_module, season.id)
         archived_week_ids = {
             row.id for row in db.query(app_module.Week).filter_by(
-                season_id=archived_season.id
+                season_id=legacy_staging_season.id
             ).all()
         }
         archived_source_ids = {
@@ -1724,7 +1731,7 @@ class PickemAppTests(unittest.TestCase):
             },
             "jobs": {
                 row.id for row in db.query(app_module.CorrespondentClassificationJob).filter_by(
-                    season_id=archived_season.id
+                    season_id=legacy_staging_season.id
                 ).all()
             },
         }
@@ -1747,10 +1754,14 @@ class PickemAppTests(unittest.TestCase):
             },
             "jobs": {
                 row.id for row in db.query(app_module.CorrespondentClassificationJob).filter_by(
-                    season_id=archived_season.id
+                    season_id=legacy_staging_season.id
                 ).all()
             },
         }
+        self.assertEqual(
+            legacy_staging_state(db, app_module, season.id),
+            full_snapshot_before,
+        )
         self.assertEqual(after, before)
         self.assertEqual(after, {"classifications": {4004}, "jobs": {5004}})
         self.assertEqual(

@@ -15,7 +15,7 @@ from sqlalchemy.engine import make_url
 
 
 DESTINATION_SEASON_CODE = "year-2"
-ARCHIVED_STAGING_SEASON_CODE = "v2-staging"
+LEGACY_STAGING_SEASON_CODE = "v2-staging"
 TARGET_PROMPT_VERSION = "semantic-classifier-v2"
 EXPECTED_PLAYER_NAMES = {"Steve", "Joe", "Marc", "Drew", "Scott", "Connor"}
 
@@ -144,14 +144,20 @@ def target_scope(db: Any, app_module: Any, season: Any, week: Any) -> dict[str, 
     }
 
 
-def archived_staging_state(db: Any, app_module: Any) -> dict[str, Any]:
+def legacy_staging_state(
+    db: Any,
+    app_module: Any,
+    destination_season_id: int,
+) -> dict[str, Any]:
     season = db.query(app_module.Season).filter_by(
-        code=ARCHIVED_STAGING_SEASON_CODE
+        code=LEGACY_STAGING_SEASON_CODE
     ).one_or_none()
     if season is None:
-        return {"season": None, "classifications": (), "jobs": (), "items": ()}
-    if bool(season.is_active) or not bool(season.is_archived):
-        raise MaintenanceSafetyError("v2-staging must remain archived and inactive")
+        raise MaintenanceSafetyError("v2-staging season must exist")
+    if bool(season.is_active):
+        raise MaintenanceSafetyError("v2-staging season must be inactive")
+    if season.id == destination_season_id:
+        raise MaintenanceSafetyError("v2-staging must not be the destination season")
     week_ids = [
         row.id for row in db.query(app_module.Week).filter_by(season_id=season.id).all()
     ]
@@ -257,7 +263,7 @@ def verify_reset_state(
     original_target: dict[str, Any],
     before_counts: dict[str, int],
     before_protected: dict[str, Any],
-    before_archived: dict[str, Any],
+    before_legacy_staging: dict[str, Any],
 ) -> dict[str, int]:
     remaining = target_scope(db, app_module, season, week)
     after_counts = counts_for_report(db, app_module, week, remaining)
@@ -291,8 +297,11 @@ def verify_reset_state(
         raise MaintenanceSafetyError("Week 1 recap count changed")
     if protected_state(db, app_module, remaining) != before_protected:
         raise MaintenanceSafetyError("Protected game, source, recap, or classifier state changed")
-    if archived_staging_state(db, app_module) != before_archived:
-        raise MaintenanceSafetyError("Archived v2-staging classifier state changed")
+    if (
+        legacy_staging_state(db, app_module, season.id)
+        != before_legacy_staging
+    ):
+        raise MaintenanceSafetyError("Legacy v2-staging classifier state changed")
     return after_counts
 
 
@@ -306,7 +315,7 @@ def reset_week1_classifier_state(
     season, week = resolve_destination(db, app_module)
     target = target_scope(db, app_module, season, week)
     before_counts = counts_for_report(db, app_module, week, target)
-    before_archived = archived_staging_state(db, app_module)
+    before_legacy_staging = legacy_staging_state(db, app_module, season.id)
     before_protected = protected_state(db, app_module, target)
     print("Reset scope before deletion:")
     print(f"  raw Week 1 sources: {before_counts['raw_sources']}")
@@ -345,7 +354,7 @@ def reset_week1_classifier_state(
             target,
             before_counts,
             before_protected,
-            before_archived,
+            before_legacy_staging,
         )
         db.commit()
     except Exception:
@@ -357,11 +366,11 @@ def reset_week1_classifier_state(
     print("  target classifications/jobs/items: 0/0/0")
     print("  Week 1 remains finalized with 10 results and 30 picks")
     print("  player names and recap count unchanged")
-    archived_counts = {
-        key: len(before_archived[key])
+    legacy_staging_counts = {
+        key: len(before_legacy_staging[key])
         for key in ("classifications", "jobs", "items")
     }
-    print(f"  archived v2-staging state unchanged: {archived_counts}")
+    print(f"  legacy v2-staging state unchanged: {legacy_staging_counts}")
     print(f"Backup: {backup_path}")
     return {
         "dry_run": False,
@@ -370,7 +379,7 @@ def reset_week1_classifier_state(
         "deleted_job_items": before_counts["target_job_items"],
         "raw_sources": after_counts["raw_sources"],
         "recaps": after_counts["recaps"],
-        "archived": archived_counts,
+        "legacy_staging": legacy_staging_counts,
         "backup_path": backup_path,
     }
 
