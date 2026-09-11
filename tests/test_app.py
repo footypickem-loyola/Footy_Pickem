@@ -273,6 +273,7 @@ class PickemAppTests(unittest.TestCase):
         published_at,
         status="accepted",
         provider="x",
+        canonical_url=None,
         submitted_by_player_id=None,
     ):
         source = app_module.CorrespondentSource(
@@ -280,7 +281,11 @@ class PickemAppTests(unittest.TestCase):
             provider=provider,
             source_type="curated_post",
             external_id=external_id,
-            canonical_url=f"https://x.com/example/status/{external_id}",
+            canonical_url=(
+                canonical_url
+                if canonical_url is not None
+                else f"https://x.com/example/status/{external_id}"
+            ),
             author_name=f"Author {external_id}",
             body_text=f"Source text {external_id}",
             published_at=published_at,
@@ -1100,7 +1105,7 @@ class PickemAppTests(unittest.TestCase):
         with self.assertRaisesRegex(MaintenanceSafetyError, "More than one"):
             resolve_copy_week1(db, app_module)
 
-    def test_week1_copy_script_filters_x_sources_with_half_open_window(self):
+    def test_week1_copy_script_filters_genuine_x_sources_with_half_open_window(self):
         db = app_module.SessionLocal()
         _season, source_week = self.add_archived_year_one_week(db)
         included_start = self.add_copy_source(
@@ -1121,6 +1126,13 @@ class PickemAppTests(unittest.TestCase):
             external_id="non-x-inside-window",
             published_at=WINDOW_START + timedelta(hours=1),
             provider="manual",
+        )
+        self.add_copy_source(
+            db,
+            source_week,
+            external_id="mock-x-provider",
+            published_at=WINDOW_START + timedelta(hours=2),
+            canonical_url="https://example.com/mock/mock-x-provider",
         )
         self.add_copy_source(
             db,

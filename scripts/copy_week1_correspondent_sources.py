@@ -145,6 +145,7 @@ def matching_sources(db: Any, app_module: Any, source_week_id: int) -> list[Any]
         app_module.CorrespondentSource.week_id == source_week_id,
         app_module.CorrespondentSource.status == "accepted",
         app_module.CorrespondentSource.provider == "x",
+        app_module.CorrespondentSource.canonical_url.startswith("https://x.com/"),
         app_module.CorrespondentSource.published_at >= WINDOW_START,
         app_module.CorrespondentSource.published_at < WINDOW_END,
     ).order_by(
