@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-off guarded copy of selected Week 1 sources into staging Year 2."""
+"""One-off guarded copy of selected Week 1 X sources into staging Year 2."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from sqlalchemy.engine import make_url
 
 DESTINATION_SEASON_CODE = "year-2"
 WINDOW_START = datetime(2026, 8, 21, 0, 0, 0)
-WINDOW_END = datetime(2026, 8, 23, 23, 59, 59)
+WINDOW_END = datetime(2026, 8, 24, 0, 0, 0)
 CLASSIFIER_PROMPT_VERSION = "semantic-classifier-v2"
 
 
@@ -144,8 +144,9 @@ def matching_sources(db: Any, app_module: Any, source_week_id: int) -> list[Any]
     return db.query(app_module.CorrespondentSource).filter(
         app_module.CorrespondentSource.week_id == source_week_id,
         app_module.CorrespondentSource.status == "accepted",
+        app_module.CorrespondentSource.provider == "x",
         app_module.CorrespondentSource.published_at >= WINDOW_START,
-        app_module.CorrespondentSource.published_at <= WINDOW_END,
+        app_module.CorrespondentSource.published_at < WINDOW_END,
     ).order_by(
         app_module.CorrespondentSource.published_at.asc(),
         app_module.CorrespondentSource.id.asc(),

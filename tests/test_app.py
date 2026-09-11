@@ -3,6 +3,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -271,11 +272,12 @@ class PickemAppTests(unittest.TestCase):
         external_id,
         published_at,
         status="accepted",
+        provider="x",
         submitted_by_player_id=None,
     ):
         source = app_module.CorrespondentSource(
             week_id=week.id,
-            provider="x",
+            provider=provider,
             source_type="curated_post",
             external_id=external_id,
             canonical_url=f"https://x.com/example/status/{external_id}",
@@ -1051,6 +1053,20 @@ class PickemAppTests(unittest.TestCase):
             external_id="discover-source-season",
             published_at=WINDOW_START,
         )
+        _ignored_season, ignored_week = self.add_archived_year_one_week(
+            db,
+            code="non-x-staging",
+            name="Non-X staging season",
+            api_season_year=None,
+            room_code="NONXSTG",
+        )
+        self.add_copy_source(
+            db,
+            ignored_week,
+            external_id="ignore-non-x-season",
+            published_at=WINDOW_START,
+            provider="manual",
+        )
 
         resolved_source, resolved_destination = resolve_copy_week1(db, app_module)
 
@@ -1078,13 +1094,13 @@ class PickemAppTests(unittest.TestCase):
             db,
             second_week,
             external_id="ambiguous-second",
-            published_at=WINDOW_END,
+            published_at=WINDOW_END - timedelta(seconds=1),
         )
 
         with self.assertRaisesRegex(MaintenanceSafetyError, "More than one"):
             resolve_copy_week1(db, app_module)
 
-    def test_week1_copy_script_filters_dates_inclusively(self):
+    def test_week1_copy_script_filters_x_sources_with_half_open_window(self):
         db = app_module.SessionLocal()
         _season, source_week = self.add_archived_year_one_week(db)
         included_start = self.add_copy_source(
@@ -1093,11 +1109,18 @@ class PickemAppTests(unittest.TestCase):
             external_id="window-start",
             published_at=WINDOW_START,
         )
-        included_end = self.add_copy_source(
+        included_inside = self.add_copy_source(
             db,
             source_week,
-            external_id="window-end",
-            published_at=WINDOW_END,
+            external_id="inside-window",
+            published_at=WINDOW_END - timedelta(seconds=1),
+        )
+        self.add_copy_source(
+            db,
+            source_week,
+            external_id="non-x-inside-window",
+            published_at=WINDOW_START + timedelta(hours=1),
+            provider="manual",
         )
         self.add_copy_source(
             db,
@@ -1108,8 +1131,8 @@ class PickemAppTests(unittest.TestCase):
         self.add_copy_source(
             db,
             source_week,
-            external_id="after-window",
-            published_at=WINDOW_END.replace(day=24),
+            external_id="at-exclusive-end",
+            published_at=WINDOW_END,
         )
         self.add_copy_source(
             db,
@@ -1127,7 +1150,7 @@ class PickemAppTests(unittest.TestCase):
 
         self.assertEqual(
             [source.id for source in matches],
-            [included_start.id, included_end.id],
+            [included_start.id, included_inside.id],
         )
 
     def test_week1_copy_script_is_idempotent_and_copies_only_raw_sources(self):
@@ -1149,7 +1172,7 @@ class PickemAppTests(unittest.TestCase):
             db,
             source_week,
             external_id="copy-invalid-player",
-            published_at=WINDOW_END,
+            published_at=WINDOW_END - timedelta(seconds=1),
             submitted_by_player_id=outsider.id,
         )
 
