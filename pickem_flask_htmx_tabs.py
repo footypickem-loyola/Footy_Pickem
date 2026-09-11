@@ -22,6 +22,7 @@ from sqlalchemy import (
     DateTime, event, func
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, scoped_session
+from sqlalchemy.exc import IntegrityError
 from jinja2 import DictLoader
 import pandas as pd
 import bleach
@@ -38,9 +39,13 @@ from correspondent import (
     SourceClassification,
     V2_PROMPT_VERSION,
     build_v2_context,
+    build_classification_batch_request,
+    classifier_client,
+    classifier_model,
     classify_candidate_sources,
     generate_weekly_recap,
     generate_weekly_recap_v2,
+    validate_classification_response,
 )
 
 FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
@@ -486,16 +491,53 @@ ADMIN_HTML = """
           results below, then generate the V2 recap.
         </p>
         <div style="padding:12px; margin:12px 0; border:1px solid #bae6fd; border-radius:8px; background:#f0f9ff;">
-          <form method="post" action="{{ url_for('admin_classify_correspondent_sources') }}">
-            <input type="hidden" name="week" value="{{ week.number }}">
-            <button class="btn primary" type="submit"
-                    {% if not openai_configured or not correspondent_sources %}disabled{% endif %}>
-              Classify Sources
-            </button>
-          </form>
+          <div class="version-actions">
+            <form method="post" action="{{ url_for('admin_classify_correspondent_sources') }}">
+              <input type="hidden" name="week" value="{{ week.number }}">
+              <button class="btn primary" type="submit"
+                      {% if not openai_configured or not correspondent_sources %}disabled{% endif %}>
+                Classify Sources
+              </button>
+            </form>
+            {% if correspondent_classification_jobs %}
+              <form method="post" action="{{ url_for('admin_sync_correspondent_classification_jobs') }}">
+                <input type="hidden" name="week" value="{{ week.number }}">
+                <button class="btn" type="submit" {% if not openai_configured %}disabled{% endif %}>
+                  Check Classification Status
+                </button>
+              </form>
+            {% endif %}
+          </div>
           <p class="muted" style="margin:8px 0 0;">
-            Classification is separate from recap generation and does not select an official recap.
+            Classification runs asynchronously and remains separate from recap generation.
+            Refreshing this page does not hold an OpenAI request open.
           </p>
+          {% if correspondent_classification_jobs %}
+            <table style="margin-top:10px;">
+              <thead><tr><th>Pass</th><th>Status</th><th>Progress</th><th>Prompt</th><th>Updated</th></tr></thead>
+              <tbody>
+                {% for job in correspondent_classification_jobs %}
+                  <tr>
+                    <td>{{ job.pass_number }}</td>
+                    <td>{{ job.status }}</td>
+                    <td>{{ job.completed_count }}/{{ job.total_count }} completed{% if job.failed_count %}; {{ job.failed_count }} failed{% endif %}</td>
+                    <td>{{ job.prompt_version }}</td>
+                    <td>{{ job.last_synced_at or job.submitted_at or job.created_at }}</td>
+                  </tr>
+                  {% if job.error_message %}
+                    <tr><td colspan="5" class="notice error">{{ job.error_message }}</td></tr>
+                  {% endif %}
+                  {% for item in job.items if item.status == 'failed' %}
+                    <tr>
+                      <td colspan="5" class="muted">
+                        Source #{{ item.source_id }} failed: {{ item.error_message or 'No result returned' }}
+                      </td>
+                    </tr>
+                  {% endfor %}
+                {% endfor %}
+              </tbody>
+            </table>
+          {% endif %}
         </div>
         <form class="source-form" method="post" action="{{ url_for('admin_add_correspondent_source') }}">
           <input type="hidden" name="week" value="{{ week.number }}">
@@ -1304,6 +1346,70 @@ class CorrespondentSourceClassification(Base):
             "prompt_version",
             "pass_number",
             name="uix_source_classification_version_pass",
+        ),
+    )
+
+
+class CorrespondentClassificationJob(Base):
+    """Durable state for one OpenAI source-classification Batch."""
+
+    __tablename__ = "correspondent_classification_jobs"
+    id = Column(Integer, primary_key=True)
+    season_id = Column(Integer, ForeignKey("seasons.id"), nullable=False)
+    week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False)
+    prompt_version = Column(String, nullable=False)
+    pass_number = Column(Integer, nullable=False)
+    model = Column(String, nullable=False)
+    openai_batch_id = Column(String, unique=True)
+    input_file_id = Column(String)
+    output_file_id = Column(String)
+    error_file_id = Column(String)
+    status = Column(String, nullable=False, default="submitting")
+    total_count = Column(Integer, nullable=False, default=0)
+    completed_count = Column(Integer, nullable=False, default=0)
+    failed_count = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    submitted_at = Column(DateTime)
+    last_synced_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    season = relationship("Season")
+    week = relationship("Week")
+    items = relationship(
+        "CorrespondentClassificationJobItem",
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+
+
+class CorrespondentClassificationJobItem(Base):
+    """Persistent source-to-custom_id mapping for a classification Batch."""
+
+    __tablename__ = "correspondent_classification_job_items"
+    id = Column(Integer, primary_key=True)
+    job_id = Column(
+        Integer,
+        ForeignKey("correspondent_classification_jobs.id"),
+        nullable=False,
+    )
+    source_id = Column(
+        Integer,
+        ForeignKey("correspondent_sources.id"),
+        nullable=False,
+    )
+    custom_id = Column(String, nullable=False, unique=True)
+    active_reservation_key = Column(String, unique=True)
+    status = Column(String, nullable=False, default="pending")
+    provider_response_id = Column(String)
+    error_message = Column(Text)
+    imported_at = Column(DateTime)
+    job = relationship("CorrespondentClassificationJob", back_populates="items")
+    source = relationship("CorrespondentSource")
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "source_id",
+            name="uix_classification_job_source",
         ),
     )
 
@@ -2726,17 +2832,19 @@ def store_source_classification(
     db,
     classification: SourceClassification,
     batch: ClassificationBatch,
+    *,
+    prompt_version: str = CLASSIFIER_PROMPT_VERSION,
 ) -> CorrespondentSourceClassification:
     """Idempotently store one classifier decision and its explanation."""
     record = db.query(CorrespondentSourceClassification).filter_by(
         source_id=classification.source_id,
-        prompt_version=CLASSIFIER_PROMPT_VERSION,
+        prompt_version=prompt_version,
         pass_number=batch.pass_number,
     ).first()
     if record is None:
         record = CorrespondentSourceClassification(
             source_id=classification.source_id,
-            prompt_version=CLASSIFIER_PROMPT_VERSION,
+            prompt_version=prompt_version,
             pass_number=batch.pass_number,
             created_at=utcnow(),
         )
@@ -2836,6 +2944,423 @@ def classify_and_store_week_sources(
         "automated_reviews": len(review_candidates),
         "second_pass_classifications": len(second_pass),
         "effective_route_counts": route_counts,
+        "prompt_version": CLASSIFIER_PROMPT_VERSION,
+    }
+
+
+ACTIVE_CLASSIFICATION_JOB_STATUSES = frozenset({
+    "submitting",
+    "validating",
+    "in_progress",
+    "finalizing",
+    "cancelling",
+})
+TERMINAL_CLASSIFICATION_JOB_STATUSES = frozenset({
+    "completed",
+    "failed",
+    "expired",
+    "cancelled",
+})
+
+
+def _openai_value(value: Any, name: str, default: Any = None) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _classification_record_as_input(
+    record: CorrespondentSourceClassification,
+) -> Dict[str, Any]:
+    return {
+        "pickem_impact": record.pickem_impact,
+        "editorial_functions": json.loads(record.editorial_functions_json),
+        "article_use": record.article_use,
+        "confidence": record.confidence,
+        "route": record.route,
+        "reason_codes": json.loads(record.reason_codes_json),
+        "reason": record.reason,
+    }
+
+
+def _active_classification_source_ids(
+    db,
+    week: Week,
+    pass_number: int,
+) -> set[int]:
+    rows = db.query(CorrespondentClassificationJobItem.source_id).join(
+        CorrespondentClassificationJob
+    ).filter(
+        CorrespondentClassificationJob.week_id == week.id,
+        CorrespondentClassificationJob.prompt_version == CLASSIFIER_PROMPT_VERSION,
+        CorrespondentClassificationJob.pass_number == pass_number,
+        CorrespondentClassificationJob.status.in_(ACTIVE_CLASSIFICATION_JOB_STATUSES),
+    ).all()
+    return {row[0] for row in rows}
+
+
+def classification_batch_candidates(
+    db,
+    week: Week,
+    pass_number: int,
+) -> Tuple[List[Dict[str, Any]], List[CorrespondentSource]]:
+    """Select unclassified article candidates not reserved by an active Batch."""
+    if pass_number not in {1, 2}:
+        raise ValueError("pass_number must be 1 or 2")
+    candidates, signal_only = classification_candidate_sources(db, week)
+    active_source_ids = _active_classification_source_ids(db, week, pass_number)
+    completed = {
+        record.source_id: record
+        for record in db.query(CorrespondentSourceClassification).filter(
+            CorrespondentSourceClassification.source_id.in_(
+                [candidate["source_id"] for candidate in candidates]
+            ),
+            CorrespondentSourceClassification.prompt_version
+            == CLASSIFIER_PROMPT_VERSION,
+            CorrespondentSourceClassification.pass_number == pass_number,
+        )
+    } if candidates else {}
+
+    selected: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        source_id = candidate["source_id"]
+        if source_id in completed or source_id in active_source_ids:
+            continue
+        if pass_number == 1:
+            selected.append(candidate)
+            continue
+        first_pass = db.query(CorrespondentSourceClassification).filter_by(
+            source_id=source_id,
+            prompt_version=CLASSIFIER_PROMPT_VERSION,
+            pass_number=1,
+        ).first()
+        if first_pass is None or first_pass.route != "AUTOMATED_REVIEW":
+            continue
+        enriched = dict(candidate)
+        enriched["initial_classification"] = _classification_record_as_input(first_pass)
+        selected.append(enriched)
+    return selected, signal_only
+
+
+def _classification_custom_id(job_id: int, source_id: int, pass_number: int) -> str:
+    return (
+        f"source_{source_id}__{CLASSIFIER_PROMPT_VERSION}__"
+        f"pass_{pass_number}__job_{job_id}"
+    )
+
+
+def _classification_reservation_key(source_id: int, pass_number: int) -> str:
+    return f"{source_id}:{CLASSIFIER_PROMPT_VERSION}:{pass_number}"
+
+
+def _update_classification_job_from_batch(
+    job: CorrespondentClassificationJob,
+    remote_batch: Any,
+) -> None:
+    job.openai_batch_id = _openai_value(remote_batch, "id", job.openai_batch_id)
+    job.output_file_id = _openai_value(
+        remote_batch,
+        "output_file_id",
+        job.output_file_id,
+    )
+    job.error_file_id = _openai_value(
+        remote_batch,
+        "error_file_id",
+        job.error_file_id,
+    )
+    job.status = _openai_value(remote_batch, "status", job.status)
+    counts = _openai_value(remote_batch, "request_counts")
+    if counts is not None:
+        job.total_count = int(_openai_value(counts, "total", job.total_count) or 0)
+        job.completed_count = int(
+            _openai_value(counts, "completed", job.completed_count) or 0
+        )
+        job.failed_count = int(_openai_value(counts, "failed", job.failed_count) or 0)
+    job.last_synced_at = utcnow()
+    if job.status in TERMINAL_CLASSIFICATION_JOB_STATUSES and job.completed_at is None:
+        job.completed_at = utcnow()
+
+
+def submit_week_classification_batch(
+    db,
+    week: Week,
+    *,
+    pass_number: int = 1,
+    client: Any = None,
+    model: Optional[str] = None,
+) -> CorrespondentClassificationJob:
+    """Reserve eligible sources and submit one asynchronous OpenAI Batch."""
+    candidates, _signal_only = classification_batch_candidates(db, week, pass_number)
+    if not candidates:
+        raise ValueError(
+            f"No pass-{pass_number} sources are eligible for classification; "
+            "they are already completed or assigned to an active batch"
+        )
+    selected_model = classifier_model(model)
+    league_context = build_weekly_recap_context(db, week)
+    job = CorrespondentClassificationJob(
+        season_id=week.season_id,
+        week_id=week.id,
+        prompt_version=CLASSIFIER_PROMPT_VERSION,
+        pass_number=pass_number,
+        model=selected_model,
+        status="submitting",
+        total_count=len(candidates),
+        created_at=utcnow(),
+    )
+    db.add(job)
+    db.flush()
+
+    request_lines: List[str] = []
+    for candidate in candidates:
+        custom_id = _classification_custom_id(
+            job.id,
+            candidate["source_id"],
+            pass_number,
+        )
+        db.add(CorrespondentClassificationJobItem(
+            job_id=job.id,
+            source_id=candidate["source_id"],
+            custom_id=custom_id,
+            active_reservation_key=_classification_reservation_key(
+                candidate["source_id"],
+                pass_number,
+            ),
+            status="pending",
+        ))
+        request_lines.append(json.dumps(
+            build_classification_batch_request(
+                custom_id,
+                [candidate],
+                league_context,
+                pass_number=pass_number,
+                model=selected_model,
+            ),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ))
+    # Commit the reservation before network I/O so a duplicate click cannot submit
+    # the same source while the OpenAI upload is in progress.
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ValueError(
+            "One or more sources were assigned to another active classification batch"
+        ) from exc
+
+    openai_client = classifier_client(client)
+    input_bytes = ("\n".join(request_lines) + "\n").encode("utf-8")
+    try:
+        uploaded = openai_client.files.create(
+            file=(f"correspondent-classification-job-{job.id}.jsonl", input_bytes),
+            purpose="batch",
+        )
+        job.input_file_id = _openai_value(uploaded, "id")
+        db.commit()
+        remote_batch = openai_client.batches.create(
+            input_file_id=job.input_file_id,
+            endpoint="/v1/responses",
+            completion_window="24h",
+            metadata={
+                "season_id": str(week.season_id),
+                "week_id": str(week.id),
+                "prompt_version": CLASSIFIER_PROMPT_VERSION,
+                "pass_number": str(pass_number),
+            },
+        )
+        _update_classification_job_from_batch(job, remote_batch)
+        if job.status in TERMINAL_CLASSIFICATION_JOB_STATUSES:
+            for item in job.items:
+                item.active_reservation_key = None
+        job.submitted_at = utcnow()
+        db.commit()
+    except Exception as exc:
+        job.status = "failed"
+        job.error_message = f"OpenAI Batch submission failed: {exc}"
+        job.completed_at = utcnow()
+        for item in job.items:
+            item.status = "failed"
+            item.error_message = job.error_message
+            item.active_reservation_key = None
+        db.commit()
+        raise CorrespondentError(job.error_message) from exc
+    return job
+
+
+def _download_openai_file_text(openai_client: Any, file_id: str) -> str:
+    content = openai_client.files.content(file_id)
+    text_value = getattr(content, "text", None)
+    if isinstance(text_value, str):
+        return text_value
+    byte_value = getattr(content, "content", None)
+    if isinstance(byte_value, bytes):
+        return byte_value.decode("utf-8")
+    read = getattr(content, "read", None)
+    if callable(read):
+        value = read()
+        return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+    if isinstance(content, bytes):
+        return content.decode("utf-8")
+    if isinstance(content, str):
+        return content
+    raise CorrespondentError(f"Unable to read OpenAI Batch file {file_id}")
+
+
+def _batch_error_message(line: Mapping[str, Any]) -> str:
+    error = line.get("error")
+    if isinstance(error, Mapping):
+        return str(error.get("message") or error.get("code") or "Batch request failed")
+    response = line.get("response")
+    if isinstance(response, Mapping):
+        body = response.get("body")
+        if isinstance(body, Mapping):
+            nested_error = body.get("error")
+            if isinstance(nested_error, Mapping):
+                return str(
+                    nested_error.get("message")
+                    or nested_error.get("code")
+                    or "Batch request failed"
+                )
+        status_code = response.get("status_code")
+        if status_code:
+            return f"Batch request returned HTTP {status_code}"
+    return "Batch request failed"
+
+
+def _import_classification_file(
+    db,
+    job: CorrespondentClassificationJob,
+    openai_client: Any,
+    file_id: str,
+    *,
+    error_file: bool = False,
+) -> int:
+    items_by_custom_id = {item.custom_id: item for item in job.items}
+    imported = 0
+    for raw_line in _download_openai_file_text(openai_client, file_id).splitlines():
+        if not raw_line.strip():
+            continue
+        try:
+            line = json.loads(raw_line)
+        except json.JSONDecodeError as exc:
+            job.error_message = f"OpenAI Batch file contains invalid JSONL: {exc}"
+            continue
+        custom_id = line.get("custom_id") if isinstance(line, Mapping) else None
+        item = items_by_custom_id.get(custom_id)
+        if item is None:
+            job.error_message = f"OpenAI Batch returned unknown custom_id: {custom_id}"
+            continue
+        if item.status == "completed" and item.imported_at is not None:
+            continue
+        response = line.get("response") if isinstance(line, Mapping) else None
+        status_code = (
+            response.get("status_code") if isinstance(response, Mapping) else None
+        )
+        if error_file or line.get("error") is not None or status_code != 200:
+            item.status = "failed"
+            item.error_message = _batch_error_message(line)
+            continue
+        response_body = response.get("body")
+        try:
+            result = validate_classification_response(
+                response_body,
+                [item.source_id],
+                pass_number=job.pass_number,
+                model=job.model,
+            )
+            store_source_classification(
+                db,
+                result.classifications[0],
+                result,
+                prompt_version=job.prompt_version,
+            )
+        except (CorrespondentError, TypeError, ValueError) as exc:
+            item.status = "failed"
+            item.error_message = f"Classification import failed: {exc}"
+            continue
+        item.status = "completed"
+        item.provider_response_id = result.provider_response_id
+        item.error_message = None
+        item.imported_at = utcnow()
+        imported += 1
+    db.commit()
+    return imported
+
+
+def sync_week_classification_jobs(
+    db,
+    week: Week,
+    *,
+    client: Any = None,
+    create_second_pass: bool = True,
+) -> Dict[str, Any]:
+    """Refresh Batch state, idempotently import results, and start pass 2."""
+    jobs = db.query(CorrespondentClassificationJob).filter_by(
+        week_id=week.id,
+    ).order_by(CorrespondentClassificationJob.id.asc()).all()
+    if not jobs:
+        raise ValueError("No classification batches exist for this week")
+    openai_client = classifier_client(client)
+    imported = 0
+    for job in jobs:
+        if not job.openai_batch_id:
+            continue
+        try:
+            remote_batch = openai_client.batches.retrieve(job.openai_batch_id)
+            _update_classification_job_from_batch(job, remote_batch)
+            if job.output_file_id:
+                imported += _import_classification_file(
+                    db,
+                    job,
+                    openai_client,
+                    job.output_file_id,
+                )
+            if job.error_file_id:
+                _import_classification_file(
+                    db,
+                    job,
+                    openai_client,
+                    job.error_file_id,
+                    error_file=True,
+                )
+            if job.status in TERMINAL_CLASSIFICATION_JOB_STATUSES:
+                for item in job.items:
+                    if item.status == "pending":
+                        item.status = "failed"
+                        item.error_message = (
+                            f"Batch ended with status {job.status} without a result"
+                        )
+                    item.active_reservation_key = None
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            persisted_job = db.get(CorrespondentClassificationJob, job.id)
+            persisted_job.last_synced_at = utcnow()
+            persisted_job.error_message = f"Batch status sync failed: {exc}"
+            db.commit()
+
+    second_pass_job = None
+    completed_pass_one_jobs = [
+        job for job in jobs
+        if job.prompt_version == CLASSIFIER_PROMPT_VERSION
+        and job.pass_number == 1
+        and job.status == "completed"
+    ]
+    if create_second_pass and completed_pass_one_jobs:
+        pass_two_candidates, _ = classification_batch_candidates(db, week, 2)
+        if pass_two_candidates:
+            second_pass_job = submit_week_classification_batch(
+                db,
+                week,
+                pass_number=2,
+                client=openai_client,
+                model=completed_pass_one_jobs[-1].model,
+            )
+    return {
+        "jobs_checked": len(jobs),
+        "classifications_imported": imported,
+        "second_pass_job_id": None if second_pass_job is None else second_pass_job.id,
         "prompt_version": CLASSIFIER_PROMPT_VERSION,
     }
 
@@ -3395,6 +3920,7 @@ def admin():
     recaps = []
     correspondent_sources = []
     correspondent_classifications = {}
+    correspondent_classification_jobs = []
     correspondent_signal_only_source_ids = set()
     selected_recap = None
     latest_recap = None
@@ -3456,6 +3982,13 @@ def admin():
             CorrespondentSource.id.desc(),
         ).all()
         correspondent_classifications = effective_source_classifications(db, wk)
+        correspondent_classification_jobs = db.query(
+            CorrespondentClassificationJob
+        ).filter_by(
+            week_id=wk.id,
+        ).order_by(
+            CorrespondentClassificationJob.id.desc()
+        ).all()
         correspondent_signal_only_source_ids = {
             source.id
             for source in correspondent_sources
@@ -3500,6 +4033,7 @@ def admin():
         latest_v2_used_source_ids=latest_v2_used_source_ids,
         correspondent_sources=correspondent_sources,
         correspondent_classifications=correspondent_classifications,
+        correspondent_classification_jobs=correspondent_classification_jobs,
         correspondent_signal_only_source_ids=correspondent_signal_only_source_ids,
         correspondent_v2_enabled=correspondent_v2_enabled(),
         correspondent_default_version=correspondent_default_version(),
@@ -3614,21 +4148,41 @@ def admin_classify_correspondent_sources():
     if week is None:
         abort(404, "Week not found")
     try:
-        summary = classify_and_store_week_sources(db, week)
-        route_counts = ", ".join(
-            f"{route}={count}"
-            for route, count in sorted(summary.get("effective_route_counts", {}).items())
-        ) or "none"
+        job = submit_week_classification_batch(db, week, pass_number=1)
         flash(
-            f"Week {week.number} sources classified: "
-            f"stored_sources={summary.get('stored_sources', 0)}; "
-            f"article_candidates={summary.get('article_candidates', 0)}; "
-            f"signal_only_sources={summary.get('signal_only_sources', 0)}; "
-            f"first_pass_classifications={summary.get('first_pass_classifications', 0)}; "
-            f"automated_reviews={summary.get('automated_reviews', 0)}; "
-            f"second_pass_classifications={summary.get('second_pass_classifications', 0)}; "
-            f"effective_route_counts={route_counts}; "
-            f"prompt_version={summary.get('prompt_version', 'unknown')}.",
+            f"Week {week.number} classification Batch submitted: "
+            f"pass={job.pass_number}; requests={job.total_count}; "
+            f"status={job.status}; prompt_version={job.prompt_version}.",
+            "success",
+        )
+    except (ValueError, CorrespondentError) as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("admin", week=week.number))
+
+
+@app.post("/admin/sync-correspondent-classification-jobs")
+def admin_sync_correspondent_classification_jobs():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    if not correspondent_v2_enabled():
+        abort(404, "Correspondent V2 is not enabled")
+    db = SessionLocal()
+    season = active_season(db)
+    if season is None:
+        abort(404, "No active season")
+    week_number = request.form.get("week", type=int)
+    week = None if week_number is None else season_week(db, season, week_number)
+    if week is None:
+        abort(404, "Week not found")
+    try:
+        summary = sync_week_classification_jobs(db, week)
+        second_pass = summary.get("second_pass_job_id")
+        flash(
+            f"Week {week.number} classification status checked: "
+            f"jobs={summary['jobs_checked']}; "
+            f"classifications_imported={summary['classifications_imported']}; "
+            f"pass_2_submitted={'yes' if second_pass is not None else 'no'}; "
+            f"prompt_version={summary['prompt_version']}.",
             "success",
         )
     except (ValueError, CorrespondentError) as exc:

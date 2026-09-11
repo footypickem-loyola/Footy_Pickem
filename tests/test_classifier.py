@@ -4,6 +4,7 @@ import unittest
 from correspondent.classifier import (
     CLASSIFIER_PROMPT_PATH,
     CLASSIFIER_PROMPT_VERSION,
+    build_classification_batch_request,
     classify_candidate_sources,
     load_classifier_prompt,
 )
@@ -101,6 +102,24 @@ class SemanticClassifierTests(unittest.TestCase):
             "`league_context` is not a complete independent football-fact database",
             request["instructions"],
         )
+
+    def test_batch_request_reuses_prompt_context_and_strict_responses_schema(self):
+        batch_request = build_classification_batch_request(
+            "source_12__semantic-classifier-v2__pass_1__job_7",
+            [{"source_id": 12, "text": "Strong analysis"}],
+            {"week": {"number": 3}},
+            pass_number=1,
+            model="test-model",
+        )
+
+        self.assertEqual(batch_request["method"], "POST")
+        self.assertEqual(batch_request["url"], "/v1/responses")
+        body = batch_request["body"]
+        self.assertEqual(body["instructions"], load_classifier_prompt())
+        self.assertIn('"classification_pass": 1', body["input"])
+        self.assertIn('"number": 3', body["input"])
+        self.assertIn("Strong analysis", body["input"])
+        self.assertTrue(body["text"]["format"]["strict"])
 
     def test_p0_must_advance(self):
         client = FakeClient({

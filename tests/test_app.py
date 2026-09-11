@@ -44,6 +44,59 @@ class FakeFootballDataClient:
         return self.matches
 
 
+class FakeOpenAIFiles:
+    def __init__(self):
+        self.uploads = []
+        self.contents = {}
+
+    def create(self, *, file, purpose):
+        file_id = f"file-input-{len(self.uploads) + 1}"
+        self.uploads.append({
+            "id": file_id,
+            "name": file[0],
+            "body": file[1].decode("utf-8"),
+            "purpose": purpose,
+        })
+        return SimpleNamespace(id=file_id)
+
+    def content(self, file_id):
+        return SimpleNamespace(text=self.contents[file_id])
+
+
+class FakeOpenAIBatches:
+    def __init__(self, files):
+        self.files = files
+        self.created = []
+        self.remote = {}
+
+    def create(self, **kwargs):
+        batch_id = f"batch-{len(self.created) + 1}"
+        upload = next(
+            upload for upload in self.files.uploads
+            if upload["id"] == kwargs["input_file_id"]
+        )
+        total = len([line for line in upload["body"].splitlines() if line])
+        self.created.append(kwargs)
+        batch = SimpleNamespace(
+            id=batch_id,
+            status="validating",
+            output_file_id=None,
+            error_file_id=None,
+            request_counts=SimpleNamespace(total=total, completed=0, failed=0),
+        )
+        self.remote[batch_id] = batch
+        return batch
+
+    def retrieve(self, batch_id):
+        return self.remote[batch_id]
+
+
+class FakeOpenAIClient:
+    def __init__(self):
+        self.files = FakeOpenAIFiles()
+        self.batches = FakeOpenAIBatches(self.files)
+
+
 def complete_api_schedule():
     matches = []
     external_id = 100000
@@ -135,6 +188,41 @@ class PickemAppTests(unittest.TestCase):
         }
         payload.update(overrides)
         return payload
+
+    def batch_classification(self, source_id, **overrides):
+        classification = {
+            "source_id": source_id,
+            "pickem_impact": "P1_MATCH_SHAPING",
+            "editorial_functions": ["ANALYSIS"],
+            "article_use": "SUPPORT",
+            "confidence": "HIGH",
+            "route": "ADVANCE",
+            "reason_codes": ["RELEVANT_ANALYSIS"],
+            "reason": "Explains a relevant performance.",
+        }
+        classification.update(overrides)
+        return classification
+
+    def batch_output_line(self, custom_id, classification, response_id):
+        return json.dumps({
+            "custom_id": custom_id,
+            "response": {
+                "status_code": 200,
+                "body": {
+                    "id": response_id,
+                    "output": [{
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "text": json.dumps({
+                                "classifications": [classification],
+                            }),
+                        }],
+                    }],
+                },
+            },
+            "error": None,
+        })
 
     def test_snake_order_contains_back_to_back_turns(self):
         db = app_module.SessionLocal()
@@ -694,6 +782,58 @@ class PickemAppTests(unittest.TestCase):
                 db, db.query(app_module.Week).filter_by(number=week_number).one()
             )
 
+    def test_admin_shows_batch_progress_and_protects_status_sync(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        db.add(app_module.CorrespondentClassificationJob(
+            season_id=week.season_id,
+            week_id=week.id,
+            prompt_version=app_module.CLASSIFIER_PROMPT_VERSION,
+            pass_number=1,
+            model="test-model",
+            openai_batch_id="batch-admin-status",
+            input_file_id="file-admin-input",
+            status="in_progress",
+            total_count=3,
+            completed_count=1,
+            failed_count=0,
+        ))
+        db.commit()
+        week_number = week.number
+
+        with app_module.app.test_client() as client, patch.object(
+            app_module,
+            "sync_week_classification_jobs",
+            return_value={
+                "jobs_checked": 1,
+                "classifications_imported": 0,
+                "second_pass_job_id": None,
+                "prompt_version": app_module.CLASSIFIER_PROMPT_VERSION,
+            },
+        ) as sync:
+            with patch.dict(os.environ, {"CORRESPONDENT_V2_ENABLED": "1"}):
+                locked = client.post(
+                    "/admin/sync-correspondent-classification-jobs",
+                    data={"week": week_number},
+                )
+                with client.session_transaction() as admin_session:
+                    admin_session[app_module.ADMIN_SESSION_KEY] = True
+                page = client.get(f"/admin?week={week_number}")
+                checked = client.post(
+                    "/admin/sync-correspondent-classification-jobs",
+                    data={"week": week_number},
+                    follow_redirects=True,
+                )
+
+        self.assertEqual(locked.status_code, 403)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Check Classification Status", page.data)
+        self.assertIn(b"in_progress", page.data)
+        self.assertIn(b"1/3 completed", page.data)
+        self.assertEqual(checked.status_code, 200)
+        self.assertIn(b"classification status checked", checked.data)
+        sync.assert_called_once()
+        self.assertEqual(sync.call_args.args[1].id, week.id)
+
     def test_correspondent_ingest_requires_dedicated_secret(self):
         payload = self.correspondent_ingest_payload()
         with app_module.app.test_client() as client:
@@ -818,6 +958,270 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual([source.id for source in signal_only], [retweet.id])
         self.assertEqual(db.query(app_module.CorrespondentSource).count(), 2)
 
+    def test_batch_submission_uses_responses_jsonl_and_preserves_signal_only(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        article, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="batch-article",
+                metadata={"approved_routing": {"article_candidate": True}},
+            ),
+        )
+        signal, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="batch-signal",
+                body_text="RT @reporter: A late winner settled the match.",
+                metadata={
+                    "approved_routing": {
+                        "article_candidate": False,
+                        "attention_signal_only": True,
+                    },
+                },
+            ),
+        )
+        openai = FakeOpenAIClient()
+
+        job = app_module.submit_week_classification_batch(
+            db,
+            week,
+            client=openai,
+            model="test-model",
+        )
+
+        self.assertEqual(job.status, "validating")
+        self.assertEqual(job.total_count, 1)
+        self.assertEqual(job.input_file_id, "file-input-1")
+        self.assertEqual(job.openai_batch_id, "batch-1")
+        self.assertEqual(openai.files.uploads[0]["purpose"], "batch")
+        request_line = json.loads(openai.files.uploads[0]["body"].strip())
+        self.assertEqual(request_line["url"], "/v1/responses")
+        self.assertEqual(request_line["method"], "POST")
+        self.assertIn(f"source_{article.id}", request_line["custom_id"])
+        self.assertIn(app_module.CLASSIFIER_PROMPT_VERSION, request_line["custom_id"])
+        self.assertIn("pass_1", request_line["custom_id"])
+        self.assertTrue(request_line["body"]["text"]["format"]["strict"])
+        self.assertEqual(
+            db.query(app_module.CorrespondentClassificationJobItem).one().source_id,
+            article.id,
+        )
+        self.assertEqual(
+            db.query(app_module.CorrespondentClassificationJobItem).filter_by(
+                source_id=signal.id
+            ).count(),
+            0,
+        )
+
+    def test_batch_submission_blocks_duplicate_click_but_not_old_prompt_version(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        source, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="batch-versioned",
+                metadata={"approved_routing": {"article_candidate": True}},
+            ),
+        )
+        db.add(app_module.CorrespondentSourceClassification(
+            source_id=source.id,
+            prompt_version="semantic-classifier-v1",
+            pass_number=1,
+            pickem_impact="P3_IRRELEVANT",
+            editorial_functions_json='["BACKGROUND"]',
+            article_use="NO_USE",
+            confidence="HIGH",
+            route="STOP",
+            reason_codes_json='["BACKGROUND_ONLY"]',
+            reason="Old prompt decision.",
+            model="old-model",
+        ))
+        db.commit()
+        openai = FakeOpenAIClient()
+
+        app_module.submit_week_classification_batch(
+            db,
+            week,
+            client=openai,
+            model="test-model",
+        )
+        with self.assertRaisesRegex(ValueError, "already completed or assigned"):
+            app_module.submit_week_classification_batch(
+                db,
+                week,
+                client=openai,
+                model="test-model",
+            )
+
+        self.assertEqual(len(openai.batches.created), 1)
+        self.assertEqual(
+            db.query(app_module.CorrespondentClassificationJob).count(),
+            1,
+        )
+
+    def test_completed_batch_maps_by_custom_id_and_creates_pass_two(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        advanced, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="batch-advanced",
+                body_text="A strong tactical analysis of the winner.",
+                metadata={"approved_routing": {"article_candidate": True}},
+            ),
+        )
+        review, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="batch-review",
+                body_text="An ambiguous but potentially useful statistic.",
+                metadata={"approved_routing": {"article_candidate": True}},
+            ),
+        )
+        openai = FakeOpenAIClient()
+        job = app_module.submit_week_classification_batch(
+            db,
+            week,
+            client=openai,
+            model="test-model",
+        )
+        custom_ids = {item.source_id: item.custom_id for item in job.items}
+        output_file_id = "file-output-1"
+        # Deliberately reverse output order; custom_id is the only mapping key.
+        openai.files.contents[output_file_id] = "\n".join([
+            self.batch_output_line(
+                custom_ids[review.id],
+                self.batch_classification(
+                    review.id,
+                    pickem_impact="P2_CONTEXTUAL",
+                    confidence="LOW",
+                    route="AUTOMATED_REVIEW",
+                    reason_codes=["INSUFFICIENT_CONTEXT"],
+                ),
+                "resp-review",
+            ),
+            self.batch_output_line(
+                custom_ids[advanced.id],
+                self.batch_classification(advanced.id),
+                "resp-advanced",
+            ),
+        ]) + "\n"
+        openai.batches.remote[job.openai_batch_id] = SimpleNamespace(
+            id=job.openai_batch_id,
+            status="completed",
+            output_file_id=output_file_id,
+            error_file_id=None,
+            request_counts=SimpleNamespace(total=2, completed=2, failed=0),
+        )
+
+        summary = app_module.sync_week_classification_jobs(
+            db,
+            week,
+            client=openai,
+        )
+
+        self.assertEqual(summary["classifications_imported"], 2)
+        self.assertIsNotNone(summary["second_pass_job_id"])
+        records = {
+            record.source_id: record
+            for record in db.query(app_module.CorrespondentSourceClassification).filter_by(
+                prompt_version=app_module.CLASSIFIER_PROMPT_VERSION,
+                pass_number=1,
+            )
+        }
+        self.assertEqual(records[advanced.id].route, "ADVANCE")
+        self.assertEqual(records[advanced.id].provider_response_id, "resp-advanced")
+        self.assertEqual(records[review.id].route, "AUTOMATED_REVIEW")
+        self.assertEqual(records[review.id].provider_response_id, "resp-review")
+        pass_two = db.get(
+            app_module.CorrespondentClassificationJob,
+            summary["second_pass_job_id"],
+        )
+        self.assertEqual(pass_two.pass_number, 2)
+        self.assertEqual([item.source_id for item in pass_two.items], [review.id])
+        pass_two_line = json.loads(openai.files.uploads[1]["body"].strip())
+        self.assertIn('"initial_classification"', pass_two_line["body"]["input"])
+
+        classification_count = db.query(
+            app_module.CorrespondentSourceClassification
+        ).count()
+        second_summary = app_module.sync_week_classification_jobs(
+            db,
+            week,
+            client=openai,
+        )
+        self.assertEqual(second_summary["classifications_imported"], 0)
+        self.assertEqual(
+            db.query(app_module.CorrespondentSourceClassification).count(),
+            classification_count,
+        )
+        self.assertEqual(len(openai.batches.created), 2)
+
+    def test_partial_batch_failures_remain_identifiable_and_retryable(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        successful, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="batch-success",
+                metadata={"approved_routing": {"article_candidate": True}},
+            ),
+        )
+        failed, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(
+                external_id="batch-failed",
+                body_text="A second approved article candidate.",
+                metadata={"approved_routing": {"article_candidate": True}},
+            ),
+        )
+        openai = FakeOpenAIClient()
+        job = app_module.submit_week_classification_batch(
+            db,
+            week,
+            client=openai,
+            model="test-model",
+        )
+        custom_ids = {item.source_id: item.custom_id for item in job.items}
+        output_file_id = "file-output-partial"
+        error_file_id = "file-error-partial"
+        openai.files.contents[output_file_id] = self.batch_output_line(
+            custom_ids[successful.id],
+            self.batch_classification(successful.id),
+            "resp-success",
+        ) + "\n"
+        openai.files.contents[error_file_id] = json.dumps({
+            "custom_id": custom_ids[failed.id],
+            "response": None,
+            "error": {"code": "batch_request_failed", "message": "Request failed"},
+        }) + "\n"
+        openai.batches.remote[job.openai_batch_id] = SimpleNamespace(
+            id=job.openai_batch_id,
+            status="completed",
+            output_file_id=output_file_id,
+            error_file_id=error_file_id,
+            request_counts=SimpleNamespace(total=2, completed=1, failed=1),
+        )
+
+        app_module.sync_week_classification_jobs(
+            db,
+            week,
+            client=openai,
+            create_second_pass=False,
+        )
+
+        failed_item = db.query(app_module.CorrespondentClassificationJobItem).filter_by(
+            source_id=failed.id
+        ).one()
+        self.assertEqual(failed_item.status, "failed")
+        self.assertIn("Request failed", failed_item.error_message)
+        eligible, _ = app_module.classification_batch_candidates(db, week, 1)
+        self.assertEqual([candidate["source_id"] for candidate in eligible], [failed.id])
+        retry = app_module.submit_week_classification_batch(
+            db,
+            week,
+            client=openai,
+            model="test-model",
+        )
+        self.assertEqual(retry.total_count, 1)
+        self.assertEqual([item.source_id for item in retry.items], [failed.id])
+
     def test_two_pass_classifier_persists_explainable_decisions(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
         analysis_source, _ = app_module.ingest_correspondent_source(
@@ -937,8 +1341,8 @@ class PickemAppTests(unittest.TestCase):
 
     def test_admin_classification_requires_authentication(self):
         with app_module.app.test_client() as client, patch.object(
-            app_module, "classify_and_store_week_sources"
-        ) as classify:
+            app_module, "submit_week_classification_batch"
+        ) as submit:
             with patch.dict(os.environ, {"CORRESPONDENT_V2_ENABLED": "1"}):
                 response = client.post(
                     "/admin/classify-correspondent-sources",
@@ -946,12 +1350,12 @@ class PickemAppTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 403)
-        classify.assert_not_called()
+        submit.assert_not_called()
 
     def test_admin_classification_requires_v2_feature_flag(self):
         with app_module.app.test_client() as client, patch.object(
-            app_module, "classify_and_store_week_sources"
-        ) as classify:
+            app_module, "submit_week_classification_batch"
+        ) as submit:
             with client.session_transaction() as admin_session:
                 admin_session[app_module.ADMIN_SESSION_KEY] = True
             with patch.dict(os.environ, {"CORRESPONDENT_V2_ENABLED": "0"}):
@@ -961,7 +1365,7 @@ class PickemAppTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 404)
-        classify.assert_not_called()
+        submit.assert_not_called()
 
     def test_admin_classification_runs_for_selected_week_without_generating_recap(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
@@ -989,22 +1393,18 @@ class PickemAppTests(unittest.TestCase):
         week_number = week.number
         official_id = official.id
         db.close()
-        summary = {
-            "stored_sources": 4,
-            "article_candidates": 3,
-            "signal_only_sources": 1,
-            "first_pass_classifications": 3,
-            "automated_reviews": 1,
-            "second_pass_classifications": 1,
-            "effective_route_counts": {"ADVANCE": 2, "STOP": 1},
-            "prompt_version": "classifier-test-v2",
-        }
+        submitted_job = SimpleNamespace(
+            pass_number=1,
+            total_count=3,
+            status="validating",
+            prompt_version="classifier-test-v2",
+        )
 
         with app_module.app.test_client() as client, patch.object(
             app_module,
-            "classify_and_store_week_sources",
-            return_value=summary,
-        ) as classify, patch.object(
+            "submit_week_classification_batch",
+            return_value=submitted_job,
+        ) as submit, patch.object(
             app_module, "generate_and_store_weekly_recap_v2"
         ) as generate_v2:
             with client.session_transaction() as admin_session:
@@ -1017,8 +1417,9 @@ class PickemAppTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        classify.assert_called_once()
-        self.assertEqual(classify.call_args.args[1].id, week_id)
+        submit.assert_called_once()
+        self.assertEqual(submit.call_args.args[1].id, week_id)
+        self.assertEqual(submit.call_args.kwargs["pass_number"], 1)
         generate_v2.assert_not_called()
         verification_db = app_module.SessionLocal()
         selection = verification_db.query(app_module.WeeklyRecapSelection).filter_by(
@@ -1028,13 +1429,10 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(verification_db.query(app_module.WeeklyRecap).count(), 1)
         verification_db.close()
         for expected in (
-            b"stored_sources=4",
-            b"article_candidates=3",
-            b"signal_only_sources=1",
-            b"first_pass_classifications=3",
-            b"automated_reviews=1",
-            b"second_pass_classifications=1",
-            b"effective_route_counts=ADVANCE=2, STOP=1",
+            b"classification Batch submitted",
+            b"pass=1",
+            b"requests=3",
+            b"status=validating",
             b"prompt_version=classifier-test-v2",
         ):
             self.assertIn(expected, response.data)
@@ -1047,7 +1445,7 @@ class PickemAppTests(unittest.TestCase):
             with self.subTest(error=type(error).__name__):
                 with app_module.app.test_client() as client, patch.object(
                     app_module,
-                    "classify_and_store_week_sources",
+                    "submit_week_classification_batch",
                     side_effect=error,
                 ):
                     with client.session_transaction() as admin_session:

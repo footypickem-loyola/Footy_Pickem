@@ -17,7 +17,11 @@ from .classifier import (
     CLASSIFIER_PROMPT_VERSION,
     ClassificationBatch,
     SourceClassification,
+    build_classification_batch_request,
+    classifier_client,
+    classifier_model,
     classify_candidate_sources,
+    validate_classification_response,
 )
 
 __all__ = [
@@ -33,5 +37,9 @@ __all__ = [
     "CLASSIFIER_PROMPT_VERSION",
     "ClassificationBatch",
     "SourceClassification",
+    "build_classification_batch_request",
+    "classifier_client",
+    "classifier_model",
     "classify_candidate_sources",
+    "validate_classification_response",
 ]
