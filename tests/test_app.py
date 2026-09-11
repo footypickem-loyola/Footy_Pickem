@@ -3,6 +3,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from collections import Counter
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,14 @@ from scripts.copy_week1_correspondent_sources import (  # noqa: E402
     matching_sources as matching_week1_correspondent_sources,
     resolve_week1 as resolve_copy_week1,
     validated_staging_db_path,
+)
+from scripts.seed_week1_correspondent_test_data import (  # noqa: E402
+    EXPECTED_FIXTURES as SEED_EXPECTED_FIXTURES,
+    EXPECTED_MATCHUPS as SEED_EXPECTED_MATCHUPS,
+    EXPECTED_PLAYER_NAMES as SEED_EXPECTED_PLAYER_NAMES,
+    MaintenanceSafetyError as SeedMaintenanceSafetyError,
+    seed_week1 as seed_correspondent_week1,
+    validated_staging_db_path as validated_seed_staging_db_path,
 )
 
 
@@ -298,6 +307,61 @@ class PickemAppTests(unittest.TestCase):
         db.add(source)
         db.commit()
         return source
+
+    def build_correspondent_seed_destination(self):
+        app_module.SessionLocal.remove()
+        app_module.Base.metadata.drop_all(app_module.engine)
+        app_module.Base.metadata.create_all(app_module.engine)
+        db = app_module.SessionLocal()
+        for player_id, (old_name, _new_name) in SEED_EXPECTED_PLAYER_NAMES.items():
+            db.add(app_module.Player(id=player_id, name=old_name))
+        season = app_module.Season(
+            id=1,
+            code="year-2",
+            name="2026–27",
+            is_active=1,
+            is_archived=0,
+            api_season_year=2026,
+        )
+        db.add(season)
+        db.flush()
+        week = app_module.Week(
+            id=1,
+            season_id=season.id,
+            number=1,
+            room_code="SEEDTEST",
+            status="finalized",
+        )
+        db.add(week)
+        db.flush()
+        for match_number, (fixture_id, (home, away)) in enumerate(
+            SEED_EXPECTED_FIXTURES.items(),
+            start=1,
+        ):
+            db.add(app_module.Fixture(
+                id=fixture_id,
+                week_id=week.id,
+                match_number=match_number,
+                home=home,
+                away=away,
+            ))
+            db.add(app_module.Result(
+                fixture_id=fixture_id,
+                outcome="Home",
+                home_score=2,
+                away_score=1,
+                source="manual",
+            ))
+        for matchup_id, (player_a_id, player_b_id) in SEED_EXPECTED_MATCHUPS.items():
+            db.add(app_module.Matchup(
+                id=matchup_id,
+                week_id=week.id,
+                player_a_id=player_a_id,
+                player_b_id=player_b_id,
+                first_picker_id=player_a_id,
+            ))
+        db.commit()
+        return db, week
 
     def test_snake_order_contains_back_to_back_turns(self):
         db = app_module.SessionLocal()
@@ -1259,6 +1323,137 @@ class PickemAppTests(unittest.TestCase):
             content_hash=source.content_hash,
         ).all()
         self.assertEqual(copied, [])
+
+    def test_week1_correspondent_seed_refuses_production_database(self):
+        with self.assertRaisesRegex(SeedMaintenanceSafetyError, "pickem_staging.db"):
+            validated_seed_staging_db_path("sqlite:////data/pickem.db")
+        guarded_path = Path(TEST_DIR.name) / "pickem_staging.db"
+        guarded_path.touch()
+        self.assertEqual(
+            validated_seed_staging_db_path(f"sqlite:///{guarded_path}"),
+            guarded_path.resolve(),
+        )
+
+    def test_week1_correspondent_seed_dry_run_makes_no_changes(self):
+        db, week = self.build_correspondent_seed_destination()
+        first_pickers = {
+            matchup.id: matchup.first_picker_id
+            for matchup in db.query(app_module.Matchup).filter_by(week_id=week.id).all()
+        }
+
+        summary = seed_correspondent_week1(
+            db,
+            app_module,
+            dry_run=True,
+        )
+
+        self.assertTrue(summary["dry_run"])
+        self.assertEqual(summary["would_insert"], 30)
+        self.assertEqual(
+            db.query(app_module.Pick).join(app_module.Matchup).filter(
+                app_module.Matchup.week_id == week.id
+            ).count(),
+            0,
+        )
+        self.assertEqual(
+            {
+                player.id: player.name
+                for player in db.query(app_module.Player).order_by(app_module.Player.id).all()
+            },
+            {
+                player_id: names[0]
+                for player_id, names in SEED_EXPECTED_PLAYER_NAMES.items()
+            },
+        )
+        self.assertEqual(
+            {
+                matchup.id: matchup.first_picker_id
+                for matchup in db.query(app_module.Matchup).filter_by(week_id=week.id).all()
+            },
+            first_pickers,
+        )
+
+    def test_week1_correspondent_seed_rolls_back_on_verification_failure(self):
+        db, week = self.build_correspondent_seed_destination()
+
+        with patch(
+            "scripts.seed_week1_correspondent_test_data.verify_seeded_state",
+            side_effect=SeedMaintenanceSafetyError("simulated verification failure"),
+        ):
+            with self.assertRaisesRegex(
+                SeedMaintenanceSafetyError,
+                "simulated verification failure",
+            ):
+                seed_correspondent_week1(
+                    db,
+                    app_module,
+                    dry_run=False,
+                    backup_path=Path("verified-staging-backup.db"),
+                )
+
+        self.assertEqual(db.query(app_module.Pick).count(), 0)
+        self.assertEqual(
+            {
+                player.id: player.name
+                for player in db.query(app_module.Player).order_by(app_module.Player.id).all()
+            },
+            {
+                player_id: names[0]
+                for player_id, names in SEED_EXPECTED_PLAYER_NAMES.items()
+            },
+        )
+
+    def test_week1_correspondent_seed_writes_verified_synthetic_draft(self):
+        db, week = self.build_correspondent_seed_destination()
+        first_pickers = {
+            matchup.id: matchup.first_picker_id
+            for matchup in db.query(app_module.Matchup).filter_by(week_id=week.id).all()
+        }
+
+        summary = seed_correspondent_week1(
+            db,
+            app_module,
+            dry_run=False,
+            backup_path=Path("verified-staging-backup.db"),
+        )
+
+        self.assertEqual(summary["inserted"], 30)
+        self.assertEqual(summary["pick_count"], 30)
+        self.assertEqual(summary["points"], {1: 5, 2: 1, 3: -5, 4: 5, 5: 5, 6: -1})
+        self.assertEqual(summary["margins"], {115: 10, 116: 0, 117: 2})
+        self.assertEqual(
+            {
+                player.id: player.name
+                for player in db.query(app_module.Player).order_by(app_module.Player.id).all()
+            },
+            {
+                player_id: names[1]
+                for player_id, names in SEED_EXPECTED_PLAYER_NAMES.items()
+            },
+        )
+        picks = db.query(app_module.Pick).all()
+        self.assertEqual(Counter(pick.matchup_id for pick in picks), Counter({115: 10, 116: 10, 117: 10}))
+        self.assertEqual(Counter(pick.player_id for pick in picks), Counter({player_id: 5 for player_id in SEED_EXPECTED_PLAYER_NAMES}))
+        pick_by_matchup_fixture = {
+            (pick.matchup_id, pick.fixture_id): pick for pick in picks
+        }
+        self.assertEqual(pick_by_matchup_fixture[(115, 387)].team, "Man City")
+        self.assertEqual(pick_by_matchup_fixture[(115, 389)].team, "Newcastle")
+        self.assertEqual(pick_by_matchup_fixture[(117, 387)].team, "Bournemouth")
+        self.assertEqual(pick_by_matchup_fixture[(117, 389)].team, "Newcastle")
+        self.assertEqual(
+            {
+                matchup.id: matchup.first_picker_id
+                for matchup in db.query(app_module.Matchup).filter_by(week_id=week.id).all()
+            },
+            first_pickers,
+        )
+        with self.assertRaisesRegex(SeedMaintenanceSafetyError, "0 picks"):
+            seed_correspondent_week1(
+                db,
+                app_module,
+                dry_run=True,
+            )
 
     def test_batch_submission_uses_responses_jsonl_and_preserves_signal_only(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
