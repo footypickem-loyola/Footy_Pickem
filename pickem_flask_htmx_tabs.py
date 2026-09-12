@@ -3651,6 +3651,51 @@ def effective_source_classifications(
     return effective
 
 
+def correspondent_classification_readiness(
+    db,
+    week: Week,
+) -> Dict[str, Any]:
+    """Derive whether every accepted article candidate has its final V2 pass."""
+    candidates, signal_only = classification_candidate_sources(db, week)
+    candidate_ids = [candidate["source_id"] for candidate in candidates]
+    records = (
+        db.query(CorrespondentSourceClassification).filter(
+            CorrespondentSourceClassification.source_id.in_(candidate_ids),
+            CorrespondentSourceClassification.prompt_version
+            == CLASSIFIER_PROMPT_VERSION,
+        ).all()
+        if candidate_ids
+        else []
+    )
+    by_source_and_pass = {
+        (record.source_id, record.pass_number): record for record in records
+    }
+    missing_pass_one: List[int] = []
+    awaiting_pass_two: List[int] = []
+    final_source_ids: List[int] = []
+    for source_id in candidate_ids:
+        first_pass = by_source_and_pass.get((source_id, 1))
+        if first_pass is None:
+            missing_pass_one.append(source_id)
+            continue
+        if first_pass.route == "AUTOMATED_REVIEW":
+            if by_source_and_pass.get((source_id, 2)) is None:
+                awaiting_pass_two.append(source_id)
+                continue
+        final_source_ids.append(source_id)
+    return {
+        "ready": bool(candidate_ids)
+        and not missing_pass_one
+        and not awaiting_pass_two,
+        "article_candidates": len(candidate_ids),
+        "signal_only_sources": len(signal_only),
+        "final_classifications": len(final_source_ids),
+        "missing_pass_one_source_ids": missing_pass_one,
+        "awaiting_pass_two_source_ids": awaiting_pass_two,
+        "prompt_version": CLASSIFIER_PROMPT_VERSION,
+    }
+
+
 def _classification_for_writer(
     record: CorrespondentSourceClassification,
 ) -> Dict[str, Any]:
@@ -3688,24 +3733,19 @@ def writer_candidate_sources(
     if not structural_candidates:
         raise ValueError("Correspondent V2 requires at least one accepted source")
 
-    effective = effective_source_classifications(db, week)
-    automated_candidates = [
-        source for source in structural_candidates if source.provider != "manual"
-    ]
-    if not effective:
-        if automated_candidates:
+    readiness = correspondent_classification_readiness(db, week)
+    if not readiness["ready"]:
+        if readiness["missing_pass_one_source_ids"]:
             raise ValueError(
-                "Automated Correspondent sources must be classified before V2 generation"
+                "Every eligible Correspondent V2 source must be classified; "
+                "Pass 1 is required"
             )
-        return structural_candidates, {}
-
-    missing_ids = [
-        source.id for source in structural_candidates if source.id not in effective
-    ]
-    if missing_ids:
         raise ValueError(
-            "All Correspondent candidates must complete classification before V2 generation"
+            "Correspondent V2 classification is incomplete; Pass 2 is required "
+            "for every AUTOMATED_REVIEW source"
         )
+
+    effective = effective_source_classifications(db, week)
 
     selected: List[CorrespondentSource] = []
     classification_context: Dict[int, Dict[str, Any]] = {}
