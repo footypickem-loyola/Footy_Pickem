@@ -1236,6 +1236,64 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(allowed.status_code, 200)
         self.assertTrue(allowed.get_json()["ok"])
 
+    def test_correspondent_targets_derive_week_and_x_window_from_python_state(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week.finalized_at = datetime(2026, 8, 23, 18, 0, 0)
+        first_fixture = db.query(app_module.Fixture).filter_by(week_id=week.id).order_by(
+            app_module.Fixture.match_number
+        ).first()
+        first_fixture.kickoff_utc = datetime(2026, 8, 21, 19, 0, 0)
+        db.commit()
+        db.close()
+
+        with app_module.app.test_client() as client, patch.dict(
+            os.environ,
+            {
+                "CORRESPONDENT_V2_ENABLED": "1",
+                "CORRESPONDENT_AUTOMATION_SECRET": "automation-secret",
+            },
+        ):
+            response = client.get(
+                "/tasks/correspondent/targets",
+                headers={"X-Correspondent-Automation-Secret": "automation-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        targets = response.get_json()["targets"]
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["season_code"], "year-2")
+        self.assertEqual(targets[0]["week_number"], 1)
+        self.assertEqual(targets[0]["x_window_start"], "2026-08-21T17:00:00Z")
+        self.assertEqual(targets[0]["x_window_end"], "2026-08-23T19:00:00Z")
+
+    def test_committed_n8n_workflows_preserve_python_authority_and_safe_x_paging(self):
+        workflow_dir = Path(__file__).resolve().parents[1] / "n8n"
+        collector_path = workflow_dir / "correspondent_v2_x_gameweek_collector.workflow.json"
+        orchestrator_path = workflow_dir / "correspondent_v2_orchestrator.workflow.json"
+        gmail_path = workflow_dir / "correspondent_v2_gmail_delivery.workflow.json"
+        collector = json.loads(collector_path.read_text(encoding="utf-8"))
+        orchestrator = json.loads(orchestrator_path.read_text(encoding="utf-8"))
+        gmail = json.loads(gmail_path.read_text(encoding="utf-8"))
+        collector_text = json.dumps(collector)
+        orchestrator_text = json.dumps(orchestrator)
+        gmail_text = json.dumps(gmail)
+
+        self.assertFalse(collector["active"])
+        self.assertFalse(orchestrator["active"])
+        self.assertFalse(gmail["active"])
+        self.assertNotIn("maxRequests", collector_text)
+        self.assertNotIn('"pagination"', collector_text)
+        self.assertIn("/tasks/correspondent/x/claim", collector_text)
+        self.assertIn("/tasks/correspondent/x/checkpoint", collector_text)
+        self.assertIn("sources.length > claim.max_results", collector_text)
+        self.assertIn("/tasks/correspondent/classification/reconcile", orchestrator_text)
+        self.assertIn("/tasks/correspondent/recap/generate", orchestrator_text)
+        self.assertNotIn("AUTOMATED_REVIEW", orchestrator_text)
+        self.assertIn("Gmail Sent Lookup", gmail_text)
+        self.assertIn("gmail_sent_query", gmail_text)
+        self.assertIn("delivery_marker", gmail_text)
+        self.assertNotIn("footypickem@gmail.com", collector_text)
+
     def test_admin_distinguishes_candidate_and_used_v2_sources(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
         week_number = week.number

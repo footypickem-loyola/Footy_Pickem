@@ -1,0 +1,97 @@
+{
+  "name": "Correspondent V2 - Gmail Delivery",
+  "nodes": [
+    {
+      "parameters": {"rule": {"interval": [{"field": "minutes", "minutesInterval": 5}]}},
+      "id": "gmail-schedule", "name": "Every 5 Minutes", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [-920, 0]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.PICKEM_BASE_URL + '/tasks/correspondent/targets' }}", "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}]},
+        "options": {"response": {"response": {"responseFormat": "json"}}}
+      },
+      "id": "gmail-targets", "name": "Get Authoritative Targets", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-700, 0]
+    },
+    {
+      "parameters": {"fieldToSplitOut": "targets", "options": {}},
+      "id": "gmail-split", "name": "One Week Per Item", "type": "n8n-nodes-base.splitOut", "typeVersion": 1, "position": [-480, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allowed = Array.isArray($json.allowed_actions) ? $json.allowed_actions : [];\nconst claims = [];\nif (allowed.includes('claim_recap_email')) claims.push({ json: { season_code: $json.season_code, week_number: $json.week_number, claim_path: '/tasks/correspondent/delivery/claim', ack_path: '/tasks/correspondent/delivery/ack' } });\nif (allowed.includes('claim_x_cap_alert')) claims.push({ json: { season_code: $json.season_code, week_number: $json.week_number, claim_path: '/tasks/correspondent/notifications/x-cap/claim', ack_path: '/tasks/correspondent/notifications/x-cap/ack' } });\nreturn claims;"
+      },
+      "id": "gmail-prepare", "name": "Prepare Gmail Claims", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-260, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "={{ $env.PICKEM_BASE_URL + $json.claim_path }}", "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}]},
+        "sendBody": true, "contentType": "raw", "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ season_code: $json.season_code, week_number: $json.week_number }) }}",
+        "options": {"response": {"response": {"responseFormat": "json"}}}
+      },
+      "id": "gmail-claim", "name": "Claim Gmail Work", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-40, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {"options": {"caseSensitive": true, "typeValidation": "strict", "version": 2}, "conditions": [{"leftValue": "={{ $json.claimed === true && Boolean($json.email?.delivery_marker) }}", "rightValue": true, "operator": {"type": "boolean", "operation": "true", "singleValue": true}}], "combinator": "and"},
+        "options": {}
+      },
+      "id": "gmail-granted", "name": "Claim Granted?", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [180, 0]
+    },
+    {
+      "parameters": {"operation": "getAll", "returnAll": false, "limit": 1, "filters": {"q": "={{ $('Claim Gmail Work').item.json.email.gmail_sent_query }}"}},
+      "id": "gmail-search", "name": "Gmail Sent Lookup", "type": "n8n-nodes-base.gmail", "typeVersion": 2.1, "position": [400, -80], "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {"options": {"caseSensitive": true, "typeValidation": "strict", "version": 2}, "conditions": [{"leftValue": "={{ Boolean($json.id) }}", "rightValue": true, "operator": {"type": "boolean", "operation": "true", "singleValue": true}}], "combinator": "and"},
+        "options": {}
+      },
+      "id": "gmail-found", "name": "Already In Sent?", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [620, -80]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Claim Gmail Work').item.json.email.recipients.join(',') }}",
+        "subject": "={{ $('Claim Gmail Work').item.json.email.subject }}",
+        "message": "={{ $('Claim Gmail Work').item.json.email.body_markdown || $('Claim Gmail Work').item.json.email.body }}",
+        "options": {}
+      },
+      "id": "gmail-send", "name": "Send From footypickem Gmail", "type": "n8n-nodes-base.gmail", "typeVersion": 2.1, "position": [840, 20]
+    },
+    {
+      "parameters": {
+        "jsCode": "const target = $('Prepare Gmail Claims').item.json;\nconst claim = $('Claim Gmail Work').item.json.email;\nconst messageId = String($json.id || $json.threadId || '');\nif (!messageId) throw new Error('Gmail did not return a message ID; leave the claim unacknowledged for Sent lookup retry');\nreturn [{ json: { season_code: target.season_code, week_number: target.week_number, ack_path: target.ack_path, claim_token: claim.claim_token, outcome: 'sent', gmail_message_id: messageId } }];"
+      },
+      "id": "gmail-ack-body", "name": "Build Sent Acknowledgement", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1060, -80]
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "={{ $env.PICKEM_BASE_URL + $json.ack_path }}", "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}]},
+        "sendBody": true, "contentType": "raw", "rawContentType": "application/json", "body": "={{ JSON.stringify({ season_code: $json.season_code, week_number: $json.week_number, claim_token: $json.claim_token, outcome: $json.outcome, gmail_message_id: $json.gmail_message_id }) }}",
+        "options": {"response": {"response": {"responseFormat": "json"}}}
+      },
+      "id": "gmail-ack", "name": "Record Gmail Delivery", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, -80]
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {"main": [[{"node": "Get Authoritative Targets", "type": "main", "index": 0}]]},
+    "Get Authoritative Targets": {"main": [[{"node": "One Week Per Item", "type": "main", "index": 0}]]},
+    "One Week Per Item": {"main": [[{"node": "Prepare Gmail Claims", "type": "main", "index": 0}]]},
+    "Prepare Gmail Claims": {"main": [[{"node": "Claim Gmail Work", "type": "main", "index": 0}]]},
+    "Claim Gmail Work": {"main": [[{"node": "Claim Granted?", "type": "main", "index": 0}]]},
+    "Claim Granted?": {"main": [[{"node": "Gmail Sent Lookup", "type": "main", "index": 0}], []]},
+    "Gmail Sent Lookup": {"main": [[{"node": "Already In Sent?", "type": "main", "index": 0}]]},
+    "Already In Sent?": {"main": [[{"node": "Build Sent Acknowledgement", "type": "main", "index": 0}], [{"node": "Send From footypickem Gmail", "type": "main", "index": 0}]]},
+    "Send From footypickem Gmail": {"main": [[{"node": "Build Sent Acknowledgement", "type": "main", "index": 0}]]},
+    "Build Sent Acknowledgement": {"main": [[{"node": "Record Gmail Delivery", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "settings": {"executionOrder": "v1", "timezone": "America/New_York"},
+  "active": false,
+  "versionId": "e6ee864e-0dd3-490e-9c79-6aa110000003",
+  "meta": {"gmailCredentialAccount": "footypickem@gmail.com", "credentialsStoredInN8nOnly": true},
+  "tags": []
+}

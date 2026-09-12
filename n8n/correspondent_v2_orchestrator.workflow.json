@@ -1,0 +1,57 @@
+{
+  "name": "Correspondent V2 - Weekly Orchestrator",
+  "nodes": [
+    {
+      "parameters": {"rule": {"interval": [{"field": "minutes", "minutesInterval": 5}]}},
+      "id": "orchestrator-schedule", "name": "Every 5 Minutes", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [-720, 0]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.PICKEM_BASE_URL + '/tasks/correspondent/targets' }}", "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}]},
+        "options": {"response": {"response": {"responseFormat": "json"}}}
+      },
+      "id": "orchestrator-targets", "name": "Get Authoritative Targets", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-500, 0]
+    },
+    {
+      "parameters": {"fieldToSplitOut": "targets", "options": {}},
+      "id": "orchestrator-split", "name": "One Week Per Item", "type": "n8n-nodes-base.splitOut", "typeVersion": 1, "position": [-280, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allowed = Array.isArray($json.allowed_actions) ? $json.allowed_actions : [];\nlet action = null;\nlet path = null;\nif (allowed.includes('reconcile_classification')) { action = 'reconcile_classification'; path = '/tasks/correspondent/classification/reconcile'; }\nelse if (allowed.includes('submit_pass_1')) { action = 'submit_pass_1'; path = '/tasks/correspondent/classification/submit'; }\nelse if (allowed.includes('generate_recap')) { action = 'generate_recap'; path = '/tasks/correspondent/recap/generate'; }\nreturn [{ json: { ...$json, action, path } }];"
+      },
+      "id": "orchestrator-next", "name": "Choose One Python Action", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-60, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {"options": {"caseSensitive": true, "typeValidation": "strict", "version": 2}, "conditions": [{"leftValue": "={{ Boolean($json.path) }}", "rightValue": true, "operator": {"type": "boolean", "operation": "true", "singleValue": true}}], "combinator": "and"},
+        "options": {}
+      },
+      "id": "orchestrator-action", "name": "Action Available?", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [160, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "={{ $env.PICKEM_BASE_URL + $json.path }}", "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}]},
+        "sendBody": true, "contentType": "raw", "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ season_code: $json.season_code, week_number: $json.week_number }) }}",
+        "options": {"response": {"response": {"responseFormat": "json"}}}
+      },
+      "id": "orchestrator-call", "name": "Run Idempotent Python Action", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [380, -80]
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {"main": [[{"node": "Get Authoritative Targets", "type": "main", "index": 0}]]},
+    "Get Authoritative Targets": {"main": [[{"node": "One Week Per Item", "type": "main", "index": 0}]]},
+    "One Week Per Item": {"main": [[{"node": "Choose One Python Action", "type": "main", "index": 0}]]},
+    "Choose One Python Action": {"main": [[{"node": "Action Available?", "type": "main", "index": 0}]]},
+    "Action Available?": {"main": [[{"node": "Run Idempotent Python Action", "type": "main", "index": 0}], []]}
+  },
+  "pinData": {},
+  "settings": {"executionOrder": "v1", "timezone": "America/New_York"},
+  "active": false,
+  "versionId": "2c987374-e092-45ef-b0d5-0ac4e5700002",
+  "meta": {"pythonOwnsState": true, "oneActionPerWeekPerRun": true},
+  "tags": []
+}

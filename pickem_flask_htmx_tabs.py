@@ -4219,6 +4219,7 @@ def claim_recap_email_delivery(
     db.commit()
     marker = delivery.delivery_marker
     return delivery, {
+        "kind": "recap",
         "claim_token": delivery.claim_token,
         "delivery_marker": marker,
         "gmail_sent_query": f'in:sent "{marker}"',
@@ -4306,6 +4307,7 @@ def claim_x_cap_notification(
     payload = json.loads(notification.payload_json)
     marker = notification.delivery_marker
     return notification, {
+        "kind": "x_cap_alert",
         "claim_token": notification.claim_token,
         "delivery_marker": marker,
         "gmail_sent_query": f'in:sent "{marker}"',
@@ -5214,6 +5216,46 @@ def scheduled_correspondent_status():
         return jsonify(ok=True, **correspondent_automation_status(db, week))
     except ValueError as exc:
         return jsonify(ok=False, error=str(exc)), 400
+
+
+@app.get("/tasks/correspondent/targets")
+def scheduled_correspondent_targets():
+    """Return active-season finalized weeks that still need automated work."""
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    season = db.query(Season).filter_by(is_active=1, is_archived=0).one_or_none()
+    if season is None:
+        return jsonify(ok=False, error="No unique active writable season"), 409
+    targets = []
+    weeks = db.query(Week).filter_by(
+        season_id=season.id,
+        status="finalized",
+    ).order_by(Week.number.asc()).all()
+    for week in weeks:
+        status = correspondent_automation_status(db, week)
+        if status["phase"] == "EMAIL_SENT" and not status["allowed_actions"]:
+            continue
+        first_kickoff = db.query(func.min(Fixture.kickoff_utc)).filter_by(
+            week_id=week.id,
+        ).scalar()
+        eligible_at = (
+            None
+            if week.finalized_at is None
+            else week.finalized_at + CORRESPONDENT_FINALIZATION_BUFFER
+        )
+        targets.append({
+            "season_code": season.code,
+            "week_number": week.number,
+            "phase": status["phase"],
+            "allowed_actions": status["allowed_actions"],
+            "x_window_start": _utc_iso(
+                None if first_kickoff is None else first_kickoff - timedelta(hours=2)
+            ),
+            "x_window_end": _utc_iso(eligible_at),
+        })
+    return jsonify(ok=True, targets=targets)
 
 
 def _correspondent_automation_json() -> Mapping[str, Any]:
