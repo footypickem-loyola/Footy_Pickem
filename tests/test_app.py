@@ -215,6 +215,18 @@ class PickemAppTests(unittest.TestCase):
         payload.update(overrides)
         return payload
 
+    def complete_x_collection(self, db, week):
+        state = app_module.CorrespondentXCollectionState(
+            week_id=week.id,
+            status="completed",
+            window_start=datetime(2026, 8, 21, 0, 0, 0),
+            window_end=datetime(2026, 8, 24, 0, 0, 0),
+            completed_at=datetime(2026, 8, 24, 0, 1, 0),
+        )
+        db.add(state)
+        db.commit()
+        return state
+
     def batch_classification(self, source_id, **overrides):
         classification = {
             "source_id": source_id,
@@ -1045,9 +1057,152 @@ class PickemAppTests(unittest.TestCase):
 
         self.assertEqual(waiting["phase"], "WAITING_FOR_BUFFER")
         self.assertEqual(waiting["allowed_actions"], [])
-        self.assertEqual(ready["phase"], "READY_FOR_PASS_1")
-        self.assertEqual(ready["allowed_actions"], ["submit_pass_1"])
+        self.assertEqual(ready["phase"], "READY_FOR_X_COLLECTION")
+        self.assertEqual(ready["allowed_actions"], ["claim_x_page"])
         self.assertEqual(ready["eligible_at"], "2026-08-23T19:00:00Z")
+
+        self.complete_x_collection(db, week)
+        classification_ready = app_module.correspondent_automation_status(
+            db,
+            week,
+            now=finalized_at + timedelta(hours=1),
+        )
+        self.assertEqual(classification_ready["phase"], "READY_FOR_PASS_1")
+        self.assertEqual(classification_ready["allowed_actions"], ["submit_pass_1"])
+
+    def test_x_collection_claim_checkpoints_one_page_idempotently(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        headers = {"X-Correspondent-Automation-Secret": "automation-secret"}
+        claim_body = {
+            "season_code": "year-2",
+            "week_number": week.number,
+            "window_start": "2026-08-21T00:00:00Z",
+            "window_end": "2026-08-24T00:00:00Z",
+        }
+        db.close()
+
+        with app_module.app.test_client() as client, patch.dict(
+            os.environ,
+            {
+                "CORRESPONDENT_V2_ENABLED": "1",
+                "CORRESPONDENT_AUTOMATION_SECRET": "automation-secret",
+            },
+        ):
+            claim = client.post(
+                "/tasks/correspondent/x/claim", json=claim_body, headers=headers
+            )
+            duplicate_claim = client.post(
+                "/tasks/correspondent/x/claim", json=claim_body, headers=headers
+            )
+            claim_payload = claim.get_json()["x_request"]
+            checkpoint_body = {
+                "season_code": "year-2",
+                "week_number": 1,
+                "claim_token": claim_payload["claim_token"],
+                "next_token": "   ",
+                "sources": [self.correspondent_ingest_payload(external_id="x-page-1")],
+            }
+            checkpoint = client.post(
+                "/tasks/correspondent/x/checkpoint",
+                json=checkpoint_body,
+                headers=headers,
+            )
+            repeated = client.post(
+                "/tasks/correspondent/x/checkpoint",
+                json=checkpoint_body,
+                headers=headers,
+            )
+
+        self.assertEqual(claim.status_code, 202)
+        self.assertTrue(claim.get_json()["claimed"])
+        self.assertEqual(claim_payload["max_results"], 100)
+        self.assertIsNone(claim_payload["pagination_token"])
+        self.assertEqual(duplicate_claim.status_code, 200)
+        self.assertFalse(duplicate_claim.get_json()["claimed"])
+        self.assertEqual(checkpoint.status_code, 201)
+        self.assertTrue(checkpoint.get_json()["imported"])
+        self.assertEqual(checkpoint.get_json()["x_collection"]["status"], "completed")
+        self.assertEqual(repeated.status_code, 200)
+        self.assertFalse(repeated.get_json()["imported"])
+        verification_db = app_module.SessionLocal()
+        self.assertEqual(verification_db.query(app_module.CorrespondentSource).count(), 1)
+        self.assertEqual(
+            verification_db.query(app_module.CorrespondentXPageReceipt).count(), 1
+        )
+        verification_db.close()
+
+    def test_x_collection_enforces_unique_weekly_cap(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        now = datetime(2026, 8, 24, 0, 0, 0)
+        state = app_module.CorrespondentXCollectionState(
+            week_id=week.id,
+            status="claimed",
+            window_start=datetime(2026, 8, 21, 0, 0, 0),
+            window_end=datetime(2026, 8, 24, 0, 0, 0),
+            retrieved_count=999,
+            persisted_count=999,
+            lease_token="last-page",
+            lease_expires_at=now + timedelta(minutes=5),
+        )
+        db.add(state)
+        db.commit()
+
+        state, receipt, imported = app_module.checkpoint_x_collection_page(
+            db,
+            week,
+            claim_token="last-page",
+            next_token="provider-still-has-more",
+            sources=[self.correspondent_ingest_payload(external_id="x-cap-1000")],
+            now=now,
+        )
+
+        self.assertTrue(imported)
+        self.assertEqual(state.status, "capped")
+        self.assertEqual(state.retrieved_count, 1000)
+        self.assertIsNotNone(state.cap_reached_at)
+        capped_state, paid_request = app_module.claim_x_collection_page(
+            db,
+            week,
+            window_start=state.window_start,
+            window_end=state.window_end,
+            now=now + timedelta(minutes=1),
+        )
+        self.assertEqual(capped_state.status, "capped")
+        self.assertIsNone(paid_request)
+
+    def test_expired_x_claim_is_not_refetched_and_accepts_late_checkpoint(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        claimed_at = datetime(2026, 8, 21, 12, 0, 0)
+        state, paid_request = app_module.claim_x_collection_page(
+            db,
+            week,
+            window_start=datetime(2026, 8, 21, 0, 0, 0),
+            window_end=datetime(2026, 8, 24, 0, 0, 0),
+            now=claimed_at,
+        )
+
+        expired_state, duplicate_request = app_module.claim_x_collection_page(
+            db,
+            week,
+            window_start=state.window_start,
+            window_end=state.window_end,
+            now=claimed_at + app_module.CORRESPONDENT_X_LEASE_DURATION,
+        )
+
+        self.assertIsNotNone(paid_request)
+        self.assertIsNone(duplicate_request)
+        self.assertEqual(expired_state.status, "error")
+        self.assertIn("duplicate paid request", expired_state.last_error)
+        checkpointed, receipt, imported = app_module.checkpoint_x_collection_page(
+            db,
+            week,
+            claim_token=paid_request["claim_token"],
+            next_token=None,
+            sources=[self.correspondent_ingest_payload(external_id="late-x-page")],
+            now=claimed_at + timedelta(hours=1),
+        )
+        self.assertTrue(imported)
+        self.assertEqual(checkpointed.status, "completed")
 
     def test_correspondent_status_endpoint_requires_automation_secret(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
@@ -2065,6 +2220,7 @@ class PickemAppTests(unittest.TestCase):
             db,
             self.correspondent_ingest_payload(external_id="automation-submit"),
         )
+        self.complete_x_collection(db, week)
         db.commit()
         openai = FakeOpenAIClient()
         headers = {

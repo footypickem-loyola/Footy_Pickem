@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+import secrets
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -1416,6 +1417,48 @@ class CorrespondentClassificationJobItem(Base):
     )
 
 
+class CorrespondentXCollectionState(Base):
+    """Authoritative one-page-at-a-time X collection checkpoint for a week."""
+
+    __tablename__ = "correspondent_x_collection_states"
+    id = Column(Integer, primary_key=True)
+    week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False, unique=True)
+    status = Column(String, nullable=False, default="ready")
+    window_start = Column(DateTime, nullable=False)
+    window_end = Column(DateTime, nullable=False)
+    next_token = Column(String)
+    page_count = Column(Integer, nullable=False, default=0)
+    retrieved_count = Column(Integer, nullable=False, default=0)
+    persisted_count = Column(Integer, nullable=False, default=0)
+    lease_token = Column(String, unique=True)
+    lease_expires_at = Column(DateTime)
+    last_error = Column(Text)
+    cap_reached_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    week = relationship("Week")
+
+
+class CorrespondentXPageReceipt(Base):
+    """Idempotency receipt proving one paid X page was checkpointed."""
+
+    __tablename__ = "correspondent_x_page_receipts"
+    id = Column(Integer, primary_key=True)
+    collection_id = Column(
+        Integer,
+        ForeignKey("correspondent_x_collection_states.id"),
+        nullable=False,
+    )
+    claim_token = Column(String, nullable=False, unique=True)
+    request_token = Column(String)
+    next_token = Column(String)
+    received_count = Column(Integer, nullable=False, default=0)
+    created_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    collection = relationship("CorrespondentXCollectionState")
+
+
 class RecapSourceUsage(Base):
     __tablename__ = "recap_source_usages"
     id = Column(Integer, primary_key=True)
@@ -2763,6 +2806,9 @@ CORRESPONDENT_INGEST_MAX_BODY_BYTES = 25_000
 CORRESPONDENT_BATCH_MAX_BODY_BYTES = 10_000_000
 CORRESPONDENT_BATCH_MAX_SOURCES = 1_000
 CORRESPONDENT_FINALIZATION_BUFFER = timedelta(hours=1)
+CORRESPONDENT_X_WEEKLY_CAP = 1_000
+CORRESPONDENT_X_PAGE_SIZE = 100
+CORRESPONDENT_X_LEASE_DURATION = timedelta(minutes=10)
 CORRESPONDENT_PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 
@@ -3777,6 +3823,218 @@ def correspondent_recap_automation_key(week: Week) -> str:
     )
 
 
+def _normalized_x_next_token(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("next_token must be a string or null")
+    value = value.strip()
+    return value or None
+
+
+def _x_collection_json(
+    state: Optional[CorrespondentXCollectionState],
+) -> Optional[Dict[str, Any]]:
+    if state is None:
+        return None
+    return {
+        "id": state.id,
+        "status": state.status,
+        "window_start": _utc_iso(state.window_start),
+        "window_end": _utc_iso(state.window_end),
+        "has_next_token": bool(state.next_token),
+        "page_count": state.page_count,
+        "retrieved_count": state.retrieved_count,
+        "persisted_count": state.persisted_count,
+        "cap": CORRESPONDENT_X_WEEKLY_CAP,
+        "cap_reached": state.status == "capped",
+        "cap_reached_at": _utc_iso(state.cap_reached_at),
+        "completed_at": _utc_iso(state.completed_at),
+        "last_error": state.last_error,
+    }
+
+
+def _week_x_source_count(db, week: Week) -> int:
+    return db.query(func.count(CorrespondentSource.id)).filter_by(
+        week_id=week.id,
+        provider="x",
+        status="accepted",
+    ).scalar() or 0
+
+
+def claim_x_collection_page(
+    db,
+    week: Week,
+    *,
+    window_start: datetime,
+    window_end: datetime,
+    now: Optional[datetime] = None,
+) -> Tuple[CorrespondentXCollectionState, Optional[Dict[str, Any]]]:
+    """Reserve exactly one paid X page request for a bounded lease."""
+    now = now or utcnow()
+    if window_end <= window_start:
+        raise ValueError("X collection window_end must be after window_start")
+    state = db.query(CorrespondentXCollectionState).filter_by(
+        week_id=week.id,
+    ).one_or_none()
+    if state is None:
+        existing_count = _week_x_source_count(db, week)
+        status = "capped" if existing_count >= CORRESPONDENT_X_WEEKLY_CAP else "ready"
+        state = CorrespondentXCollectionState(
+            week_id=week.id,
+            status=status,
+            window_start=window_start,
+            window_end=window_end,
+            retrieved_count=min(existing_count, CORRESPONDENT_X_WEEKLY_CAP),
+            persisted_count=min(existing_count, CORRESPONDENT_X_WEEKLY_CAP),
+            cap_reached_at=now if status == "capped" else None,
+            completed_at=now if status == "capped" else None,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(state)
+        db.commit()
+    elif state.window_start != window_start or state.window_end != window_end:
+        raise ValueError("X collection window cannot change after collection starts")
+
+    if state.status in {"completed", "capped"}:
+        return state, None
+    if state.status == "claimed" and state.lease_token:
+        if state.lease_expires_at is not None and state.lease_expires_at <= now:
+            state.status = "error"
+            state.last_error = (
+                "X page claim expired without a checkpoint; automatic re-fetch is "
+                "blocked to avoid a duplicate paid request"
+            )
+            state.updated_at = now
+            db.commit()
+        return state, None
+    if state.status == "error":
+        return state, None
+
+    remaining = CORRESPONDENT_X_WEEKLY_CAP - state.retrieved_count
+    if remaining <= 0:
+        state.status = "capped"
+        state.cap_reached_at = state.cap_reached_at or now
+        state.completed_at = state.completed_at or now
+        state.lease_token = None
+        state.lease_expires_at = None
+        state.last_error = None
+        state.updated_at = now
+        db.commit()
+        return state, None
+
+    state.status = "claimed"
+    state.lease_token = secrets.token_urlsafe(24)
+    state.lease_expires_at = now + CORRESPONDENT_X_LEASE_DURATION
+    state.last_error = None
+    state.updated_at = now
+    db.commit()
+    return state, {
+        "claim_token": state.lease_token,
+        "pagination_token": state.next_token,
+        "max_results": min(CORRESPONDENT_X_PAGE_SIZE, remaining),
+        "window_start": _utc_iso(state.window_start),
+        "window_end": _utc_iso(state.window_end),
+    }
+
+
+def checkpoint_x_collection_page(
+    db,
+    week: Week,
+    *,
+    claim_token: str,
+    next_token: Any,
+    sources: List[Mapping[str, Any]],
+    now: Optional[datetime] = None,
+) -> Tuple[CorrespondentXCollectionState, CorrespondentXPageReceipt, bool]:
+    """Atomically persist one X page and its continuation checkpoint."""
+    now = now or utcnow()
+    claim_token = str(claim_token or "").strip()
+    if not claim_token:
+        raise ValueError("claim_token is required")
+    existing_receipt = db.query(CorrespondentXPageReceipt).filter_by(
+        claim_token=claim_token,
+    ).one_or_none()
+    if existing_receipt is not None:
+        state = db.get(CorrespondentXCollectionState, existing_receipt.collection_id)
+        if state is None or state.week_id != week.id:
+            raise ValueError("claim_token belongs to a different week")
+        return state, existing_receipt, False
+
+    state = db.query(CorrespondentXCollectionState).filter_by(
+        week_id=week.id,
+    ).one_or_none()
+    if (
+        state is None
+        or state.status not in {"claimed", "error"}
+        or state.lease_token != claim_token
+    ):
+        raise ValueError("X page claim is missing, expired, or already superseded")
+    if not isinstance(sources, list):
+        raise ValueError("sources must be an array")
+    if len(sources) > CORRESPONDENT_X_PAGE_SIZE:
+        raise ValueError(
+            f"sources must contain no more than {CORRESPONDENT_X_PAGE_SIZE} items"
+        )
+    normalized_next_token = _normalized_x_next_token(next_token)
+    request_token = state.next_token
+    season_code = week.season.code
+    external_ids = set()
+    for source in sources:
+        if not isinstance(source, Mapping):
+            raise ValueError("Every source must be a JSON object")
+        if str(source.get("provider") or "").strip().lower() != "x":
+            raise ValueError("X collection checkpoints may contain only provider=x")
+        if source.get("season_code") != season_code or source.get("week_number") != week.number:
+            raise ValueError("X source target does not match the claimed season/week")
+        external_id = str(source.get("external_id") or "").strip()
+        if not external_id:
+            raise ValueError("Every X source must have an external_id")
+        external_ids.add(external_id)
+    remaining = CORRESPONDENT_X_WEEKLY_CAP - state.retrieved_count
+    if len(external_ids) > remaining:
+        raise ValueError("X page would exceed the 1,000-post weekly ceiling")
+
+    created_count = 0
+    try:
+        for source in sources:
+            _, created = ingest_correspondent_source(db, source, commit=False)
+            created_count += int(created)
+        state.page_count += 1
+        state.retrieved_count += created_count
+        state.persisted_count += created_count
+        state.next_token = normalized_next_token
+        state.lease_token = None
+        state.lease_expires_at = None
+        state.last_error = None
+        state.updated_at = now
+        if state.retrieved_count >= CORRESPONDENT_X_WEEKLY_CAP:
+            state.status = "capped"
+            state.cap_reached_at = state.cap_reached_at or now
+            state.completed_at = state.completed_at or now
+        elif normalized_next_token is None:
+            state.status = "completed"
+            state.completed_at = state.completed_at or now
+        else:
+            state.status = "ready"
+        receipt = CorrespondentXPageReceipt(
+            collection_id=state.id,
+            claim_token=claim_token,
+            request_token=request_token,
+            next_token=normalized_next_token,
+            received_count=len(sources),
+            created_count=created_count,
+            created_at=now,
+        )
+        db.add(receipt)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return state, receipt, True
+
+
 def correspondent_automation_status(
     db,
     week: Week,
@@ -3808,6 +4066,9 @@ def correspondent_automation_status(
         prompt_version=V2_PROMPT_VERSION,
         automation_key=correspondent_recap_automation_key(week),
     ).order_by(WeeklyRecap.id.desc()).first()
+    x_collection = db.query(CorrespondentXCollectionState).filter_by(
+        week_id=week.id,
+    ).one_or_none()
 
     if week.status != "finalized" or fixture_count != 10 or completed_results != 10:
         phase = "WAITING_FOR_FINALIZATION"
@@ -3818,6 +4079,15 @@ def correspondent_automation_status(
     elif now < eligible_at:
         phase = "WAITING_FOR_BUFFER"
         allowed_actions = []
+    elif x_collection is None:
+        phase = "READY_FOR_X_COLLECTION"
+        allowed_actions = ["claim_x_page"]
+    elif x_collection.status == "error":
+        phase = "ERROR_RETRY"
+        allowed_actions = []
+    elif x_collection.status in {"ready", "claimed"}:
+        phase = "COLLECTING_X"
+        allowed_actions = ["claim_x_page"] if x_collection.status != "claimed" else []
     elif recap is not None and recap.status == "generating":
         phase = "GENERATING_RECAP"
         allowed_actions = []
@@ -3856,6 +4126,7 @@ def correspondent_automation_status(
         "completed_results": completed_results,
         "finalized_at": _utc_iso(week.finalized_at),
         "eligible_at": _utc_iso(eligible_at),
+        "x_collection": _x_collection_json(x_collection),
         "classification": readiness,
         "jobs": [
             {
@@ -4612,6 +4883,112 @@ def _require_week_correspondent_eligible(db, week: Week) -> None:
         raise ValueError("Correspondent one-hour finalization buffer has not elapsed")
 
 
+def _require_x_collection_complete(db, week: Week) -> None:
+    state = db.query(CorrespondentXCollectionState).filter_by(
+        week_id=week.id,
+    ).one_or_none()
+    if state is None or state.status not in {"completed", "capped"}:
+        raise ValueError("X collection is not complete for this week")
+
+
+def _parse_required_utc_timestamp(value: Any, field_name: str) -> datetime:
+    try:
+        parsed = _parse_correspondent_published_at(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a valid ISO-8601 timestamp") from exc
+    if parsed is None:
+        raise ValueError(f"{field_name} is required")
+    return parsed
+
+
+@app.post("/tasks/correspondent/x/claim")
+def scheduled_correspondent_x_claim():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        if not request.is_json:
+            raise ValueError("Content-Type must be application/json")
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object")
+        unknown = set(payload) - {
+            "season_code", "week_number", "window_start", "window_end"
+        }
+        if unknown:
+            raise ValueError(
+                "Unknown field(s): "
+                + ", ".join(sorted(str(field) for field in unknown))
+            )
+        week = _correspondent_automation_week(db, payload)
+        state, x_request = claim_x_collection_page(
+            db,
+            week,
+            window_start=_parse_required_utc_timestamp(
+                payload.get("window_start"), "window_start"
+            ),
+            window_end=_parse_required_utc_timestamp(
+                payload.get("window_end"), "window_end"
+            ),
+        )
+        return jsonify(
+            ok=True,
+            claimed=x_request is not None,
+            x_request=x_request,
+            x_collection=_x_collection_json(state),
+        ), 202 if x_request is not None else 200
+    except ValueError as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+@app.post("/tasks/correspondent/x/checkpoint")
+def scheduled_correspondent_x_checkpoint():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        if not request.is_json:
+            raise ValueError("Content-Type must be application/json")
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object")
+        unknown = set(payload) - {
+            "season_code", "week_number", "claim_token", "next_token", "sources"
+        }
+        if unknown:
+            raise ValueError(
+                "Unknown field(s): "
+                + ", ".join(sorted(str(field) for field in unknown))
+            )
+        week = _correspondent_automation_week(db, payload)
+        state, receipt, imported = checkpoint_x_collection_page(
+            db,
+            week,
+            claim_token=payload.get("claim_token"),
+            next_token=payload.get("next_token"),
+            sources=payload.get("sources"),
+        )
+        return jsonify(
+            ok=True,
+            imported=imported,
+            receipt={
+                "id": receipt.id,
+                "received": receipt.received_count,
+                "created": receipt.created_count,
+            },
+            x_collection=_x_collection_json(state),
+        ), 201 if imported else 200
+    except CorrespondentIngestNotFound as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 404
+    except (CorrespondentIngestConflict, ValueError) as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 409
+
+
 def _classification_job_json(
     job: Optional[CorrespondentClassificationJob],
 ) -> Optional[Dict[str, Any]]:
@@ -4637,6 +5014,7 @@ def scheduled_correspondent_classification_submit():
     try:
         week = _correspondent_automation_week(db, _correspondent_automation_json())
         _require_week_correspondent_eligible(db, week)
+        _require_x_collection_complete(db, week)
         job, created = ensure_week_classification_batch(db, week, pass_number=1)
         return jsonify(
             ok=True,
