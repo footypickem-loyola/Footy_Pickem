@@ -56,8 +56,8 @@
     {
       "parameters": {
         "url": "={{ 'https://api.x.com/2/users/' + encodeURIComponent($env.X_USER_ID) + '/timelines/reverse_chronological?max_results=' + $json.x_request.max_results + '&start_time=' + encodeURIComponent($json.x_request.window_start) + '&end_time=' + encodeURIComponent($json.x_request.window_end) + '&tweet.fields=id,text,author_id,created_at,conversation_id,referenced_tweets,public_metrics,entities&expansions=author_id,referenced_tweets.id,referenced_tweets.id.author_id&user.fields=id,name,username,verified' + ($json.x_request.pagination_token ? '&pagination_token=' + encodeURIComponent($json.x_request.pagination_token) : '') }}",
-        "sendHeaders": true,
-        "headerParameters": {"parameters": [{"name": "Authorization", "value": "=Bearer {{$env.X_USER_ACCESS_TOKEN}}"}]},
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "twitterOAuth2Api",
         "options": {"response": {"response": {"responseFormat": "json"}}}
       },
       "id": "x-fetch", "name": "Fetch One X Page", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [420, -160]
