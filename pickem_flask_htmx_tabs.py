@@ -392,7 +392,7 @@ ADMIN_HTML = """
                 <input type="hidden" name="week" value="{{ week.number }}">
                 <input type="hidden" name="version" value="v2">
                 <button class="btn {% if correspondent_default_version == 'v2' %}primary{% endif %}" type="submit"
-                        {% if not openai_configured or not correspondent_sources %}disabled{% endif %}>
+                        {% if not openai_configured or not correspondent_automation or not correspondent_automation.classification.ready %}disabled{% endif %}>
                   Generate V2 Recap
                 </button>
               </form>
@@ -491,6 +491,28 @@ ADMIN_HTML = """
           standings, or payouts. Workflow: ingest sources, classify them, inspect the
           results below, then generate the V2 recap.
         </p>
+        {% if correspondent_automation %}
+          <div style="padding:12px; margin:12px 0; border:1px solid #cbd5e1; border-radius:8px; background:#f8fafc;">
+            <h4 style="margin-top:0;">Automation status: {{ correspondent_automation.phase }}</h4>
+            <div class="api-grid">
+              <div class="api-stat"><strong>Week finalized</strong><br>{{ correspondent_automation.finalized_at or 'Not yet' }}</div>
+              <div class="api-stat"><strong>Eligible after</strong><br>{{ correspondent_automation.eligible_at or 'Waiting for finalization' }}</div>
+              <div class="api-stat"><strong>X collection</strong><br>
+                {% if correspondent_automation.x_collection %}
+                  {{ correspondent_automation.x_collection.status }} · {{ correspondent_automation.x_collection.retrieved_count }}/{{ correspondent_automation.x_collection.cap }} posts · {{ correspondent_automation.x_collection.page_count }} pages
+                {% else %}Not started{% endif %}
+              </div>
+              <div class="api-stat"><strong>Classifications</strong><br>{{ correspondent_automation.classification.final_classifications }}/{{ correspondent_automation.classification.article_candidates }} final</div>
+              <div class="api-stat"><strong>Automated recap</strong><br>{{ correspondent_automation.recap.status if correspondent_automation.recap else 'Not generated' }}</div>
+              <div class="api-stat"><strong>Recap email</strong><br>{{ correspondent_automation.delivery.status if correspondent_automation.delivery else 'Not claimed' }}</div>
+              <div class="api-stat"><strong>X cap alert</strong><br>{{ correspondent_automation.x_cap_notification.status if correspondent_automation.x_cap_notification else 'Not needed' }}</div>
+              <div class="api-stat"><strong>Allowed actions</strong><br>{{ correspondent_automation.allowed_actions|join(', ') if correspondent_automation.allowed_actions else 'None' }}</div>
+            </div>
+            {% if correspondent_automation.x_collection and correspondent_automation.x_collection.last_error %}<div class="notice error">X collection: {{ correspondent_automation.x_collection.last_error }}</div>{% endif %}
+            {% if correspondent_automation.delivery and correspondent_automation.delivery.error %}<div class="notice error">Recap delivery: {{ correspondent_automation.delivery.error }}</div>{% endif %}
+            {% if correspondent_automation.x_cap_notification and correspondent_automation.x_cap_notification.error %}<div class="notice error">X cap alert: {{ correspondent_automation.x_cap_notification.error }}</div>{% endif %}
+          </div>
+        {% endif %}
         <div style="padding:12px; margin:12px 0; border:1px solid #bae6fd; border-radius:8px; background:#f0f9ff;">
           <div class="version-actions">
             <form method="post" action="{{ url_for('admin_classify_correspondent_sources') }}">
@@ -4809,6 +4831,7 @@ def admin():
     latest_v2_recap = None
     recap_used_source_counts = {}
     latest_v2_used_source_ids = set()
+    correspondent_automation = None
     if weeks:
         sel = request.args.get("week", type=int)
         wk = season_week(db, season, sel) if sel else current_drafting_week(db, season)
@@ -4877,6 +4900,8 @@ def admin():
             and not correspondent_source_is_article_candidate(source)
         }
         selected_recap = selected_weekly_recap(db, wk)
+        if correspondent_v2_enabled():
+            correspondent_automation = correspondent_automation_status(db, wk)
 
     year_two = db.query(Season).filter_by(code="year-2").first()
     can_import_api = year_two is None or db.query(Week).filter_by(
@@ -4916,6 +4941,7 @@ def admin():
         correspondent_classifications=correspondent_classifications,
         correspondent_classification_jobs=correspondent_classification_jobs,
         correspondent_signal_only_source_ids=correspondent_signal_only_source_ids,
+        correspondent_automation=correspondent_automation,
         correspondent_v2_enabled=correspondent_v2_enabled(),
         correspondent_default_version=correspondent_default_version(),
         can_import_api=can_import_api,

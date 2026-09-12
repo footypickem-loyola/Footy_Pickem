@@ -1462,6 +1462,8 @@ class PickemAppTests(unittest.TestCase):
 
     def test_admin_shows_batch_progress_and_protects_status_sync(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week.finalized_at = datetime(2026, 8, 23, 18, 0, 0)
+        self.complete_x_collection(db, week)
         db.add(app_module.CorrespondentClassificationJob(
             season_id=week.season_id,
             week_id=week.id,
@@ -1505,6 +1507,8 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(locked.status_code, 403)
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Check Classification Status", page.data)
+        self.assertIn(b"Automation status: CLASSIFYING_PASS_1", page.data)
+        self.assertIn(b"completed \xc2\xb7 0/1000 posts", page.data)
         self.assertIn(b"in_progress", page.data)
         self.assertIn(b"1/3 completed", page.data)
         self.assertEqual(checked.status_code, 200)
