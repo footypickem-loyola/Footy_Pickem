@@ -45,6 +45,11 @@ from scripts.set_week1_finalized_at import (  # noqa: E402
     set_week1_finalized_at,
     validated_staging_db_path as validated_finalized_at_staging_db_path,
 )
+from scripts.simulate_week1_x_cap_alert import (  # noqa: E402
+    MaintenanceSafetyError as XCapMaintenanceSafetyError,
+    simulate_week1_x_cap_alert,
+    validated_staging_db_path as validated_x_cap_staging_db_path,
+)
 
 
 class FakeResponse:
@@ -1961,6 +1966,124 @@ class PickemAppTests(unittest.TestCase):
             "already set",
         ):
             set_week1_finalized_at(db, app_module, timestamp)
+
+    def test_x_cap_helper_refuses_non_staging_database_paths(self):
+        for database_url in (
+            "sqlite:////data/pickem.db",
+            f"sqlite:///{Path(TEST_DIR.name) / 'pickem_staging.db'}",
+        ):
+            with self.subTest(database_url=database_url), self.assertRaisesRegex(
+                XCapMaintenanceSafetyError,
+                "resolve exactly",
+            ):
+                validated_x_cap_staging_db_path(database_url)
+
+    def test_x_cap_helper_targets_only_eligible_year2_week1(self):
+        now = datetime(2026, 8, 23, 20, 0, 0)
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        season = db.get(app_module.Season, week.season_id)
+        week.finalized_at = now - timedelta(hours=2)
+        season.is_active = 0
+        db.commit()
+        with self.assertRaisesRegex(XCapMaintenanceSafetyError, "active"):
+            simulate_week1_x_cap_alert(db, app_module, now=now)
+
+        season.is_active = 1
+        week.number = 2
+        db.commit()
+        with self.assertRaisesRegex(XCapMaintenanceSafetyError, "Week 1"):
+            simulate_week1_x_cap_alert(db, app_module, now=now)
+
+        week.number = 1
+        week.finalized_at = now - timedelta(minutes=30)
+        db.commit()
+        with self.assertRaisesRegex(XCapMaintenanceSafetyError, "automation-eligible"):
+            simulate_week1_x_cap_alert(db, app_module, now=now)
+
+    def test_x_cap_helper_creates_only_cap_state_and_exposes_gmail_action(self):
+        now = datetime(2026, 8, 23, 20, 0, 0)
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week.finalized_at = now - timedelta(hours=2)
+        for index, fixture in enumerate(
+            db.query(app_module.Fixture).filter_by(week_id=week.id).all()
+        ):
+            fixture.kickoff_utc = now - timedelta(days=2, hours=index)
+        db.commit()
+        protected_models = (
+            app_module.Player,
+            app_module.Season,
+            app_module.Week,
+            app_module.Fixture,
+            app_module.Matchup,
+            app_module.Pick,
+            app_module.Result,
+            app_module.CorrespondentSource,
+            app_module.CorrespondentSourceClassification,
+            app_module.CorrespondentClassificationJob,
+            app_module.WeeklyRecap,
+            app_module.CorrespondentEmailDelivery,
+        )
+        before = {
+            model.__tablename__: tuple(
+                tuple(getattr(row, column.name) for column in model.__table__.columns)
+                for row in db.query(model).order_by(model.id.asc()).all()
+            )
+            for model in protected_models
+        }
+
+        summary = simulate_week1_x_cap_alert(db, app_module, now=now)
+
+        state = db.query(app_module.CorrespondentXCollectionState).one()
+        notification = db.query(app_module.CorrespondentNotification).one()
+        self.assertEqual(state.status, "capped")
+        self.assertEqual(state.retrieved_count, 1000)
+        self.assertEqual(state.persisted_count, 1000)
+        self.assertEqual(state.page_count, 10)
+        self.assertEqual(state.cap_reached_at, now)
+        self.assertEqual(state.completed_at, now)
+        self.assertIsNone(state.lease_token)
+        self.assertIsNone(state.lease_expires_at)
+        self.assertEqual(notification.status, "pending")
+        self.assertIn("claim_x_cap_alert", summary["allowed_actions"])
+        self.assertEqual(db.query(app_module.CorrespondentSource).count(), 0)
+        after = {
+            model.__tablename__: tuple(
+                tuple(getattr(row, column.name) for column in model.__table__.columns)
+                for row in db.query(model).order_by(model.id.asc()).all()
+            )
+            for model in protected_models
+        }
+        self.assertEqual(after, before)
+
+        db.close()
+        headers = {"X-Correspondent-Automation-Secret": "automation-secret"}
+        with app_module.app.test_client() as client, patch.dict(
+            os.environ,
+            {
+                "CORRESPONDENT_V2_ENABLED": "1",
+                "CORRESPONDENT_AUTOMATION_SECRET": "automation-secret",
+            },
+        ):
+            response = client.get("/tasks/correspondent/targets", headers=headers)
+        self.assertEqual(response.status_code, 200)
+        target = response.get_json()["targets"][0]
+        self.assertIn("claim_x_cap_alert", target["allowed_actions"])
+
+    def test_x_cap_helper_rejects_repeated_execution(self):
+        now = datetime(2026, 8, 23, 20, 0, 0)
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week.finalized_at = now - timedelta(hours=2)
+        for index, fixture in enumerate(
+            db.query(app_module.Fixture).filter_by(week_id=week.id).all()
+        ):
+            fixture.kickoff_utc = now - timedelta(days=2, hours=index)
+        db.commit()
+        simulate_week1_x_cap_alert(db, app_module, now=now)
+
+        with self.assertRaisesRegex(XCapMaintenanceSafetyError, "notification state"):
+            simulate_week1_x_cap_alert(db, app_module, now=now + timedelta(minutes=1))
+        self.assertEqual(db.query(app_module.CorrespondentXCollectionState).count(), 1)
+        self.assertEqual(db.query(app_module.CorrespondentNotification).count(), 1)
 
     def test_week1_copy_script_discovers_source_season_from_matching_rows(self):
         db = app_module.SessionLocal()
