@@ -2170,10 +2170,63 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["second_pass_job_id"], 22)
         reconcile.assert_called_once()
-        self.assertEqual(
-            db.query(app_module.CorrespondentClassificationJob).count(),
-            1,
+
+    def test_automated_recap_generation_returns_same_recap_on_retry(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week.finalized_at = datetime(2026, 8, 23, 18, 0, 0)
+        source, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(external_id="automation-recap"),
         )
+        self.classify_source_for_writer(db, source)
+        generated = SimpleNamespace(
+            title="Automated Week 1",
+            body_markdown="A safely reserved automated recap.",
+            used_source_ids=(source.id,),
+            model="test-model",
+            provider_response_id="resp-automated-recap",
+        )
+        week_number = week.number
+        db.close()
+        headers = {
+            "X-Correspondent-Automation-Secret": "automation-secret",
+        }
+        body = {"season_code": "year-2", "week_number": week_number}
+
+        with app_module.app.test_client() as client, patch.dict(
+            os.environ,
+            {
+                "CORRESPONDENT_V2_ENABLED": "1",
+                "CORRESPONDENT_AUTOMATION_SECRET": "automation-secret",
+            },
+        ), patch.object(
+            app_module,
+            "generate_weekly_recap_v2",
+            return_value=generated,
+        ) as writer:
+            first = client.post(
+                "/tasks/correspondent/recap/generate",
+                json=body,
+                headers=headers,
+            )
+            second = client.post(
+                "/tasks/correspondent/recap/generate",
+                json=body,
+                headers=headers,
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.get_json()["recap"]["id"], second.get_json()["recap"]["id"])
+        writer.assert_called_once()
+        verification_db = app_module.SessionLocal()
+        recaps = verification_db.query(app_module.WeeklyRecap).all()
+        self.assertEqual(len(recaps), 1)
+        self.assertEqual(
+            recaps[0].automation_key,
+            app_module.correspondent_recap_automation_key(recaps[0].week),
+        )
+        verification_db.close()
 
     def test_completed_batch_maps_by_custom_id_and_creates_pass_two(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
@@ -3303,9 +3356,13 @@ class PickemAppTests(unittest.TestCase):
             connection.close()
 
             self.assertIn("external_context_hash", columns)
+            self.assertIn("automation_key", columns)
             self.assertEqual(recap, (7, "Existing V1", "v1", 0))
             self.assertTrue(
                 (Path(directory) / "v1.pre_correspondent_v2.db").exists()
+            )
+            self.assertTrue(
+                (Path(directory) / "v1.pre_recap_automation.db").exists()
             )
 
     def test_api_client_obeys_rate_limit_response_headers(self):

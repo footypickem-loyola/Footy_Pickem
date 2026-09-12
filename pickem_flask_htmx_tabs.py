@@ -1281,6 +1281,7 @@ class WeeklyRecap(Base):
     correspondent_version = Column(String, nullable=False, default="v1")
     source_count = Column(Integer, nullable=False, default=0)
     external_context_hash = Column(String)
+    automation_key = Column(String, unique=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     completed_at = Column(DateTime)
     week = relationship("Week")
@@ -1633,6 +1634,16 @@ def ensure_database_schema(target_engine=engine) -> bool:
                     "UPDATE weekly_recaps SET source_count=0 WHERE source_count IS NULL"
                 )
                 raw.commit()
+            if "automation_key" not in existing_recap_columns:
+                _backup_database(target_engine, "pre_recap_automation")
+                cursor.execute(
+                    "ALTER TABLE weekly_recaps ADD COLUMN automation_key VARCHAR"
+                )
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_weekly_recaps_automation_key "
+                "ON weekly_recaps(automation_key) WHERE automation_key IS NOT NULL"
+            )
+            raw.commit()
 
         week_exists = cursor.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='weeks'"
@@ -3759,6 +3770,13 @@ def _utc_iso(value: Optional[datetime]) -> Optional[str]:
     return None if value is None else f"{value.isoformat(timespec='seconds')}Z"
 
 
+def correspondent_recap_automation_key(week: Week) -> str:
+    return (
+        f"week:{week.id}:classifier:{CLASSIFIER_PROMPT_VERSION}:"
+        f"recap:{V2_PROMPT_VERSION}"
+    )
+
+
 def correspondent_automation_status(
     db,
     week: Week,
@@ -3788,6 +3806,7 @@ def correspondent_automation_status(
         week_id=week.id,
         correspondent_version="v2",
         prompt_version=V2_PROMPT_VERSION,
+        automation_key=correspondent_recap_automation_key(week),
     ).order_by(WeeklyRecap.id.desc()).first()
 
     if week.status != "finalized" or fixture_count != 10 or completed_results != 10:
@@ -4006,10 +4025,21 @@ def generate_and_store_weekly_recap(db, week: Week) -> WeeklyRecap:
     return recap
 
 
-def generate_and_store_weekly_recap_v2(db, week: Week) -> WeeklyRecap:
+def generate_and_store_weekly_recap_v2(
+    db,
+    week: Week,
+    *,
+    automation_key: Optional[str] = None,
+) -> WeeklyRecap:
     """Generate V2 beside V1; a V2 attempt never replaces the selected recap."""
     if not correspondent_v2_enabled():
         raise ValueError("Correspondent V2 is not enabled")
+    if automation_key:
+        existing = db.query(WeeklyRecap).filter_by(
+            automation_key=automation_key,
+        ).first()
+        if existing is not None:
+            return existing
     context = build_weekly_recap_context_v2(db, week)
     context_json = json.dumps(context, ensure_ascii=False, sort_keys=True)
     context_hash = hashlib.sha256(context_json.encode("utf-8")).hexdigest()
@@ -4032,10 +4062,20 @@ def generate_and_store_weekly_recap_v2(db, week: Week) -> WeeklyRecap:
         correspondent_version="v2",
         source_count=context["external_context"]["candidate_source_count"],
         external_context_hash=external_context_hash,
+        automation_key=automation_key,
         created_at=utcnow(),
     )
     db.add(recap)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if not automation_key:
+            raise
+        existing = db.query(WeeklyRecap).filter_by(
+            automation_key=automation_key,
+        ).one()
+        return existing
 
     try:
         generated = generate_weekly_recap_v2(context, model=model)
@@ -4642,6 +4682,43 @@ def scheduled_correspondent_classification_reconcile():
         return jsonify(ok=False, error=str(exc)), 409
     except CorrespondentError as exc:
         return jsonify(ok=False, error=str(exc)), 502
+
+
+@app.post("/tasks/correspondent/recap/generate")
+def scheduled_correspondent_recap_generate():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, _correspondent_automation_json())
+        _require_week_correspondent_eligible(db, week)
+        recap = generate_and_store_weekly_recap_v2(
+            db,
+            week,
+            automation_key=correspondent_recap_automation_key(week),
+        )
+        payload = {
+            "id": recap.id,
+            "revision": recap.revision,
+            "status": recap.status,
+            "title": recap.title,
+            "prompt_version": recap.prompt_version,
+            "automation_key": recap.automation_key,
+        }
+        if recap.status == "failed":
+            return jsonify(
+                ok=False,
+                error=recap.error_message or "Automated V2 recap generation failed",
+                recap=payload,
+            ), 502
+        return jsonify(
+            ok=True,
+            recap=payload,
+            status=correspondent_automation_status(db, week),
+        )
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
 
 
 @app.post("/api/correspondent/sources")
