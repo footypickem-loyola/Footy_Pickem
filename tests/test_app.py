@@ -39,6 +39,12 @@ from scripts.reset_week1_classifier_v2_state import (  # noqa: E402
     target_scope as reset_target_scope,
     validated_staging_db_path as validated_reset_staging_db_path,
 )
+from scripts.set_week1_finalized_at import (  # noqa: E402
+    MaintenanceSafetyError as FinalizedAtMaintenanceSafetyError,
+    parse_utc_timestamp as parse_finalized_at_timestamp,
+    set_week1_finalized_at,
+    validated_staging_db_path as validated_finalized_at_staging_db_path,
+)
 
 
 class FakeResponse:
@@ -1810,6 +1816,151 @@ class PickemAppTests(unittest.TestCase):
             validated_staging_db_path(f"sqlite:///{guarded_path}"),
             guarded_path.resolve(),
         )
+
+    def test_set_week1_finalized_at_script_requires_exact_staging_path(self):
+        with self.assertRaisesRegex(
+            FinalizedAtMaintenanceSafetyError,
+            "resolve exactly",
+        ):
+            validated_finalized_at_staging_db_path("sqlite:////data/pickem.db")
+        with self.assertRaisesRegex(
+            FinalizedAtMaintenanceSafetyError,
+            "resolve exactly",
+        ):
+            validated_finalized_at_staging_db_path(
+                f"sqlite:///{Path(TEST_DIR.name) / 'pickem_staging.db'}"
+            )
+
+    def test_set_week1_finalized_at_script_requires_explicit_utc_timestamp(self):
+        expected = datetime(2026, 8, 23, 18, 30, 0)
+        self.assertEqual(
+            parse_finalized_at_timestamp("2026-08-23T18:30:00Z"),
+            expected,
+        )
+        self.assertEqual(
+            parse_finalized_at_timestamp("2026-08-23T18:30:00+00:00"),
+            expected,
+        )
+        for invalid in (
+            "2026-08-23T18:30:00",
+            "2026-08-23T14:30:00-04:00",
+            "not-a-timestamp",
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(
+                FinalizedAtMaintenanceSafetyError
+            ):
+                parse_finalized_at_timestamp(invalid)
+
+    def test_set_week1_finalized_at_script_enforces_target_guards(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        season = db.get(app_module.Season, week.season_id)
+        timestamp = datetime(2026, 8, 23, 18, 30, 0)
+
+        week.status = "provisional"
+        db.commit()
+        with self.assertRaisesRegex(
+            FinalizedAtMaintenanceSafetyError,
+            "must be finalized",
+        ):
+            set_week1_finalized_at(db, app_module, timestamp)
+
+        week.status = "finalized"
+        result = db.query(app_module.Result).join(app_module.Fixture).filter(
+            app_module.Fixture.week_id == week.id
+        ).first()
+        db.delete(result)
+        db.commit()
+        with self.assertRaisesRegex(
+            FinalizedAtMaintenanceSafetyError,
+            "10 completed results",
+        ):
+            set_week1_finalized_at(db, app_module, timestamp)
+
+        fixture = db.query(app_module.Fixture).filter_by(week_id=week.id).first()
+        db.add(app_module.Result(
+            fixture_id=fixture.id,
+            outcome="Home",
+            source="manual",
+        ))
+        season.code = "not-year-2"
+        db.commit()
+        with self.assertRaisesRegex(
+            FinalizedAtMaintenanceSafetyError,
+            "year-2 season",
+        ):
+            set_week1_finalized_at(db, app_module, timestamp)
+
+        season.code = "year-2"
+        season.is_active = 0
+        db.commit()
+        with self.assertRaisesRegex(
+            FinalizedAtMaintenanceSafetyError,
+            "active and not archived",
+        ):
+            set_week1_finalized_at(db, app_module, timestamp)
+
+        season.is_active = 1
+        week.number = 2
+        db.commit()
+        with self.assertRaisesRegex(
+            FinalizedAtMaintenanceSafetyError,
+            "Week 1 was not found",
+        ):
+            set_week1_finalized_at(db, app_module, timestamp)
+
+    def test_set_week1_finalized_at_script_updates_only_null_field_once(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        timestamp = datetime(2026, 8, 23, 18, 30, 0)
+        protected_before = {
+            model.__tablename__: tuple(
+                tuple(getattr(row, column.name) for column in model.__table__.columns)
+                for row in db.query(model).order_by(model.id.asc()).all()
+            )
+            for model in (
+                app_module.Player,
+                app_module.Season,
+                app_module.Fixture,
+                app_module.Matchup,
+                app_module.Pick,
+                app_module.Result,
+                app_module.CorrespondentSource,
+                app_module.CorrespondentSourceClassification,
+                app_module.CorrespondentClassificationJob,
+                app_module.WeeklyRecap,
+                app_module.CorrespondentEmailDelivery,
+            )
+        }
+
+        summary = set_week1_finalized_at(db, app_module, timestamp)
+
+        self.assertIsNone(summary["before"])
+        self.assertEqual(summary["after"], timestamp)
+        self.assertEqual(db.get(app_module.Week, week.id).finalized_at, timestamp)
+        protected_after = {
+            model.__tablename__: tuple(
+                tuple(getattr(row, column.name) for column in model.__table__.columns)
+                for row in db.query(model).order_by(model.id.asc()).all()
+            )
+            for model in (
+                app_module.Player,
+                app_module.Season,
+                app_module.Fixture,
+                app_module.Matchup,
+                app_module.Pick,
+                app_module.Result,
+                app_module.CorrespondentSource,
+                app_module.CorrespondentSourceClassification,
+                app_module.CorrespondentClassificationJob,
+                app_module.WeeklyRecap,
+                app_module.CorrespondentEmailDelivery,
+            )
+        }
+        self.assertEqual(protected_after, protected_before)
+        with self.assertRaisesRegex(
+            FinalizedAtMaintenanceSafetyError,
+            "already set",
+        ):
+            set_week1_finalized_at(db, app_module, timestamp)
 
     def test_week1_copy_script_discovers_source_season_from_matching_rows(self):
         db = app_module.SessionLocal()
