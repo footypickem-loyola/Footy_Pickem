@@ -1147,14 +1147,18 @@ class PickemAppTests(unittest.TestCase):
         db.add(state)
         db.commit()
 
-        state, receipt, imported = app_module.checkpoint_x_collection_page(
-            db,
-            week,
-            claim_token="last-page",
-            next_token="provider-still-has-more",
-            sources=[self.correspondent_ingest_payload(external_id="x-cap-1000")],
-            now=now,
-        )
+        with patch.dict(
+            os.environ,
+            {"CORRESPONDENT_ADMIN_ALERT_RECIPIENTS": "admin@example.com"},
+        ):
+            state, receipt, imported = app_module.checkpoint_x_collection_page(
+                db,
+                week,
+                claim_token="last-page",
+                next_token="provider-still-has-more",
+                sources=[self.correspondent_ingest_payload(external_id="x-cap-1000")],
+                now=now,
+            )
 
         self.assertTrue(imported)
         self.assertEqual(state.status, "capped")
@@ -1169,6 +1173,7 @@ class PickemAppTests(unittest.TestCase):
         )
         self.assertEqual(capped_state.status, "capped")
         self.assertIsNone(paid_request)
+        self.assertEqual(db.query(app_module.CorrespondentNotification).count(), 1)
 
     def test_expired_x_claim_is_not_refetched_and_accepts_late_checkpoint(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
@@ -2335,6 +2340,7 @@ class PickemAppTests(unittest.TestCase):
             self.correspondent_ingest_payload(external_id="automation-recap"),
         )
         self.classify_source_for_writer(db, source)
+        self.complete_x_collection(db, week)
         generated = SimpleNamespace(
             title="Automated Week 1",
             body_markdown="A safely reserved automated recap.",
@@ -2381,6 +2387,145 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(
             recaps[0].automation_key,
             app_module.correspondent_recap_automation_key(recaps[0].week),
+        )
+        verification_db.close()
+
+    def test_recap_email_delivery_claim_and_ack_are_idempotent(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week.finalized_at = datetime(2026, 8, 23, 18, 0, 0)
+        self.complete_x_collection(db, week)
+        recap = app_module.WeeklyRecap(
+            week_id=week.id,
+            revision=1,
+            status="ready",
+            title="Automated Week 1",
+            body_markdown="The completed automated recap.",
+            context_json="{}",
+            context_hash="recap-context",
+            prompt_version=app_module.V2_PROMPT_VERSION,
+            model="test-model",
+            correspondent_version="v2",
+            automation_key=app_module.correspondent_recap_automation_key(week),
+        )
+        db.add(recap)
+        db.commit()
+        db.close()
+        headers = {"X-Correspondent-Automation-Secret": "automation-secret"}
+        body = {"season_code": "year-2", "week_number": 1}
+
+        with app_module.app.test_client() as client, patch.dict(
+            os.environ,
+            {
+                "CORRESPONDENT_V2_ENABLED": "1",
+                "CORRESPONDENT_AUTOMATION_SECRET": "automation-secret",
+                "CORRESPONDENT_RECAP_RECIPIENTS": "one@example.com,two@example.com",
+            },
+        ):
+            claimed = client.post(
+                "/tasks/correspondent/delivery/claim", json=body, headers=headers
+            )
+            duplicate = client.post(
+                "/tasks/correspondent/delivery/claim", json=body, headers=headers
+            )
+            email = claimed.get_json()["email"]
+            ack_body = {
+                **body,
+                "claim_token": email["claim_token"],
+                "outcome": "sent",
+                "gmail_message_id": "gmail-recap-1",
+            }
+            acknowledged = client.post(
+                "/tasks/correspondent/delivery/ack",
+                json=ack_body,
+                headers=headers,
+            )
+            repeated_ack = client.post(
+                "/tasks/correspondent/delivery/ack",
+                json=ack_body,
+                headers=headers,
+            )
+            status = client.get(
+                "/tasks/correspondent/status?season_code=year-2&week_number=1",
+                headers=headers,
+            )
+
+        self.assertEqual(claimed.status_code, 202)
+        self.assertEqual(email["recipients"], ["one@example.com", "two@example.com"])
+        self.assertIn(email["delivery_marker"], email["subject"])
+        self.assertIn(email["delivery_marker"], email["gmail_sent_query"])
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertFalse(duplicate.get_json()["claimed"])
+        self.assertEqual(acknowledged.status_code, 200)
+        self.assertEqual(repeated_ack.status_code, 200)
+        self.assertEqual(status.get_json()["phase"], "EMAIL_SENT")
+        verification_db = app_module.SessionLocal()
+        self.assertEqual(verification_db.query(app_module.CorrespondentEmailDelivery).count(), 1)
+        self.assertEqual(
+            verification_db.query(app_module.CorrespondentEmailDelivery).one().gmail_message_id,
+            "gmail-recap-1",
+        )
+        verification_db.close()
+
+    def test_x_cap_notification_claims_and_sends_only_once(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        state = app_module.CorrespondentXCollectionState(
+            week_id=week.id,
+            status="capped",
+            window_start=datetime(2026, 8, 21, 0, 0, 0),
+            window_end=datetime(2026, 8, 24, 0, 0, 0),
+            retrieved_count=1000,
+            persisted_count=1000,
+        )
+        db.add(state)
+        db.flush()
+        app_module._ensure_x_cap_notification(
+            db, week, state, now=datetime(2026, 8, 24, 0, 0, 0)
+        )
+        db.commit()
+        db.close()
+        headers = {"X-Correspondent-Automation-Secret": "automation-secret"}
+        body = {"season_code": "year-2", "week_number": 1}
+
+        with app_module.app.test_client() as client, patch.dict(
+            os.environ,
+            {
+                "CORRESPONDENT_V2_ENABLED": "1",
+                "CORRESPONDENT_AUTOMATION_SECRET": "automation-secret",
+                "CORRESPONDENT_ADMIN_ALERT_RECIPIENTS": "admin@example.com",
+            },
+        ):
+            claimed = client.post(
+                "/tasks/correspondent/notifications/x-cap/claim",
+                json=body,
+                headers=headers,
+            )
+            email = claimed.get_json()["email"]
+            ack = client.post(
+                "/tasks/correspondent/notifications/x-cap/ack",
+                json={
+                    **body,
+                    "claim_token": email["claim_token"],
+                    "outcome": "sent",
+                    "gmail_message_id": "gmail-alert-1",
+                },
+                headers=headers,
+            )
+            after_sent = client.post(
+                "/tasks/correspondent/notifications/x-cap/claim",
+                json=body,
+                headers=headers,
+            )
+
+        self.assertEqual(claimed.status_code, 202)
+        self.assertIn("may have been truncated", email["body"])
+        self.assertEqual(ack.status_code, 200)
+        self.assertEqual(after_sent.status_code, 200)
+        self.assertFalse(after_sent.get_json()["claimed"])
+        verification_db = app_module.SessionLocal()
+        self.assertEqual(verification_db.query(app_module.CorrespondentNotification).count(), 1)
+        self.assertEqual(
+            verification_db.query(app_module.CorrespondentNotification).one().status,
+            "sent",
         )
         verification_db.close()
 

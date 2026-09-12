@@ -1459,6 +1459,49 @@ class CorrespondentXPageReceipt(Base):
     collection = relationship("CorrespondentXCollectionState")
 
 
+class CorrespondentEmailDelivery(Base):
+    """Durable reservation and acknowledgement for one automated recap email."""
+
+    __tablename__ = "correspondent_email_deliveries"
+    id = Column(Integer, primary_key=True)
+    recap_id = Column(Integer, ForeignKey("weekly_recaps.id"), nullable=False, unique=True)
+    delivery_marker = Column(String, nullable=False, unique=True)
+    recipients_json = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="pending")
+    claim_token = Column(String, unique=True)
+    claim_expires_at = Column(DateTime)
+    gmail_message_id = Column(String)
+    error_message = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    sent_at = Column(DateTime)
+    recap = relationship("WeeklyRecap")
+
+
+class CorrespondentNotification(Base):
+    """Durable one-time administrative notification for a week/event."""
+
+    __tablename__ = "correspondent_notifications"
+    id = Column(Integer, primary_key=True)
+    week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False)
+    event_type = Column(String, nullable=False)
+    delivery_marker = Column(String, nullable=False, unique=True)
+    recipients_json = Column(Text, nullable=False)
+    payload_json = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="pending")
+    claim_token = Column(String, unique=True)
+    claim_expires_at = Column(DateTime)
+    gmail_message_id = Column(String)
+    error_message = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    sent_at = Column(DateTime)
+    week = relationship("Week")
+    __table_args__ = (
+        UniqueConstraint("week_id", "event_type", name="uix_week_notification_event"),
+    )
+
+
 class RecapSourceUsage(Base):
     __tablename__ = "recap_source_usages"
     id = Column(Integer, primary_key=True)
@@ -2809,6 +2852,7 @@ CORRESPONDENT_FINALIZATION_BUFFER = timedelta(hours=1)
 CORRESPONDENT_X_WEEKLY_CAP = 1_000
 CORRESPONDENT_X_PAGE_SIZE = 100
 CORRESPONDENT_X_LEASE_DURATION = timedelta(minutes=10)
+CORRESPONDENT_EMAIL_LEASE_DURATION = timedelta(minutes=15)
 CORRESPONDENT_PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 
@@ -3862,6 +3906,63 @@ def _week_x_source_count(db, week: Week) -> int:
     ).scalar() or 0
 
 
+def _configured_email_recipients(
+    environment_name: str,
+    *,
+    required: bool = True,
+) -> List[str]:
+    raw = os.environ.get(environment_name, "")
+    recipients = [value.strip() for value in raw.split(",") if value.strip()]
+    if required and not recipients:
+        raise ValueError(f"{environment_name} is not configured")
+    return recipients
+
+
+def _delivery_marker(kind: str, durable_key: str) -> str:
+    digest = hashlib.sha256(durable_key.encode("utf-8")).hexdigest()[:24]
+    return f"FootyPickem-{kind}-{digest}"
+
+
+def _ensure_x_cap_notification(
+    db,
+    week: Week,
+    state: CorrespondentXCollectionState,
+    *,
+    now: datetime,
+) -> CorrespondentNotification:
+    notification = db.query(CorrespondentNotification).filter_by(
+        week_id=week.id,
+        event_type="x_weekly_cap_reached",
+    ).one_or_none()
+    if notification is not None:
+        return notification
+    recipients = _configured_email_recipients(
+        "CORRESPONDENT_ADMIN_ALERT_RECIPIENTS",
+        required=False,
+    )
+    notification = CorrespondentNotification(
+        week_id=week.id,
+        event_type="x_weekly_cap_reached",
+        delivery_marker=_delivery_marker("XCap", f"week:{week.id}"),
+        recipients_json=json.dumps(recipients),
+        payload_json=json.dumps({
+            "subject": f"Pick 'Em Week {week.number}: X collection cap reached",
+            "body": (
+                f"The 1,000-post X collection cap was reached for {week.season.name} "
+                f"Week {week.number}. Collection stopped and the source window may "
+                "have been truncated. Classification and recap processing may continue "
+                "with the posts already collected."
+            ),
+            "retrieved_count": state.retrieved_count,
+        }, sort_keys=True),
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(notification)
+    return notification
+
+
 def claim_x_collection_page(
     db,
     week: Week,
@@ -3893,6 +3994,9 @@ def claim_x_collection_page(
             updated_at=now,
         )
         db.add(state)
+        if status == "capped":
+            db.flush()
+            _ensure_x_cap_notification(db, week, state, now=now)
         db.commit()
     elif state.window_start != window_start or state.window_end != window_end:
         raise ValueError("X collection window cannot change after collection starts")
@@ -3921,6 +4025,7 @@ def claim_x_collection_page(
         state.lease_expires_at = None
         state.last_error = None
         state.updated_at = now
+        _ensure_x_cap_notification(db, week, state, now=now)
         db.commit()
         return state, None
 
@@ -4013,6 +4118,7 @@ def checkpoint_x_collection_page(
             state.status = "capped"
             state.cap_reached_at = state.cap_reached_at or now
             state.completed_at = state.completed_at or now
+            _ensure_x_cap_notification(db, week, state, now=now)
         elif normalized_next_token is None:
             state.status = "completed"
             state.completed_at = state.completed_at or now
@@ -4033,6 +4139,221 @@ def checkpoint_x_collection_page(
         db.rollback()
         raise
     return state, receipt, True
+
+
+def _email_delivery_json(
+    delivery: Optional[CorrespondentEmailDelivery],
+) -> Optional[Dict[str, Any]]:
+    if delivery is None:
+        return None
+    return {
+        "id": delivery.id,
+        "status": delivery.status,
+        "delivery_marker": delivery.delivery_marker,
+        "gmail_message_id": delivery.gmail_message_id,
+        "error": delivery.error_message,
+        "sent_at": _utc_iso(delivery.sent_at),
+    }
+
+
+def _notification_json(
+    notification: Optional[CorrespondentNotification],
+) -> Optional[Dict[str, Any]]:
+    if notification is None:
+        return None
+    return {
+        "id": notification.id,
+        "event_type": notification.event_type,
+        "status": notification.status,
+        "delivery_marker": notification.delivery_marker,
+        "gmail_message_id": notification.gmail_message_id,
+        "error": notification.error_message,
+        "sent_at": _utc_iso(notification.sent_at),
+    }
+
+
+def claim_recap_email_delivery(
+    db,
+    week: Week,
+    *,
+    now: Optional[datetime] = None,
+) -> Tuple[CorrespondentEmailDelivery, Optional[Dict[str, Any]]]:
+    """Reserve one Gmail delivery; retries use the stable marker for Sent lookup."""
+    now = now or utcnow()
+    recap = db.query(WeeklyRecap).filter_by(
+        week_id=week.id,
+        automation_key=correspondent_recap_automation_key(week),
+        status="ready",
+    ).one_or_none()
+    if recap is None:
+        raise ValueError("Automated recap is not ready for delivery")
+    delivery = db.query(CorrespondentEmailDelivery).filter_by(
+        recap_id=recap.id,
+    ).one_or_none()
+    if delivery is None:
+        recipients = _configured_email_recipients("CORRESPONDENT_RECAP_RECIPIENTS")
+        delivery = CorrespondentEmailDelivery(
+            recap_id=recap.id,
+            delivery_marker=_delivery_marker("Recap", recap.automation_key),
+            recipients_json=json.dumps(recipients),
+            status="pending",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(delivery)
+        db.commit()
+    if delivery.status == "sent":
+        return delivery, None
+    if (
+        delivery.status == "claimed"
+        and delivery.claim_token
+        and delivery.claim_expires_at
+        and delivery.claim_expires_at > now
+    ):
+        return delivery, None
+    delivery.status = "claimed"
+    delivery.claim_token = secrets.token_urlsafe(24)
+    delivery.claim_expires_at = now + CORRESPONDENT_EMAIL_LEASE_DURATION
+    delivery.error_message = None
+    delivery.updated_at = now
+    db.commit()
+    marker = delivery.delivery_marker
+    return delivery, {
+        "claim_token": delivery.claim_token,
+        "delivery_marker": marker,
+        "gmail_sent_query": f'in:sent "{marker}"',
+        "recipients": json.loads(delivery.recipients_json),
+        "subject": f"{recap.title} [{marker}]",
+        "body_markdown": recap.body_markdown,
+    }
+
+
+def acknowledge_recap_email_delivery(
+    db,
+    week: Week,
+    *,
+    claim_token: str,
+    outcome: str,
+    gmail_message_id: Optional[str] = None,
+    error: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> CorrespondentEmailDelivery:
+    now = now or utcnow()
+    delivery = db.query(CorrespondentEmailDelivery).join(WeeklyRecap).filter(
+        WeeklyRecap.week_id == week.id,
+        WeeklyRecap.automation_key == correspondent_recap_automation_key(week),
+    ).one_or_none()
+    if delivery is None:
+        raise ValueError("Recap email delivery has not been claimed")
+    if delivery.status == "sent":
+        return delivery
+    if delivery.claim_token != str(claim_token or "").strip():
+        raise ValueError("Recap email claim_token is invalid")
+    if outcome == "sent":
+        gmail_message_id = str(gmail_message_id or "").strip()
+        if not gmail_message_id:
+            raise ValueError("gmail_message_id is required for a sent acknowledgement")
+        delivery.status = "sent"
+        delivery.gmail_message_id = gmail_message_id
+        delivery.sent_at = now
+        delivery.error_message = None
+    elif outcome == "failed":
+        delivery.status = "error"
+        delivery.error_message = str(error or "Gmail delivery failed")[:2000]
+    else:
+        raise ValueError("outcome must be sent or failed")
+    delivery.claim_token = None
+    delivery.claim_expires_at = None
+    delivery.updated_at = now
+    db.commit()
+    return delivery
+
+
+def claim_x_cap_notification(
+    db,
+    week: Week,
+    *,
+    now: Optional[datetime] = None,
+) -> Tuple[CorrespondentNotification, Optional[Dict[str, Any]]]:
+    now = now or utcnow()
+    notification = db.query(CorrespondentNotification).filter_by(
+        week_id=week.id,
+        event_type="x_weekly_cap_reached",
+    ).one_or_none()
+    if notification is None:
+        raise ValueError("No X collection cap notification is pending")
+    if notification.status == "sent":
+        return notification, None
+    if (
+        notification.status == "claimed"
+        and notification.claim_token
+        and notification.claim_expires_at
+        and notification.claim_expires_at > now
+    ):
+        return notification, None
+    recipients = json.loads(notification.recipients_json)
+    if not recipients:
+        recipients = _configured_email_recipients(
+            "CORRESPONDENT_ADMIN_ALERT_RECIPIENTS"
+        )
+        notification.recipients_json = json.dumps(recipients)
+    notification.status = "claimed"
+    notification.claim_token = secrets.token_urlsafe(24)
+    notification.claim_expires_at = now + CORRESPONDENT_EMAIL_LEASE_DURATION
+    notification.error_message = None
+    notification.updated_at = now
+    db.commit()
+    payload = json.loads(notification.payload_json)
+    marker = notification.delivery_marker
+    return notification, {
+        "claim_token": notification.claim_token,
+        "delivery_marker": marker,
+        "gmail_sent_query": f'in:sent "{marker}"',
+        "recipients": recipients,
+        "subject": f"{payload['subject']} [{marker}]",
+        "body": payload["body"],
+    }
+
+
+def acknowledge_x_cap_notification(
+    db,
+    week: Week,
+    *,
+    claim_token: str,
+    outcome: str,
+    gmail_message_id: Optional[str] = None,
+    error: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> CorrespondentNotification:
+    now = now or utcnow()
+    notification = db.query(CorrespondentNotification).filter_by(
+        week_id=week.id,
+        event_type="x_weekly_cap_reached",
+    ).one_or_none()
+    if notification is None:
+        raise ValueError("X collection cap notification has not been claimed")
+    if notification.status == "sent":
+        return notification
+    if notification.claim_token != str(claim_token or "").strip():
+        raise ValueError("Notification claim_token is invalid")
+    if outcome == "sent":
+        gmail_message_id = str(gmail_message_id or "").strip()
+        if not gmail_message_id:
+            raise ValueError("gmail_message_id is required for a sent acknowledgement")
+        notification.status = "sent"
+        notification.gmail_message_id = gmail_message_id
+        notification.sent_at = now
+        notification.error_message = None
+    elif outcome == "failed":
+        notification.status = "error"
+        notification.error_message = str(error or "Gmail notification failed")[:2000]
+    else:
+        raise ValueError("outcome must be sent or failed")
+    notification.claim_token = None
+    notification.claim_expires_at = None
+    notification.updated_at = now
+    db.commit()
+    return notification
 
 
 def correspondent_automation_status(
@@ -4069,6 +4390,15 @@ def correspondent_automation_status(
     x_collection = db.query(CorrespondentXCollectionState).filter_by(
         week_id=week.id,
     ).one_or_none()
+    delivery = (
+        None
+        if recap is None
+        else db.query(CorrespondentEmailDelivery).filter_by(recap_id=recap.id).one_or_none()
+    )
+    cap_notification = db.query(CorrespondentNotification).filter_by(
+        week_id=week.id,
+        event_type="x_weekly_cap_reached",
+    ).one_or_none()
 
     if week.status != "finalized" or fixture_count != 10 or completed_results != 10:
         phase = "WAITING_FOR_FINALIZATION"
@@ -4091,9 +4421,26 @@ def correspondent_automation_status(
     elif recap is not None and recap.status == "generating":
         phase = "GENERATING_RECAP"
         allowed_actions = []
-    elif recap is not None and recap.status == "ready":
-        phase = "RECAP_GENERATED"
+    elif recap is not None and recap.status == "failed":
+        phase = "ERROR_RETRY"
         allowed_actions = []
+    elif recap is not None and recap.status == "ready":
+        if delivery is not None and delivery.status == "sent":
+            phase = "EMAIL_SENT"
+            allowed_actions = []
+        else:
+            phase = "WAITING_FOR_EMAIL"
+            allowed_actions = []
+            if (
+                delivery is None
+                or delivery.status in {"pending", "error"}
+                or (
+                    delivery.status == "claimed"
+                    and delivery.claim_expires_at is not None
+                    and delivery.claim_expires_at <= now
+                )
+            ):
+                allowed_actions.append("claim_recap_email")
     elif unknown_submission is not None:
         phase = "ERROR_RETRY"
         allowed_actions = []
@@ -4116,6 +4463,17 @@ def correspondent_automation_status(
         phase = "WAITING_FOR_SOURCES"
         allowed_actions = []
 
+    if cap_notification is not None and cap_notification.status != "sent":
+        if (
+            cap_notification.status in {"pending", "error"}
+            or (
+                cap_notification.status == "claimed"
+                and cap_notification.claim_expires_at is not None
+                and cap_notification.claim_expires_at <= now
+            )
+        ):
+            allowed_actions.append("claim_x_cap_alert")
+
     return {
         "phase": phase,
         "allowed_actions": allowed_actions,
@@ -4127,6 +4485,8 @@ def correspondent_automation_status(
         "finalized_at": _utc_iso(week.finalized_at),
         "eligible_at": _utc_iso(eligible_at),
         "x_collection": _x_collection_json(x_collection),
+        "delivery": _email_delivery_json(delivery),
+        "x_cap_notification": _notification_json(cap_notification),
         "classification": readiness,
         "jobs": [
             {
@@ -5071,6 +5431,7 @@ def scheduled_correspondent_recap_generate():
     try:
         week = _correspondent_automation_week(db, _correspondent_automation_json())
         _require_week_correspondent_eligible(db, week)
+        _require_x_collection_complete(db, week)
         recap = generate_and_store_weekly_recap_v2(
             db,
             week,
@@ -5096,6 +5457,109 @@ def scheduled_correspondent_recap_generate():
             status=correspondent_automation_status(db, week),
         )
     except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+def _correspondent_ack_json() -> Mapping[str, Any]:
+    if not request.is_json:
+        raise ValueError("Content-Type must be application/json")
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    unknown = set(payload) - {
+        "season_code", "week_number", "claim_token", "outcome",
+        "gmail_message_id", "error",
+    }
+    if unknown:
+        raise ValueError(
+            "Unknown field(s): " + ", ".join(sorted(str(field) for field in unknown))
+        )
+    return payload
+
+
+@app.post("/tasks/correspondent/delivery/claim")
+def scheduled_correspondent_delivery_claim():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, _correspondent_automation_json())
+        delivery, email = claim_recap_email_delivery(db, week)
+        return jsonify(
+            ok=True,
+            claimed=email is not None,
+            email=email,
+            delivery=_email_delivery_json(delivery),
+        ), 202 if email is not None else 200
+    except ValueError as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+@app.post("/tasks/correspondent/delivery/ack")
+def scheduled_correspondent_delivery_ack():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        payload = _correspondent_ack_json()
+        week = _correspondent_automation_week(db, payload)
+        delivery = acknowledge_recap_email_delivery(
+            db,
+            week,
+            claim_token=payload.get("claim_token"),
+            outcome=str(payload.get("outcome") or ""),
+            gmail_message_id=payload.get("gmail_message_id"),
+            error=payload.get("error"),
+        )
+        return jsonify(ok=True, delivery=_email_delivery_json(delivery))
+    except ValueError as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+@app.post("/tasks/correspondent/notifications/x-cap/claim")
+def scheduled_correspondent_x_cap_notification_claim():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, _correspondent_automation_json())
+        notification, email = claim_x_cap_notification(db, week)
+        return jsonify(
+            ok=True,
+            claimed=email is not None,
+            email=email,
+            notification=_notification_json(notification),
+        ), 202 if email is not None else 200
+    except ValueError as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+@app.post("/tasks/correspondent/notifications/x-cap/ack")
+def scheduled_correspondent_x_cap_notification_ack():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        payload = _correspondent_ack_json()
+        week = _correspondent_automation_week(db, payload)
+        notification = acknowledge_x_cap_notification(
+            db,
+            week,
+            claim_token=payload.get("claim_token"),
+            outcome=str(payload.get("outcome") or ""),
+            gmail_message_id=payload.get("gmail_message_id"),
+            error=payload.get("error"),
+        )
+        return jsonify(ok=True, notification=_notification_json(notification))
+    except ValueError as exc:
+        db.rollback()
         return jsonify(ok=False, error=str(exc)), 409
 
 
