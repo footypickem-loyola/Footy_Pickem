@@ -1070,6 +1070,126 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(classification_ready["phase"], "READY_FOR_PASS_1")
         self.assertEqual(classification_ready["allowed_actions"], ["submit_pass_1"])
 
+    def test_correspondent_status_derives_full_two_pass_recap_delivery_lifecycle(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        finalized_at = datetime(2026, 8, 23, 18, 0, 0)
+        week.finalized_at = finalized_at
+        source, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(external_id="full-lifecycle"),
+        )
+        self.complete_x_collection(db, week)
+        now = finalized_at + timedelta(hours=2)
+        self.assertEqual(
+            app_module.correspondent_automation_status(db, week, now=now)["phase"],
+            "READY_FOR_PASS_1",
+        )
+        job = app_module.CorrespondentClassificationJob(
+            season_id=week.season_id,
+            week_id=week.id,
+            prompt_version=app_module.CLASSIFIER_PROMPT_VERSION,
+            pass_number=1,
+            model="test-model",
+            status="in_progress",
+            total_count=1,
+        )
+        db.add(job)
+        db.commit()
+        self.assertEqual(
+            app_module.correspondent_automation_status(db, week, now=now)["phase"],
+            "CLASSIFYING_PASS_1",
+        )
+        db.delete(job)
+        db.commit()
+        first = self.batch_classification(
+            source.id,
+            confidence="LOW",
+            route="AUTOMATED_REVIEW",
+            reason_codes=["LOW_CONFIDENCE"],
+        )
+        first_classification = app_module.SourceClassification(
+            source_id=source.id,
+            pickem_impact=first["pickem_impact"],
+            editorial_functions=tuple(first["editorial_functions"]),
+            article_use=first["article_use"],
+            confidence=first["confidence"],
+            route=first["route"],
+            reason_codes=tuple(first["reason_codes"]),
+            reason=first["reason"],
+        )
+        app_module.store_source_classification(
+            db,
+            first_classification,
+            app_module.ClassificationBatch(
+                classifications=(first_classification,),
+                pass_number=1,
+                model="test-model",
+                provider_response_id="resp-lifecycle-pass1",
+            ),
+        )
+        db.commit()
+        self.assertEqual(
+            app_module.correspondent_automation_status(db, week, now=now)["phase"],
+            "PASS_1_COMPLETE_PASS_2_REQUIRED",
+        )
+        second_classification = app_module.SourceClassification(
+            source_id=source.id,
+            pickem_impact="P1_MATCH_SHAPING",
+            editorial_functions=("ANALYSIS",),
+            article_use="SUPPORT",
+            confidence="HIGH",
+            route="ADVANCE",
+            reason_codes=("RELEVANT_ANALYSIS",),
+            reason="Resolved in Pass 2.",
+        )
+        app_module.store_source_classification(
+            db,
+            second_classification,
+            app_module.ClassificationBatch(
+                classifications=(second_classification,),
+                pass_number=2,
+                model="test-model",
+                provider_response_id="resp-lifecycle-pass2",
+            ),
+        )
+        db.commit()
+        self.assertEqual(
+            app_module.correspondent_automation_status(db, week, now=now)["phase"],
+            "READY_TO_GENERATE",
+        )
+        recap = app_module.WeeklyRecap(
+            week_id=week.id,
+            revision=1,
+            status="ready",
+            title="Lifecycle recap",
+            body_markdown="Ready for Gmail.",
+            context_json="{}",
+            context_hash="lifecycle-context",
+            prompt_version=app_module.V2_PROMPT_VERSION,
+            model="test-model",
+            correspondent_version="v2",
+            automation_key=app_module.correspondent_recap_automation_key(week),
+        )
+        db.add(recap)
+        db.commit()
+        self.assertEqual(
+            app_module.correspondent_automation_status(db, week, now=now)["phase"],
+            "WAITING_FOR_EMAIL",
+        )
+        db.add(app_module.CorrespondentEmailDelivery(
+            recap_id=recap.id,
+            delivery_marker="lifecycle-marker",
+            recipients_json='["league@example.com"]',
+            status="sent",
+            gmail_message_id="gmail-lifecycle",
+            sent_at=now,
+        ))
+        db.commit()
+        self.assertEqual(
+            app_module.correspondent_automation_status(db, week, now=now)["phase"],
+            "EMAIL_SENT",
+        )
+
     def test_x_collection_claim_checkpoints_one_page_idempotently(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
         headers = {"X-Correspondent-Automation-Secret": "automation-secret"}
@@ -1208,6 +1328,47 @@ class PickemAppTests(unittest.TestCase):
         )
         self.assertTrue(imported)
         self.assertEqual(checkpointed.status, "completed")
+
+    def test_competing_x_claims_authorize_only_one_paid_request(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        state = app_module.CorrespondentXCollectionState(
+            week_id=week.id,
+            status="ready",
+            window_start=datetime(2026, 8, 21, 0, 0, 0),
+            window_end=datetime(2026, 8, 24, 0, 0, 0),
+        )
+        db.add(state)
+        db.commit()
+        week_id = week.id
+        state_id = state.id
+        window_start = state.window_start
+        window_end = state.window_end
+        db.close()
+        session_factory = app_module.sessionmaker(bind=app_module.engine)
+        first_db = session_factory()
+        second_db = session_factory()
+        first_week = first_db.get(app_module.Week, week_id)
+        second_week = second_db.get(app_module.Week, week_id)
+        first_db.get(app_module.CorrespondentXCollectionState, state_id)
+        second_db.get(app_module.CorrespondentXCollectionState, state_id)
+
+        _, first_request = app_module.claim_x_collection_page(
+            first_db,
+            first_week,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        _, second_request = app_module.claim_x_collection_page(
+            second_db,
+            second_week,
+            window_start=window_start,
+            window_end=window_end,
+        )
+
+        self.assertIsNotNone(first_request)
+        self.assertIsNone(second_request)
+        first_db.close()
+        second_db.close()
 
     def test_correspondent_status_endpoint_requires_automation_secret(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
@@ -2452,6 +2613,54 @@ class PickemAppTests(unittest.TestCase):
         )
         verification_db.close()
 
+    def test_failed_automated_recap_retries_same_reserved_revision(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week.finalized_at = datetime(2026, 8, 23, 18, 0, 0)
+        source, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(external_id="automation-recap-retry"),
+        )
+        self.classify_source_for_writer(db, source)
+        self.complete_x_collection(db, week)
+        generated = SimpleNamespace(
+            title="Recovered Week 1",
+            body_markdown="The retried recap.",
+            used_source_ids=(source.id,),
+            model="test-model",
+            provider_response_id="resp-recap-retry",
+        )
+        db.close()
+        headers = {"X-Correspondent-Automation-Secret": "automation-secret"}
+        body = {"season_code": "year-2", "week_number": 1}
+
+        with app_module.app.test_client() as client, patch.dict(
+            os.environ,
+            {
+                "CORRESPONDENT_V2_ENABLED": "1",
+                "CORRESPONDENT_AUTOMATION_SECRET": "automation-secret",
+            },
+        ), patch.object(
+            app_module,
+            "generate_weekly_recap_v2",
+            side_effect=[app_module.CorrespondentError("temporary writer failure"), generated],
+        ) as writer:
+            failed = client.post(
+                "/tasks/correspondent/recap/generate", json=body, headers=headers
+            )
+            retried = client.post(
+                "/tasks/correspondent/recap/generate", json=body, headers=headers
+            )
+
+        self.assertEqual(failed.status_code, 502)
+        self.assertEqual(retried.status_code, 200)
+        self.assertEqual(failed.get_json()["recap"]["id"], retried.get_json()["recap"]["id"])
+        self.assertEqual(failed.get_json()["recap"]["revision"], retried.get_json()["recap"]["revision"])
+        self.assertEqual(writer.call_count, 2)
+        verification_db = app_module.SessionLocal()
+        self.assertEqual(verification_db.query(app_module.WeeklyRecap).count(), 1)
+        self.assertEqual(verification_db.query(app_module.WeeklyRecap).one().status, "ready")
+        verification_db.close()
+
     def test_recap_email_delivery_claim_and_ack_are_idempotent(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
         week.finalized_at = datetime(2026, 8, 23, 18, 0, 0)
@@ -2527,6 +2736,43 @@ class PickemAppTests(unittest.TestCase):
             "gmail-recap-1",
         )
         verification_db.close()
+
+    def test_failed_recap_email_delivery_reclaims_same_marker(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        recap = app_module.WeeklyRecap(
+            week_id=week.id,
+            revision=1,
+            status="ready",
+            title="Retry delivery",
+            body_markdown="Retry body.",
+            context_json="{}",
+            context_hash="retry-delivery-context",
+            prompt_version=app_module.V2_PROMPT_VERSION,
+            model="test-model",
+            correspondent_version="v2",
+            automation_key=app_module.correspondent_recap_automation_key(week),
+        )
+        db.add(recap)
+        db.commit()
+        with patch.dict(
+            os.environ,
+            {"CORRESPONDENT_RECAP_RECIPIENTS": "league@example.com"},
+        ):
+            delivery, first_email = app_module.claim_recap_email_delivery(db, week)
+            app_module.acknowledge_recap_email_delivery(
+                db,
+                week,
+                claim_token=first_email["claim_token"],
+                outcome="failed",
+                error="Gmail unavailable",
+            )
+            same_delivery, retry_email = app_module.claim_recap_email_delivery(db, week)
+
+        self.assertEqual(same_delivery.id, delivery.id)
+        self.assertEqual(retry_email["delivery_marker"], first_email["delivery_marker"])
+        self.assertEqual(retry_email["gmail_sent_query"], first_email["gmail_sent_query"])
+        self.assertNotEqual(retry_email["claim_token"], first_email["claim_token"])
+        self.assertEqual(db.query(app_module.CorrespondentEmailDelivery).count(), 1)
 
     def test_x_cap_notification_claims_and_sends_only_once(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()

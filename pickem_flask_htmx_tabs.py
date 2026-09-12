@@ -4019,8 +4019,14 @@ def claim_x_collection_page(
         if status == "capped":
             db.flush()
             _ensure_x_cap_notification(db, week, state, now=now)
-        db.commit()
-    elif state.window_start != window_start or state.window_end != window_end:
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            state = db.query(CorrespondentXCollectionState).filter_by(
+                week_id=week.id,
+            ).one()
+    if state.window_start != window_start or state.window_end != window_end:
         raise ValueError("X collection window cannot change after collection starts")
 
     if state.status in {"completed", "capped"}:
@@ -4051,12 +4057,24 @@ def claim_x_collection_page(
         db.commit()
         return state, None
 
-    state.status = "claimed"
-    state.lease_token = secrets.token_urlsafe(24)
-    state.lease_expires_at = now + CORRESPONDENT_X_LEASE_DURATION
-    state.last_error = None
-    state.updated_at = now
+    claim_token = secrets.token_urlsafe(24)
+    claimed = db.query(CorrespondentXCollectionState).filter_by(
+        id=state.id,
+        status="ready",
+        lease_token=None,
+    ).update({
+        CorrespondentXCollectionState.status: "claimed",
+        CorrespondentXCollectionState.lease_token: claim_token,
+        CorrespondentXCollectionState.lease_expires_at: (
+            now + CORRESPONDENT_X_LEASE_DURATION
+        ),
+        CorrespondentXCollectionState.last_error: None,
+        CorrespondentXCollectionState.updated_at: now,
+    }, synchronize_session=False)
     db.commit()
+    state = db.get(CorrespondentXCollectionState, state.id)
+    if not claimed:
+        return state, None
     return state, {
         "claim_token": state.lease_token,
         "pagination_token": state.next_token,
@@ -4223,7 +4241,13 @@ def claim_recap_email_delivery(
             updated_at=now,
         )
         db.add(delivery)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            delivery = db.query(CorrespondentEmailDelivery).filter_by(
+                recap_id=recap.id,
+            ).one()
     if delivery.status == "sent":
         return delivery, None
     if (
@@ -4233,12 +4257,26 @@ def claim_recap_email_delivery(
         and delivery.claim_expires_at > now
     ):
         return delivery, None
-    delivery.status = "claimed"
-    delivery.claim_token = secrets.token_urlsafe(24)
-    delivery.claim_expires_at = now + CORRESPONDENT_EMAIL_LEASE_DURATION
-    delivery.error_message = None
-    delivery.updated_at = now
+    prior_status = delivery.status
+    prior_claim_token = delivery.claim_token
+    claim_token = secrets.token_urlsafe(24)
+    claimed = db.query(CorrespondentEmailDelivery).filter_by(
+        id=delivery.id,
+        status=prior_status,
+        claim_token=prior_claim_token,
+    ).update({
+        CorrespondentEmailDelivery.status: "claimed",
+        CorrespondentEmailDelivery.claim_token: claim_token,
+        CorrespondentEmailDelivery.claim_expires_at: (
+            now + CORRESPONDENT_EMAIL_LEASE_DURATION
+        ),
+        CorrespondentEmailDelivery.error_message: None,
+        CorrespondentEmailDelivery.updated_at: now,
+    }, synchronize_session=False)
     db.commit()
+    delivery = db.get(CorrespondentEmailDelivery, delivery.id)
+    if not claimed:
+        return delivery, None
     marker = delivery.delivery_marker
     return delivery, {
         "kind": "recap",
@@ -4320,12 +4358,26 @@ def claim_x_cap_notification(
             "CORRESPONDENT_ADMIN_ALERT_RECIPIENTS"
         )
         notification.recipients_json = json.dumps(recipients)
-    notification.status = "claimed"
-    notification.claim_token = secrets.token_urlsafe(24)
-    notification.claim_expires_at = now + CORRESPONDENT_EMAIL_LEASE_DURATION
-    notification.error_message = None
-    notification.updated_at = now
+    prior_status = notification.status
+    prior_claim_token = notification.claim_token
+    claim_token = secrets.token_urlsafe(24)
+    claimed = db.query(CorrespondentNotification).filter_by(
+        id=notification.id,
+        status=prior_status,
+        claim_token=prior_claim_token,
+    ).update({
+        CorrespondentNotification.status: "claimed",
+        CorrespondentNotification.claim_token: claim_token,
+        CorrespondentNotification.claim_expires_at: (
+            now + CORRESPONDENT_EMAIL_LEASE_DURATION
+        ),
+        CorrespondentNotification.error_message: None,
+        CorrespondentNotification.updated_at: now,
+    }, synchronize_session=False)
     db.commit()
+    notification = db.get(CorrespondentNotification, notification.id)
+    if not claimed:
+        return notification, None
     payload = json.loads(notification.payload_json)
     marker = notification.delivery_marker
     return notification, {
@@ -4689,12 +4741,28 @@ def generate_and_store_weekly_recap_v2(
     """Generate V2 beside V1; a V2 attempt never replaces the selected recap."""
     if not correspondent_v2_enabled():
         raise ValueError("Correspondent V2 is not enabled")
+    recap = None
     if automation_key:
         existing = db.query(WeeklyRecap).filter_by(
             automation_key=automation_key,
         ).first()
         if existing is not None:
-            return existing
+            if existing.status != "failed":
+                return existing
+            reserved = db.query(WeeklyRecap).filter_by(
+                id=existing.id,
+                status="failed",
+            ).update({
+                WeeklyRecap.status: "generating",
+                WeeklyRecap.error_message: None,
+                WeeklyRecap.completed_at: None,
+            }, synchronize_session=False)
+            db.commit()
+            if not reserved:
+                return db.query(WeeklyRecap).filter_by(
+                    automation_key=automation_key,
+                ).one()
+            recap = db.get(WeeklyRecap, existing.id)
     context = build_weekly_recap_context_v2(db, week)
     context_json = json.dumps(context, ensure_ascii=False, sort_keys=True)
     context_hash = hashlib.sha256(context_json.encode("utf-8")).hexdigest()
@@ -4706,31 +4774,40 @@ def generate_and_store_weekly_recap_v2(
         week_id=week.id
     ).scalar() or 0
     model = (os.environ.get("OPENAI_MODEL") or DEFAULT_CORRESPONDENT_MODEL).strip()
-    recap = WeeklyRecap(
-        week_id=week.id,
-        revision=latest_revision + 1,
-        status="generating",
-        context_json=context_json,
-        context_hash=context_hash,
-        prompt_version=V2_PROMPT_VERSION,
-        model=model,
-        correspondent_version="v2",
-        source_count=context["external_context"]["candidate_source_count"],
-        external_context_hash=external_context_hash,
-        automation_key=automation_key,
-        created_at=utcnow(),
-    )
-    db.add(recap)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        if not automation_key:
-            raise
-        existing = db.query(WeeklyRecap).filter_by(
+    if recap is None:
+        recap = WeeklyRecap(
+            week_id=week.id,
+            revision=latest_revision + 1,
+            status="generating",
+            context_json=context_json,
+            context_hash=context_hash,
+            prompt_version=V2_PROMPT_VERSION,
+            model=model,
+            correspondent_version="v2",
+            source_count=context["external_context"]["candidate_source_count"],
+            external_context_hash=external_context_hash,
             automation_key=automation_key,
-        ).one()
-        return existing
+            created_at=utcnow(),
+        )
+        db.add(recap)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            if not automation_key:
+                raise
+            return db.query(WeeklyRecap).filter_by(
+                automation_key=automation_key,
+            ).one()
+    else:
+        recap.context_json = context_json
+        recap.context_hash = context_hash
+        recap.prompt_version = V2_PROMPT_VERSION
+        recap.model = model
+        recap.source_count = context["external_context"]["candidate_source_count"]
+        recap.external_context_hash = external_context_hash
+        db.add(recap)
+        db.commit()
 
     try:
         generated = generate_weekly_recap_v2(context, model=model)
