@@ -2057,6 +2057,119 @@ class PickemAppTests(unittest.TestCase):
             )
 
         self.assertEqual(len(openai.batches.created), 1)
+
+    def test_automation_pass_one_submission_is_idempotent(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week.finalized_at = datetime(2026, 8, 23, 18, 0, 0)
+        app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(external_id="automation-submit"),
+        )
+        db.commit()
+        openai = FakeOpenAIClient()
+        headers = {
+            "X-Correspondent-Automation-Secret": "automation-secret",
+        }
+        body = {"season_code": "year-2", "week_number": week.number}
+        db.close()
+
+        with app_module.app.test_client() as client, patch.dict(
+            os.environ,
+            {
+                "CORRESPONDENT_V2_ENABLED": "1",
+                "CORRESPONDENT_AUTOMATION_SECRET": "automation-secret",
+            },
+        ), patch.object(app_module, "classifier_client", return_value=openai):
+            first = client.post(
+                "/tasks/correspondent/classification/submit",
+                json=body,
+                headers=headers,
+            )
+            second = client.post(
+                "/tasks/correspondent/classification/submit",
+                json=body,
+                headers=headers,
+            )
+
+        self.assertEqual(first.status_code, 202)
+        self.assertTrue(first.get_json()["created"])
+        self.assertEqual(second.status_code, 200)
+        self.assertFalse(second.get_json()["created"])
+        self.assertEqual(first.get_json()["job"]["id"], second.get_json()["job"]["id"])
+        self.assertEqual(len(openai.batches.created), 1)
+
+    def test_ambiguous_batch_submission_retains_source_reservation(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        source, _ = app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(external_id="ambiguous-submit"),
+        )
+        openai = FakeOpenAIClient()
+        openai.batches.create = lambda **kwargs: (_ for _ in ()).throw(
+            RuntimeError("connection reset after submission")
+        )
+
+        with self.assertRaisesRegex(app_module.CorrespondentError, "outcome is unknown"):
+            app_module.submit_week_classification_batch(db, week, client=openai)
+
+        job = db.query(app_module.CorrespondentClassificationJob).one()
+        item = db.query(app_module.CorrespondentClassificationJobItem).one()
+        self.assertEqual(job.status, "submission_unknown")
+        self.assertIsNotNone(item.active_reservation_key)
+        retry_job, created = app_module.ensure_week_classification_batch(
+            db,
+            week,
+            pass_number=1,
+            client=openai,
+        )
+        self.assertFalse(created)
+        self.assertEqual(retry_job.id, job.id)
+        self.assertEqual(item.source_id, source.id)
+
+    def test_automation_reconcile_endpoint_keeps_pass_two_logic_in_python(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week.finalized_at = datetime(2026, 8, 23, 18, 0, 0)
+        db.add(app_module.CorrespondentClassificationJob(
+            season_id=week.season_id,
+            week_id=week.id,
+            prompt_version=app_module.CLASSIFIER_PROMPT_VERSION,
+            pass_number=1,
+            model="test-model",
+            openai_batch_id="batch-reconcile-endpoint",
+            status="completed",
+        ))
+        db.commit()
+        week_number = week.number
+        db.close()
+        summary = {
+            "jobs_checked": 1,
+            "classifications_imported": 1,
+            "second_pass_job_id": 22,
+            "prompt_version": app_module.CLASSIFIER_PROMPT_VERSION,
+        }
+
+        with app_module.app.test_client() as client, patch.dict(
+            os.environ,
+            {
+                "CORRESPONDENT_V2_ENABLED": "1",
+                "CORRESPONDENT_AUTOMATION_SECRET": "automation-secret",
+            },
+        ), patch.object(
+            app_module,
+            "sync_week_classification_jobs",
+            return_value=summary,
+        ) as reconcile:
+            response = client.post(
+                "/tasks/correspondent/classification/reconcile",
+                json={"season_code": "year-2", "week_number": week_number},
+                headers={
+                    "X-Correspondent-Automation-Secret": "automation-secret"
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["second_pass_job_id"], 22)
+        reconcile.assert_called_once()
         self.assertEqual(
             db.query(app_module.CorrespondentClassificationJob).count(),
             1,

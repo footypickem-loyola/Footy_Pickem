@@ -2967,6 +2967,7 @@ def classify_and_store_week_sources(
 
 ACTIVE_CLASSIFICATION_JOB_STATUSES = frozenset({
     "submitting",
+    "submission_unknown",
     "validating",
     "in_progress",
     "finalizing",
@@ -3176,6 +3177,18 @@ def submit_week_classification_batch(
         )
         job.input_file_id = _openai_value(uploaded, "id")
         db.commit()
+    except Exception as exc:
+        job.status = "failed"
+        job.error_message = f"OpenAI Batch input upload failed: {exc}"
+        job.completed_at = utcnow()
+        for item in job.items:
+            item.status = "failed"
+            item.error_message = job.error_message
+            item.active_reservation_key = None
+        db.commit()
+        raise CorrespondentError(job.error_message) from exc
+
+    try:
         remote_batch = openai_client.batches.create(
             input_file_id=job.input_file_id,
             endpoint="/v1/responses",
@@ -3194,16 +3207,45 @@ def submit_week_classification_batch(
         job.submitted_at = utcnow()
         db.commit()
     except Exception as exc:
-        job.status = "failed"
-        job.error_message = f"OpenAI Batch submission failed: {exc}"
-        job.completed_at = utcnow()
-        for item in job.items:
-            item.status = "failed"
-            item.error_message = job.error_message
-            item.active_reservation_key = None
+        db.rollback()
+        job = db.get(CorrespondentClassificationJob, job.id)
+        job.status = "submission_unknown"
+        job.error_message = (
+            "OpenAI Batch submission outcome is unknown; the source reservation "
+            f"was retained to prevent a duplicate Batch: {exc}"
+        )
+        job.last_synced_at = utcnow()
         db.commit()
         raise CorrespondentError(job.error_message) from exc
     return job
+
+
+def ensure_week_classification_batch(
+    db,
+    week: Week,
+    *,
+    pass_number: int,
+    client: Any = None,
+    model: Optional[str] = None,
+) -> Tuple[Optional[CorrespondentClassificationJob], bool]:
+    """Idempotently return or create the Batch needed for one classifier pass."""
+    if pass_number not in {1, 2}:
+        raise ValueError("pass_number must be 1 or 2")
+    candidates, _ = classification_batch_candidates(db, week, pass_number)
+    if candidates:
+        return submit_week_classification_batch(
+            db,
+            week,
+            pass_number=pass_number,
+            client=client,
+            model=model,
+        ), True
+    latest = db.query(CorrespondentClassificationJob).filter_by(
+        week_id=week.id,
+        prompt_version=CLASSIFIER_PROMPT_VERSION,
+        pass_number=pass_number,
+    ).order_by(CorrespondentClassificationJob.id.desc()).first()
+    return latest, False
 
 
 def _download_openai_file_text(openai_client: Any, file_id: str) -> str:
@@ -3382,7 +3424,7 @@ def sync_week_classification_jobs(
     if create_second_pass and completed_pass_one_jobs:
         pass_two_candidates, _ = classification_batch_candidates(db, week, 2)
         if pass_two_candidates:
-            second_pass_job = submit_week_classification_batch(
+            second_pass_job, _created = ensure_week_classification_batch(
                 db,
                 week,
                 pass_number=2,
@@ -3738,6 +3780,10 @@ def correspondent_automation_status(
     ).order_by(CorrespondentClassificationJob.id.asc()).all()
     active_jobs = [job for job in jobs if job.status in ACTIVE_CLASSIFICATION_JOB_STATUSES]
     active_passes = {job.pass_number for job in active_jobs}
+    unknown_submission = next(
+        (job for job in reversed(jobs) if job.status == "submission_unknown"),
+        None,
+    )
     recap = db.query(WeeklyRecap).filter_by(
         week_id=week.id,
         correspondent_version="v2",
@@ -3758,6 +3804,9 @@ def correspondent_automation_status(
         allowed_actions = []
     elif recap is not None and recap.status == "ready":
         phase = "RECAP_GENERATED"
+        allowed_actions = []
+    elif unknown_submission is not None:
+        phase = "ERROR_RETRY"
         allowed_actions = []
     elif 1 in active_passes:
         phase = "CLASSIFYING_PASS_1"
@@ -4494,6 +4543,105 @@ def scheduled_correspondent_status():
         return jsonify(ok=True, **correspondent_automation_status(db, week))
     except ValueError as exc:
         return jsonify(ok=False, error=str(exc)), 400
+
+
+def _correspondent_automation_json() -> Mapping[str, Any]:
+    if not request.is_json:
+        raise ValueError("Content-Type must be application/json")
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    unknown = set(payload) - {"season_code", "week_number"}
+    if unknown:
+        raise ValueError(
+            "Unknown field(s): " + ", ".join(sorted(str(field) for field in unknown))
+        )
+    return payload
+
+
+def _require_week_correspondent_eligible(db, week: Week) -> None:
+    completed_results, fixture_count = count_results_for_week(db, week)
+    if (
+        week.status != "finalized"
+        or week.finalized_at is None
+        or fixture_count != 10
+        or completed_results != 10
+    ):
+        raise ValueError("Week is not finalized for Correspondent automation")
+    if utcnow() < week.finalized_at + CORRESPONDENT_FINALIZATION_BUFFER:
+        raise ValueError("Correspondent one-hour finalization buffer has not elapsed")
+
+
+def _classification_job_json(
+    job: Optional[CorrespondentClassificationJob],
+) -> Optional[Dict[str, Any]]:
+    if job is None:
+        return None
+    return {
+        "id": job.id,
+        "pass_number": job.pass_number,
+        "status": job.status,
+        "total": job.total_count,
+        "completed": job.completed_count,
+        "failed": job.failed_count,
+        "prompt_version": job.prompt_version,
+    }
+
+
+@app.post("/tasks/correspondent/classification/submit")
+def scheduled_correspondent_classification_submit():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, _correspondent_automation_json())
+        _require_week_correspondent_eligible(db, week)
+        job, created = ensure_week_classification_batch(db, week, pass_number=1)
+        return jsonify(
+            ok=True,
+            created=created,
+            job=_classification_job_json(job),
+            status=correspondent_automation_status(db, week),
+        ), 202 if created else 200
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    except CorrespondentError as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+
+
+@app.post("/tasks/correspondent/classification/reconcile")
+def scheduled_correspondent_classification_reconcile():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, _correspondent_automation_json())
+        _require_week_correspondent_eligible(db, week)
+        job_count = db.query(CorrespondentClassificationJob).filter_by(
+            week_id=week.id,
+            prompt_version=CLASSIFIER_PROMPT_VERSION,
+        ).count()
+        summary = (
+            sync_week_classification_jobs(db, week)
+            if job_count
+            else {
+                "jobs_checked": 0,
+                "classifications_imported": 0,
+                "second_pass_job_id": None,
+                "prompt_version": CLASSIFIER_PROMPT_VERSION,
+            }
+        )
+        return jsonify(
+            ok=True,
+            **summary,
+            status=correspondent_automation_status(db, week),
+        )
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    except CorrespondentError as exc:
+        return jsonify(ok=False, error=str(exc)), 502
 
 
 @app.post("/api/correspondent/sources")
