@@ -8,7 +8,7 @@ import random
 import re
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 from urllib.error import HTTPError, URLError
@@ -1194,6 +1194,7 @@ class Week(Base):
     number = Column(Integer, nullable=False)
     room_code = Column(String, nullable=False)
     status = Column(String, default="drafting") # drafting | provisional | finalized
+    finalized_at = Column(DateTime)
     season = relationship("Season")
     __table_args__ = (UniqueConstraint("season_id", "number", name="uix_season_week_number"),)
 
@@ -1632,6 +1633,18 @@ def ensure_database_schema(target_engine=engine) -> bool:
                     "UPDATE weekly_recaps SET source_count=0 WHERE source_count IS NULL"
                 )
                 raw.commit()
+
+        week_exists = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='weeks'"
+        ).fetchone()
+        if week_exists:
+            existing_week_columns = {
+                row[1] for row in cursor.execute("PRAGMA table_info(weeks)").fetchall()
+            }
+            if "finalized_at" not in existing_week_columns:
+                _backup_database(target_engine, "pre_week_finalized_at")
+                cursor.execute("ALTER TABLE weeks ADD COLUMN finalized_at DATETIME")
+                raw.commit()
     except Exception:
         raw.rollback()
         raise
@@ -1847,11 +1860,14 @@ def _set_week_status_without_commit(db, week: Week) -> None:
         return
     done, total = count_results_for_week(db, week)
     if done == 0:
-        week.status = "drafting"
+        new_status = "drafting"
     elif done < total:
-        week.status = "provisional"
+        new_status = "provisional"
     else:
-        week.status = "finalized"
+        new_status = "finalized"
+    week.status = new_status
+    if new_status == "finalized" and week.finalized_at is None:
+        week.finalized_at = utcnow()
     db.add(week)
 
 
@@ -2735,6 +2751,7 @@ CORRESPONDENT_INGEST_REQUIRED_FIELDS = {
 CORRESPONDENT_INGEST_MAX_BODY_BYTES = 25_000
 CORRESPONDENT_BATCH_MAX_BODY_BYTES = 10_000_000
 CORRESPONDENT_BATCH_MAX_SOURCES = 1_000
+CORRESPONDENT_FINALIZATION_BUFFER = timedelta(hours=1)
 CORRESPONDENT_PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 
@@ -3696,6 +3713,101 @@ def correspondent_classification_readiness(
     }
 
 
+def _utc_iso(value: Optional[datetime]) -> Optional[str]:
+    return None if value is None else f"{value.isoformat(timespec='seconds')}Z"
+
+
+def correspondent_automation_status(
+    db,
+    week: Week,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Derive the current automation phase from authoritative persisted facts."""
+    now = now or utcnow()
+    completed_results, fixture_count = count_results_for_week(db, week)
+    eligible_at = (
+        None
+        if week.finalized_at is None
+        else week.finalized_at + CORRESPONDENT_FINALIZATION_BUFFER
+    )
+    readiness = correspondent_classification_readiness(db, week)
+    jobs = db.query(CorrespondentClassificationJob).filter_by(
+        week_id=week.id,
+        prompt_version=CLASSIFIER_PROMPT_VERSION,
+    ).order_by(CorrespondentClassificationJob.id.asc()).all()
+    active_jobs = [job for job in jobs if job.status in ACTIVE_CLASSIFICATION_JOB_STATUSES]
+    active_passes = {job.pass_number for job in active_jobs}
+    recap = db.query(WeeklyRecap).filter_by(
+        week_id=week.id,
+        correspondent_version="v2",
+        prompt_version=V2_PROMPT_VERSION,
+    ).order_by(WeeklyRecap.id.desc()).first()
+
+    if week.status != "finalized" or fixture_count != 10 or completed_results != 10:
+        phase = "WAITING_FOR_FINALIZATION"
+        allowed_actions: List[str] = []
+    elif eligible_at is None:
+        phase = "WAITING_FOR_FINALIZATION_TIMESTAMP"
+        allowed_actions = []
+    elif now < eligible_at:
+        phase = "WAITING_FOR_BUFFER"
+        allowed_actions = []
+    elif recap is not None and recap.status == "generating":
+        phase = "GENERATING_RECAP"
+        allowed_actions = []
+    elif recap is not None and recap.status == "ready":
+        phase = "RECAP_GENERATED"
+        allowed_actions = []
+    elif 1 in active_passes:
+        phase = "CLASSIFYING_PASS_1"
+        allowed_actions = ["reconcile_classification"]
+    elif readiness["missing_pass_one_source_ids"]:
+        phase = "READY_FOR_PASS_1"
+        allowed_actions = ["submit_pass_1"]
+    elif 2 in active_passes:
+        phase = "CLASSIFYING_PASS_2"
+        allowed_actions = ["reconcile_classification"]
+    elif readiness["awaiting_pass_two_source_ids"]:
+        phase = "PASS_1_COMPLETE_PASS_2_REQUIRED"
+        allowed_actions = ["reconcile_classification"]
+    elif readiness["ready"]:
+        phase = "READY_TO_GENERATE"
+        allowed_actions = ["generate_recap"]
+    else:
+        phase = "WAITING_FOR_SOURCES"
+        allowed_actions = []
+
+    return {
+        "phase": phase,
+        "allowed_actions": allowed_actions,
+        "season_code": week.season.code,
+        "week_number": week.number,
+        "week_status": week.status,
+        "fixture_count": fixture_count,
+        "completed_results": completed_results,
+        "finalized_at": _utc_iso(week.finalized_at),
+        "eligible_at": _utc_iso(eligible_at),
+        "classification": readiness,
+        "jobs": [
+            {
+                "id": job.id,
+                "pass_number": job.pass_number,
+                "status": job.status,
+                "total": job.total_count,
+                "completed": job.completed_count,
+                "failed": job.failed_count,
+            }
+            for job in jobs
+        ],
+        "recap": None if recap is None else {
+            "id": recap.id,
+            "status": recap.status,
+            "revision": recap.revision,
+        },
+    }
+
+
 def _classification_for_writer(
     record: CorrespondentSourceClassification,
 ) -> Dict[str, Any]:
@@ -3901,16 +4013,8 @@ def count_results_for_week(db, wk: Week) -> Tuple[int,int]:
     return done, total
 
 def update_week_status(db, wk: Week) -> None:
-    if wk.season and wk.season.is_archived:
-        return
-    done, total = count_results_for_week(db, wk)
-    if done == 0:
-        wk.status = "drafting"
-    elif done < total:
-        wk.status = "provisional"
-    else:
-        wk.status = "finalized"
-    db.add(wk); db.commit()
+    _set_week_status_without_commit(db, wk)
+    db.commit()
 
 def current_drafting_week(db, season: Season) -> Optional[Week]:
     base = db.query(Week).filter_by(season_id=season.id)
@@ -4346,6 +4450,50 @@ def scheduled_sync_results():
     except (FootballDataError, RuntimeError) as exc:
         return jsonify(ok=False, error=str(exc)), 502
     return jsonify(ok=True, season=season.code, **summary)
+
+
+def _correspondent_automation_request_error():
+    expected_secret = os.environ.get("CORRESPONDENT_AUTOMATION_SECRET", "").strip()
+    if not expected_secret:
+        return jsonify(ok=False, error="Correspondent automation is not configured"), 503
+    supplied_secret = request.headers.get("X-Correspondent-Automation-Secret", "")
+    if not hmac.compare_digest(supplied_secret, expected_secret):
+        return jsonify(ok=False, error="Forbidden"), 403
+    if not correspondent_v2_enabled():
+        return jsonify(ok=False, error="Correspondent V2 is not enabled"), 404
+    return None
+
+
+def _correspondent_automation_week(db, values: Mapping[str, Any]) -> Week:
+    season_code = str(values.get("season_code") or "").strip()
+    try:
+        week_number = int(values.get("week_number"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("week_number must be an integer") from exc
+    season = db.query(Season).filter_by(
+        code=season_code,
+        is_active=1,
+        is_archived=0,
+    ).one_or_none()
+    if season is None:
+        raise ValueError("Requested season is not the active writable season")
+    week = season_week(db, season, week_number)
+    if week is None:
+        raise ValueError("Week not found")
+    return week
+
+
+@app.get("/tasks/correspondent/status")
+def scheduled_correspondent_status():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, request.args)
+        return jsonify(ok=True, **correspondent_automation_status(db, week))
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
 
 
 @app.post("/api/correspondent/sources")

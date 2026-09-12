@@ -4,7 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1008,6 +1008,73 @@ class PickemAppTests(unittest.TestCase):
         verification_db = app_module.SessionLocal()
         self.assertEqual(verification_db.query(app_module.WeeklyRecap).count(), 0)
         verification_db.close()
+
+    def test_week_finalized_at_is_set_once_on_first_finalization(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week.finalized_at = None
+        first_finalized_at = datetime(2026, 8, 23, 18, 0, 0)
+        later = first_finalized_at + timedelta(hours=2)
+
+        with patch.object(app_module, "utcnow", return_value=first_finalized_at):
+            app_module.update_week_status(db, week)
+        self.assertEqual(week.finalized_at, first_finalized_at)
+        with patch.object(app_module, "utcnow", return_value=later):
+            app_module.update_week_status(db, week)
+        self.assertEqual(week.finalized_at, first_finalized_at)
+
+    def test_correspondent_status_derives_one_hour_buffer_and_next_action(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        app_module.ingest_correspondent_source(
+            db,
+            self.correspondent_ingest_payload(external_id="timed-source"),
+        )
+        finalized_at = datetime(2026, 8, 23, 18, 0, 0)
+        week.finalized_at = finalized_at
+        db.commit()
+
+        waiting = app_module.correspondent_automation_status(
+            db,
+            week,
+            now=finalized_at + timedelta(minutes=59),
+        )
+        ready = app_module.correspondent_automation_status(
+            db,
+            week,
+            now=finalized_at + timedelta(hours=1),
+        )
+
+        self.assertEqual(waiting["phase"], "WAITING_FOR_BUFFER")
+        self.assertEqual(waiting["allowed_actions"], [])
+        self.assertEqual(ready["phase"], "READY_FOR_PASS_1")
+        self.assertEqual(ready["allowed_actions"], ["submit_pass_1"])
+        self.assertEqual(ready["eligible_at"], "2026-08-23T19:00:00Z")
+
+    def test_correspondent_status_endpoint_requires_automation_secret(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        week.finalized_at = datetime(2026, 8, 23, 18, 0, 0)
+        db.commit()
+        db.close()
+
+        with app_module.app.test_client() as client, patch.dict(
+            os.environ,
+            {
+                "CORRESPONDENT_V2_ENABLED": "1",
+                "CORRESPONDENT_AUTOMATION_SECRET": "automation-secret",
+            },
+        ):
+            forbidden = client.get(
+                "/tasks/correspondent/status?season_code=year-2&week_number=1"
+            )
+            allowed = client.get(
+                "/tasks/correspondent/status?season_code=year-2&week_number=1",
+                headers={
+                    "X-Correspondent-Automation-Secret": "automation-secret"
+                },
+            )
+
+        self.assertEqual(forbidden.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertTrue(allowed.get_json()["ok"])
 
     def test_admin_distinguishes_candidate_and_used_v2_sources(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
@@ -3050,11 +3117,15 @@ class PickemAppTests(unittest.TestCase):
             fixture_columns = {
                 row[1] for row in connection.execute("PRAGMA table_info(fixtures)").fetchall()
             }
+            week_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(weeks)").fetchall()
+            }
             recap_table = connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='weekly_recaps'"
             ).fetchone()
             self.assertIn("external_match_id", fixture_columns)
             self.assertIn("kickoff_utc", fixture_columns)
+            self.assertIn("finalized_at", week_columns)
             self.assertEqual(recap_table, ("weekly_recaps",))
             self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM weeks WHERE number=1").fetchone()[0], 2)
@@ -3062,6 +3133,7 @@ class PickemAppTests(unittest.TestCase):
 
             self.assertTrue((Path(directory) / "legacy.pre_seasons.db").exists())
             self.assertTrue((Path(directory) / "legacy.pre_football_api.db").exists())
+            self.assertTrue((Path(directory) / "legacy.pre_week_finalized_at.db").exists())
 
     def test_existing_v1_recap_table_is_migrated_without_losing_recaps(self):
         with tempfile.TemporaryDirectory() as directory:
