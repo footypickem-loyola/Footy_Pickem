@@ -50,6 +50,16 @@ from scripts.simulate_week1_x_cap_alert import (  # noqa: E402
     simulate_week1_x_cap_alert,
     validated_staging_db_path as validated_x_cap_staging_db_path,
 )
+from scripts.manage_correspondent_week99_e2e import (  # noqa: E402
+    MaintenanceSafetyError as Week99MaintenanceSafetyError,
+    ROOM_CODE as WEEK99_ROOM_CODE,
+    WEEK_NUMBER as E2E_WEEK_NUMBER,
+    inspect_week99,
+    make_week99_eligible,
+    seed_week99,
+    teardown_week99,
+    validated_staging_db_path as validated_week99_staging_db_path,
+)
 
 
 class FakeResponse:
@@ -415,6 +425,26 @@ class PickemAppTests(unittest.TestCase):
             ))
         db.commit()
         return db, week
+
+    def build_week99_e2e_prerequisites(self):
+        db = app_module.SessionLocal()
+        season = db.query(app_module.Season).filter_by(code="year-2").one()
+        for week_number in (2, 3):
+            if db.query(app_module.Week).filter_by(
+                season_id=season.id,
+                number=week_number,
+            ).one_or_none() is None:
+                db.add(app_module.Week(
+                    season_id=season.id,
+                    number=week_number,
+                    room_code=f"PROTECTED-W{week_number}",
+                    status="drafting",
+                ))
+        db.commit()
+        manifest_path = Path(TEST_DIR.name) / f"{self._testMethodName}-week99.json"
+        if manifest_path.exists():
+            manifest_path.unlink()
+        return db, season, manifest_path
 
     def build_classifier_reset_state(self):
         db, week = self.build_correspondent_seed_destination()
@@ -1966,6 +1996,451 @@ class PickemAppTests(unittest.TestCase):
             "already set",
         ):
             set_week1_finalized_at(db, app_module, timestamp)
+
+    def test_week99_e2e_helper_refuses_wrong_and_production_database_paths(self):
+        production_url = "sqlite:////data/pickem.db"
+        with self.assertRaisesRegex(Week99MaintenanceSafetyError, "production"):
+            validated_week99_staging_db_path(production_url, allow_test_db=True)
+
+        isolated_path = Path(TEST_DIR.name) / "isolated-week99.db"
+        isolated_path.touch()
+        with self.assertRaisesRegex(Week99MaintenanceSafetyError, "exactly"):
+            validated_week99_staging_db_path(f"sqlite:///{isolated_path}")
+        self.assertEqual(
+            validated_week99_staging_db_path(
+                f"sqlite:///{isolated_path}",
+                allow_test_db=True,
+            ),
+            isolated_path.resolve(),
+        )
+
+    def test_week99_e2e_helper_enforces_active_season_and_existing_week_guard(self):
+        db, season, manifest_path = self.build_week99_e2e_prerequisites()
+        season.is_active = 0
+        db.commit()
+        with self.assertRaisesRegex(Week99MaintenanceSafetyError, "sole active"):
+            seed_week99(
+                db,
+                app_module,
+                database_path=Path(TEST_DIR.name) / "test.db",
+                manifest_path=manifest_path,
+                dry_run=True,
+            )
+
+        season.is_active = 1
+        db.add(app_module.Week(
+            season_id=season.id,
+            number=E2E_WEEK_NUMBER,
+            room_code="FOREIGN-W99",
+            status="drafting",
+        ))
+        db.commit()
+        with self.assertRaisesRegex(Week99MaintenanceSafetyError, "already exists"):
+            seed_week99(
+                db,
+                app_module,
+                database_path=Path(TEST_DIR.name) / "test.db",
+                manifest_path=manifest_path,
+                dry_run=True,
+            )
+
+    def test_week99_e2e_seed_dry_run_makes_no_changes(self):
+        db, season, manifest_path = self.build_week99_e2e_prerequisites()
+        before = {
+            model.__tablename__: db.query(model).count()
+            for model in (
+                app_module.Week,
+                app_module.Fixture,
+                app_module.Result,
+                app_module.Matchup,
+                app_module.Pick,
+                app_module.CorrespondentSource,
+                app_module.CorrespondentSourceClassification,
+                app_module.CorrespondentXCollectionState,
+            )
+        }
+
+        with patch("builtins.print"):
+            summary = seed_week99(
+                db,
+                app_module,
+                database_path=Path(TEST_DIR.name) / "test.db",
+                manifest_path=manifest_path,
+                dry_run=True,
+                now=datetime(2026, 9, 13, 12, 0, 0),
+            )
+
+        self.assertTrue(summary["dry_run"])
+        self.assertFalse(manifest_path.exists())
+        self.assertEqual(
+            {
+                model.__tablename__: db.query(model).count()
+                for model in (
+                    app_module.Week,
+                    app_module.Fixture,
+                    app_module.Result,
+                    app_module.Matchup,
+                    app_module.Pick,
+                    app_module.CorrespondentSource,
+                    app_module.CorrespondentSourceClassification,
+                    app_module.CorrespondentXCollectionState,
+                )
+            },
+            before,
+        )
+
+    def test_week99_e2e_seed_creates_only_controlled_zero_x_state(self):
+        db, season, manifest_path = self.build_week99_e2e_prerequisites()
+        protected = {
+            week.number: (week.id, week.room_code, week.status, week.finalized_at)
+            for week in db.query(app_module.Week).filter(
+                app_module.Week.season_id == season.id,
+                app_module.Week.number.in_((1, 2, 3)),
+            ).all()
+        }
+        now = datetime(2026, 9, 13, 12, 0, 0)
+
+        with patch("builtins.print"):
+            summary = seed_week99(
+                db,
+                app_module,
+                database_path=Path(TEST_DIR.name) / "test.db",
+                manifest_path=manifest_path,
+                dry_run=False,
+                backup_path=Path("verified-test-backup.db"),
+                now=now,
+            )
+
+        week = db.query(app_module.Week).filter_by(
+            season_id=season.id,
+            number=E2E_WEEK_NUMBER,
+        ).one()
+        self.assertEqual(week.room_code, WEEK99_ROOM_CODE)
+        self.assertEqual(week.status, "finalized")
+        self.assertEqual(week.finalized_at, now)
+        fixtures = db.query(app_module.Fixture).filter_by(week_id=week.id).all()
+        results = db.query(app_module.Result).join(app_module.Fixture).filter(
+            app_module.Fixture.week_id == week.id
+        ).all()
+        matchups = db.query(app_module.Matchup).filter_by(week_id=week.id).all()
+        picks = db.query(app_module.Pick).join(app_module.Matchup).filter(
+            app_module.Matchup.week_id == week.id
+        ).all()
+        self.assertEqual((len(fixtures), len(results), len(matchups), len(picks)), (10, 10, 3, 30))
+        self.assertTrue(all(fixture.external_match_id is None for fixture in fixtures))
+        self.assertNotIn("Draw", {pick.team for pick in picks})
+        self.assertEqual(Counter(pick.player_id for pick in picks), Counter({
+            player.id: 5 for player in app_module.season_players(db, season)
+        }))
+        x_state = db.query(app_module.CorrespondentXCollectionState).filter_by(
+            week_id=week.id
+        ).one()
+        self.assertEqual(
+            (
+                x_state.status,
+                x_state.page_count,
+                x_state.retrieved_count,
+                x_state.persisted_count,
+                x_state.next_token,
+                x_state.lease_token,
+            ),
+            ("completed", 0, 0, 0, None, None),
+        )
+        self.assertEqual(db.query(app_module.CorrespondentXPageReceipt).count(), 0)
+        sources = db.query(app_module.CorrespondentSource).filter_by(week_id=week.id).all()
+        candidates, signals = app_module.classification_candidate_sources(db, week)
+        self.assertEqual((len(sources), len(candidates), len(signals)), (3, 2, 1))
+        classifications = db.query(app_module.CorrespondentSourceClassification).filter(
+            app_module.CorrespondentSourceClassification.source_id.in_(
+                [source.id for source in sources]
+            )
+        ).all()
+        self.assertEqual(len(classifications), 1)
+        self.assertEqual(classifications[0].route, "AUTOMATED_REVIEW")
+        self.assertEqual(classifications[0].pass_number, 1)
+        self.assertEqual(db.query(app_module.CorrespondentClassificationJob).count(), 0)
+        self.assertEqual(db.query(app_module.WeeklyRecap).count(), 0)
+        self.assertEqual(db.query(app_module.CorrespondentEmailDelivery).count(), 0)
+        self.assertEqual(db.query(app_module.CorrespondentNotification).count(), 0)
+        self.assertEqual(summary["phase"], "WAITING_FOR_BUFFER")
+        self.assertEqual(
+            {
+                week.number: (week.id, week.room_code, week.status, week.finalized_at)
+                for week in db.query(app_module.Week).filter(
+                    app_module.Week.season_id == season.id,
+                    app_module.Week.number.in_((1, 2, 3)),
+                ).all()
+            },
+            protected,
+        )
+
+    def test_week99_e2e_make_eligible_changes_only_finalized_at(self):
+        db, season, manifest_path = self.build_week99_e2e_prerequisites()
+        seeded_at = datetime(2026, 9, 13, 12, 0, 0)
+        with patch("builtins.print"):
+            seed_week99(
+                db,
+                app_module,
+                database_path=Path(TEST_DIR.name) / "test.db",
+                manifest_path=manifest_path,
+                dry_run=False,
+                backup_path=Path("seed-backup.db"),
+                now=seeded_at,
+            )
+        week = db.query(app_module.Week).filter_by(number=E2E_WEEK_NUMBER).one()
+        before = {
+            column.name: getattr(week, column.name)
+            for column in app_module.Week.__table__.columns
+            if column.name != "finalized_at"
+        }
+        table_counts_before = {
+            model.__tablename__: db.query(model).count()
+            for model in (
+                app_module.Fixture,
+                app_module.Result,
+                app_module.Matchup,
+                app_module.Pick,
+                app_module.CorrespondentSource,
+                app_module.CorrespondentSourceClassification,
+                app_module.CorrespondentXCollectionState,
+            )
+        }
+        eligibility_now = datetime(2026, 9, 13, 14, 0, 0)
+
+        with patch("builtins.print"):
+            summary = make_week99_eligible(
+                db,
+                app_module,
+                manifest_path=manifest_path,
+                dry_run=False,
+                backup_path=Path("eligible-backup.db"),
+                now=eligibility_now,
+            )
+
+        db.refresh(week)
+        self.assertEqual(week.finalized_at, eligibility_now - timedelta(minutes=61))
+        self.assertEqual(summary["before"], seeded_at)
+        self.assertEqual(
+            {
+                column.name: getattr(week, column.name)
+                for column in app_module.Week.__table__.columns
+                if column.name != "finalized_at"
+            },
+            before,
+        )
+        self.assertEqual(
+            {
+                model.__tablename__: db.query(model).count()
+                for model in (
+                    app_module.Fixture,
+                    app_module.Result,
+                    app_module.Matchup,
+                    app_module.Pick,
+                    app_module.CorrespondentSource,
+                    app_module.CorrespondentSourceClassification,
+                    app_module.CorrespondentXCollectionState,
+                )
+            },
+            table_counts_before,
+        )
+        with patch("builtins.print"):
+            status = inspect_week99(db, app_module, manifest_path=manifest_path)
+        self.assertEqual(status["phase"], "READY_FOR_PASS_1")
+        self.assertEqual(status["allowed_actions"], ["submit_pass_1"])
+
+    def test_week99_e2e_mutating_dry_runs_leave_seeded_state_unchanged(self):
+        db, season, manifest_path = self.build_week99_e2e_prerequisites()
+        seeded_at = datetime(2026, 9, 13, 12, 0, 0)
+        with patch("builtins.print"):
+            seed_week99(
+                db,
+                app_module,
+                database_path=Path(TEST_DIR.name) / "test.db",
+                manifest_path=manifest_path,
+                dry_run=False,
+                backup_path=Path("seed-backup.db"),
+                now=seeded_at,
+            )
+        week = db.query(app_module.Week).filter_by(number=E2E_WEEK_NUMBER).one()
+        manifest_before = manifest_path.read_text(encoding="utf-8")
+        counts_before = {
+            model.__tablename__: db.query(model).count()
+            for model in (
+                app_module.Week,
+                app_module.Fixture,
+                app_module.Result,
+                app_module.Matchup,
+                app_module.Pick,
+                app_module.CorrespondentSource,
+                app_module.CorrespondentSourceClassification,
+                app_module.CorrespondentXCollectionState,
+            )
+        }
+
+        with patch("builtins.print"):
+            eligible_summary = make_week99_eligible(
+                db,
+                app_module,
+                manifest_path=manifest_path,
+                dry_run=True,
+                now=seeded_at + timedelta(hours=2),
+            )
+            teardown_summary = teardown_week99(
+                db,
+                app_module,
+                manifest_path=manifest_path,
+                dry_run=True,
+            )
+
+        db.refresh(week)
+        self.assertTrue(eligible_summary["dry_run"])
+        self.assertTrue(teardown_summary["dry_run"])
+        self.assertEqual(week.finalized_at, seeded_at)
+        self.assertEqual(manifest_path.read_text(encoding="utf-8"), manifest_before)
+        self.assertEqual(
+            {
+                model.__tablename__: db.query(model).count()
+                for model in (
+                    app_module.Week,
+                    app_module.Fixture,
+                    app_module.Result,
+                    app_module.Matchup,
+                    app_module.Pick,
+                    app_module.CorrespondentSource,
+                    app_module.CorrespondentSourceClassification,
+                    app_module.CorrespondentXCollectionState,
+                )
+            },
+            counts_before,
+        )
+
+    def test_week99_e2e_teardown_removes_owned_lifecycle_and_preserves_weeks(self):
+        db, season, manifest_path = self.build_week99_e2e_prerequisites()
+        week1 = db.query(app_module.Week).filter_by(
+            season_id=season.id,
+            number=1,
+        ).one()
+        unrelated_source = self.add_copy_source(
+            db,
+            week1,
+            external_id="week99-teardown-unrelated",
+            published_at=datetime(2026, 8, 22, 12, 0, 0),
+        )
+        protected_week_ids = {
+            week.number: week.id
+            for week in db.query(app_module.Week).filter(
+                app_module.Week.season_id == season.id,
+                app_module.Week.number.in_((1, 2, 3)),
+            ).all()
+        }
+        with patch("builtins.print"):
+            seed_week99(
+                db,
+                app_module,
+                database_path=Path(TEST_DIR.name) / "test.db",
+                manifest_path=manifest_path,
+                dry_run=False,
+                backup_path=Path("seed-backup.db"),
+                now=datetime(2026, 9, 13, 12, 0, 0),
+            )
+        week = db.query(app_module.Week).filter_by(number=E2E_WEEK_NUMBER).one()
+        sources = db.query(app_module.CorrespondentSource).filter_by(week_id=week.id).all()
+        job = app_module.CorrespondentClassificationJob(
+            season_id=season.id,
+            week_id=week.id,
+            prompt_version=app_module.CLASSIFIER_PROMPT_VERSION,
+            pass_number=1,
+            model="test-model",
+            status="completed",
+            total_count=1,
+            completed_count=1,
+        )
+        db.add(job)
+        db.flush()
+        db.add(app_module.CorrespondentClassificationJobItem(
+            job_id=job.id,
+            source_id=sources[0].id,
+            custom_id=f"week99-teardown-{job.id}",
+            status="completed",
+        ))
+        recap = app_module.WeeklyRecap(
+            week_id=week.id,
+            revision=1,
+            status="ready",
+            title="Week 99 E2E recap",
+            body_markdown="Synthetic recap",
+            context_json="{}",
+            context_hash="week99-context",
+            prompt_version=app_module.V2_PROMPT_VERSION,
+            model="test-model",
+            correspondent_version="v2",
+            automation_key=app_module.correspondent_recap_automation_key(week),
+        )
+        db.add(recap)
+        db.flush()
+        db.add(app_module.RecapSourceUsage(recap_id=recap.id, source_id=sources[0].id))
+        db.add(app_module.WeeklyRecapSelection(week_id=week.id, recap_id=recap.id))
+        db.add(app_module.CorrespondentEmailDelivery(
+            recap_id=recap.id,
+            delivery_marker=f"week99-e2e-delivery-{week.id}",
+            recipients_json='["test@example.com"]',
+            status="pending",
+        ))
+        db.commit()
+
+        with patch("builtins.print"):
+            teardown_week99(
+                db,
+                app_module,
+                manifest_path=manifest_path,
+                dry_run=False,
+                backup_path=Path("teardown-backup.db"),
+                now=datetime(2026, 9, 14, 12, 0, 0),
+            )
+
+        self.assertIsNone(db.query(app_module.Week).filter_by(number=E2E_WEEK_NUMBER).one_or_none())
+        self.assertEqual(
+            {
+                week.number: week.id
+                for week in db.query(app_module.Week).filter(
+                    app_module.Week.season_id == season.id,
+                    app_module.Week.number.in_((1, 2, 3)),
+                ).all()
+            },
+            protected_week_ids,
+        )
+        self.assertIsNotNone(db.get(app_module.CorrespondentSource, unrelated_source.id))
+        self.assertEqual(db.query(app_module.CorrespondentClassificationJob).count(), 0)
+        self.assertEqual(db.query(app_module.WeeklyRecap).count(), 0)
+        self.assertEqual(db.query(app_module.CorrespondentEmailDelivery).count(), 0)
+        active = db.query(app_module.Season).filter_by(is_active=1, is_archived=0).all()
+        self.assertEqual([row.code for row in active], ["year-2"])
+
+    def test_week99_e2e_teardown_refuses_manifest_mismatch(self):
+        db, season, manifest_path = self.build_week99_e2e_prerequisites()
+        with patch("builtins.print"):
+            seed_week99(
+                db,
+                app_module,
+                database_path=Path(TEST_DIR.name) / "test.db",
+                manifest_path=manifest_path,
+                dry_run=False,
+                backup_path=Path("seed-backup.db"),
+                now=datetime(2026, 9, 13, 12, 0, 0),
+            )
+        week = db.query(app_module.Week).filter_by(number=E2E_WEEK_NUMBER).one()
+        week.room_code = "MISMATCHED-W99"
+        db.commit()
+
+        with self.assertRaisesRegex(Week99MaintenanceSafetyError, "does not match"):
+            teardown_week99(
+                db,
+                app_module,
+                manifest_path=manifest_path,
+                dry_run=False,
+                backup_path=Path("teardown-backup.db"),
+            )
+        self.assertIsNotNone(db.get(app_module.Week, week.id))
 
     def test_x_cap_helper_refuses_non_staging_database_paths(self):
         for database_url in (
