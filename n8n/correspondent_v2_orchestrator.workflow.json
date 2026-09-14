@@ -19,7 +19,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const allowed = Array.isArray($json.allowed_actions) ? $json.allowed_actions : [];\nlet action = null;\nlet path = null;\nif (allowed.includes('reconcile_classification')) { action = 'reconcile_classification'; path = '/tasks/correspondent/classification/reconcile'; }\nelse if (allowed.includes('submit_pass_1')) { action = 'submit_pass_1'; path = '/tasks/correspondent/classification/submit'; }\nelse if (allowed.includes('generate_recap')) { action = 'generate_recap'; path = '/tasks/correspondent/recap/generate'; }\nreturn [{ json: { ...$json, action, path } }];"
+        "jsCode": "const outputs = [];\nfor (const item of $input.all()) {\n  const data = item.json;\n  const allowed = Array.isArray(data.allowed_actions) ? data.allowed_actions : [];\n  let action = null;\n  let path = null;\n  if (allowed.includes('reconcile_classification')) { action = 'reconcile_classification'; path = '/tasks/correspondent/classification/reconcile'; }\n  else if (allowed.includes('submit_pass_1')) { action = 'submit_pass_1'; path = '/tasks/correspondent/classification/submit'; }\n  else if (allowed.includes('generate_recap')) { action = 'generate_recap'; path = '/tasks/correspondent/recap/generate'; }\n  outputs.push({ json: { ...data, action, path } });\n}\nreturn outputs;"
       },
       "id": "orchestrator-next", "name": "Choose One Python Action", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-60, 0]
     },
@@ -34,8 +34,8 @@
       "parameters": {
         "method": "POST", "url": "={{ $env.PICKEM_BASE_URL + $json.path }}", "sendHeaders": true,
         "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}]},
-        "sendBody": true, "contentType": "raw", "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ season_code: $json.season_code, week_number: $json.week_number }) }}",
+        "sendBody": true, "contentType": "json", "specifyBody": "keypair",
+        "bodyParameters": {"parameters": [{"name": "season_code", "value": "={{ $json.season_code }}"}, {"name": "week_number", "value": "={{ $json.week_number }}"}]},
         "options": {"response": {"response": {"responseFormat": "json"}}}
       },
       "id": "orchestrator-call", "name": "Run Idempotent Python Action", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [380, -80]
