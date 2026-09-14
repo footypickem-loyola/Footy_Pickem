@@ -19,7 +19,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const allowed = Array.isArray($json.allowed_actions) ? $json.allowed_actions : [];\nconst claims = [];\nif (allowed.includes('claim_recap_email')) claims.push({ json: { season_code: $json.season_code, week_number: $json.week_number, claim_path: '/tasks/correspondent/delivery/claim', ack_path: '/tasks/correspondent/delivery/ack' } });\nif (allowed.includes('claim_x_cap_alert')) claims.push({ json: { season_code: $json.season_code, week_number: $json.week_number, claim_path: '/tasks/correspondent/notifications/x-cap/claim', ack_path: '/tasks/correspondent/notifications/x-cap/ack' } });\nreturn claims;"
+        "jsCode": "const claims = [];\n\nfor (const item of $input.all()) {\n  const data = item.json;\n  const allowed = Array.isArray(data.allowed_actions) ? data.allowed_actions : [];\n\n  if (allowed.includes('claim_recap_email')) {\n    claims.push({ json: { season_code: data.season_code, week_number: data.week_number, claim_path: '/tasks/correspondent/delivery/claim', ack_path: '/tasks/correspondent/delivery/ack' } });\n  }\n\n  if (allowed.includes('claim_x_cap_alert')) {\n    claims.push({ json: { season_code: data.season_code, week_number: data.week_number, claim_path: '/tasks/correspondent/notifications/x-cap/claim', ack_path: '/tasks/correspondent/notifications/x-cap/ack' } });\n  }\n}\n\nreturn claims;"
       },
       "id": "gmail-prepare", "name": "Prepare Gmail Claims", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [-260, 0]
     },
@@ -59,18 +59,28 @@
     },
     {
       "parameters": {
-        "sendTo": "={{ $('Code in JavaScript').item.json.email.recipients.join(',') }}",
-        "subject": "={{ $('Code in JavaScript').item.json.email.subject }}",
-        "message": "={{ $('Code in JavaScript').item.json.email.body_markdown || $('Code in JavaScript').item.json.email.body }}",
+        "mode": "markdownToHtml",
+        "markdown": "={{ $('Code in JavaScript').item.json.email.body_markdown || $('Code in JavaScript').item.json.email.body }}",
+        "destinationKey": "data",
         "options": {}
       },
-      "id": "gmail-send", "name": "Send From footypickem Gmail", "type": "n8n-nodes-base.gmail", "typeVersion": 2.1, "position": [840, 20]
+      "id": "gmail-markdown", "name": "Markdown", "type": "n8n-nodes-base.markdown", "typeVersion": 1, "position": [820, 80]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Code in JavaScript').item.json.email.recipients.join(',') }}",
+        "subject": "={{ $('Code in JavaScript').item.json.email.subject.replace(/\\s*\\[FootyPickem-Recap-[^\\]]+\\]\\s*$/, '') }}",
+        "message": "={{ $('Markdown').item.json.data + '<div style=\"display:none\">' + $('Code in JavaScript').item.json.delivery_marker + '</div>' }}",
+        "emailType": "html",
+        "options": {}
+      },
+      "id": "gmail-send", "name": "Send From footypickem Gmail", "type": "n8n-nodes-base.gmail", "typeVersion": 2.1, "position": [1040, 80]
     },
     {
       "parameters": {
         "jsCode": "const target = $('Prepare Gmail Claims').item.json;\nconst claim = $('Code in JavaScript').item.json.email;\nconst messageId = String($json.id || $json.threadId || '');\nif (!messageId) throw new Error('Gmail did not return a message ID; leave the claim unacknowledged for Sent lookup retry');\nreturn [{ json: { season_code: target.season_code, week_number: target.week_number, ack_path: target.ack_path, claim_token: claim.claim_token, outcome: 'sent', gmail_message_id: messageId } }];"
       },
-      "id": "gmail-ack-body", "name": "Build Sent Acknowledgement", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1060, -80]
+      "id": "gmail-ack-body", "name": "Build Sent Acknowledgement", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1260, -80]
     },
     {
       "parameters": {
@@ -79,7 +89,7 @@
         "sendBody": true, "contentType": "raw", "rawContentType": "application/json", "body": "={{ JSON.stringify({ season_code: $json.season_code, week_number: $json.week_number, claim_token: $json.claim_token, outcome: $json.outcome, gmail_message_id: $json.gmail_message_id }) }}",
         "options": {"response": {"response": {"responseFormat": "json"}}}
       },
-      "id": "gmail-ack", "name": "Record Gmail Delivery", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1280, -80]
+      "id": "gmail-ack", "name": "Record Gmail Delivery", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1480, -80]
     }
   ],
   "connections": {
@@ -91,7 +101,8 @@
     "Code in JavaScript": {"main": [[{"node": "Claim Granted?", "type": "main", "index": 0}]]},
     "Claim Granted?": {"main": [[{"node": "Gmail Sent Lookup", "type": "main", "index": 0}], []]},
     "Gmail Sent Lookup": {"main": [[{"node": "Already In Sent?", "type": "main", "index": 0}]]},
-    "Already In Sent?": {"main": [[{"node": "Build Sent Acknowledgement", "type": "main", "index": 0}], [{"node": "Send From footypickem Gmail", "type": "main", "index": 0}]]},
+    "Already In Sent?": {"main": [[{"node": "Build Sent Acknowledgement", "type": "main", "index": 0}], [{"node": "Markdown", "type": "main", "index": 0}]]},
+    "Markdown": {"main": [[{"node": "Send From footypickem Gmail", "type": "main", "index": 0}]]},
     "Send From footypickem Gmail": {"main": [[{"node": "Build Sent Acknowledgement", "type": "main", "index": 0}]]},
     "Build Sent Acknowledgement": {"main": [[{"node": "Record Gmail Delivery", "type": "main", "index": 0}]]}
   },
