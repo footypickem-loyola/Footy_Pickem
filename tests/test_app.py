@@ -3048,6 +3048,69 @@ class PickemAppTests(unittest.TestCase):
         self.assertNotEqual(retry_email["claim_token"], first_email["claim_token"])
         self.assertEqual(db.query(app_module.CorrespondentEmailDelivery).count(), 1)
 
+    def test_recap_email_delivery_claim_recovers_after_lease_expiry(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        recap = app_module.WeeklyRecap(
+            week_id=week.id,
+            revision=1,
+            status="ready",
+            title="Lease recovery recap",
+            body_markdown="Ready for a retried Gmail claim.",
+            context_json="{}",
+            context_hash="lease-recovery-context",
+            prompt_version=app_module.V2_PROMPT_VERSION,
+            model="test-model",
+            correspondent_version="v2",
+            automation_key=app_module.correspondent_recap_automation_key(week),
+        )
+        db.add(recap)
+        db.commit()
+        claimed_at = datetime(2026, 8, 24, 12, 0, 0)
+        with patch.dict(
+            os.environ,
+            {"CORRESPONDENT_RECAP_RECIPIENTS": "league@example.com"},
+        ):
+            delivery, first_email = app_module.claim_recap_email_delivery(
+                db,
+                week,
+                now=claimed_at,
+            )
+            delivery_id = delivery.id
+            first_token = first_email["claim_token"]
+            first_expiry = delivery.claim_expires_at
+            same_delivery, active_lease_email = app_module.claim_recap_email_delivery(
+                db,
+                week,
+                now=first_expiry - timedelta(seconds=1),
+            )
+            reclaimed_delivery, retry_email = app_module.claim_recap_email_delivery(
+                db,
+                week,
+                now=first_expiry + timedelta(seconds=1),
+            )
+
+        self.assertEqual(first_expiry, claimed_at + timedelta(minutes=15))
+        self.assertEqual(same_delivery.id, delivery_id)
+        self.assertIsNone(active_lease_email)
+        self.assertEqual(reclaimed_delivery.id, delivery_id)
+        self.assertEqual(retry_email["delivery_marker"], first_email["delivery_marker"])
+        self.assertEqual(retry_email["gmail_sent_query"], first_email["gmail_sent_query"])
+        self.assertNotEqual(retry_email["claim_token"], first_token)
+        self.assertEqual(db.query(app_module.CorrespondentEmailDelivery).count(), 1)
+        with self.assertRaisesRegex(ValueError, "claim_token is invalid"):
+            app_module.acknowledge_recap_email_delivery(
+                db,
+                week,
+                claim_token=first_token,
+                outcome="sent",
+                gmail_message_id="stale-recap-message",
+                now=first_expiry + timedelta(seconds=2),
+            )
+        current = db.get(app_module.CorrespondentEmailDelivery, delivery_id)
+        self.assertEqual(current.status, "claimed")
+        self.assertEqual(current.claim_token, retry_email["claim_token"])
+        self.assertIsNone(current.gmail_message_id)
+
     def test_x_cap_notification_claims_and_sends_only_once(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
         state = app_module.CorrespondentXCollectionState(
@@ -3110,6 +3173,66 @@ class PickemAppTests(unittest.TestCase):
             "sent",
         )
         verification_db.close()
+
+    def test_x_cap_notification_claim_recovers_after_lease_expiry(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        state = app_module.CorrespondentXCollectionState(
+            week_id=week.id,
+            status="capped",
+            window_start=datetime(2026, 8, 21, 0, 0, 0),
+            window_end=datetime(2026, 8, 24, 0, 0, 0),
+            retrieved_count=1000,
+            persisted_count=1000,
+        )
+        db.add(state)
+        db.flush()
+        claimed_at = datetime(2026, 8, 24, 12, 0, 0)
+        app_module._ensure_x_cap_notification(db, week, state, now=claimed_at)
+        db.commit()
+        with patch.dict(
+            os.environ,
+            {"CORRESPONDENT_ADMIN_ALERT_RECIPIENTS": "admin@example.com"},
+        ):
+            notification, first_email = app_module.claim_x_cap_notification(
+                db,
+                week,
+                now=claimed_at,
+            )
+            notification_id = notification.id
+            first_token = first_email["claim_token"]
+            first_expiry = notification.claim_expires_at
+            same_notification, active_lease_email = app_module.claim_x_cap_notification(
+                db,
+                week,
+                now=first_expiry - timedelta(seconds=1),
+            )
+            reclaimed_notification, retry_email = app_module.claim_x_cap_notification(
+                db,
+                week,
+                now=first_expiry + timedelta(seconds=1),
+            )
+
+        self.assertEqual(first_expiry, claimed_at + timedelta(minutes=15))
+        self.assertEqual(same_notification.id, notification_id)
+        self.assertIsNone(active_lease_email)
+        self.assertEqual(reclaimed_notification.id, notification_id)
+        self.assertEqual(retry_email["delivery_marker"], first_email["delivery_marker"])
+        self.assertEqual(retry_email["gmail_sent_query"], first_email["gmail_sent_query"])
+        self.assertNotEqual(retry_email["claim_token"], first_token)
+        self.assertEqual(db.query(app_module.CorrespondentNotification).count(), 1)
+        with self.assertRaisesRegex(ValueError, "claim_token is invalid"):
+            app_module.acknowledge_x_cap_notification(
+                db,
+                week,
+                claim_token=first_token,
+                outcome="sent",
+                gmail_message_id="stale-cap-message",
+                now=first_expiry + timedelta(seconds=2),
+            )
+        current = db.get(app_module.CorrespondentNotification, notification_id)
+        self.assertEqual(current.status, "claimed")
+        self.assertEqual(current.claim_token, retry_email["claim_token"])
+        self.assertIsNone(current.gmail_message_id)
 
     def test_completed_batch_maps_by_custom_id_and_creates_pass_two(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
