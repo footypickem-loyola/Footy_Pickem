@@ -1,0 +1,97 @@
+{
+  "name": "Correspondent V2 - Checkpointed X Collector",
+  "nodes": [
+    {
+      "parameters": {"rule": {"interval": [{"field": "minutes", "minutesInterval": 5}]}},
+      "id": "x-schedule", "name": "Every 5 Minutes", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [-900, 0]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.PICKEM_BASE_URL + '/tasks/correspondent/targets' }}",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}]},
+        "options": {"response": {"response": {"responseFormat": "json"}}}
+      },
+      "id": "x-targets", "name": "Get Authoritative Targets", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-680, 0]
+    },
+    {
+      "parameters": {"fieldToSplitOut": "targets", "options": {}},
+      "id": "x-split-targets", "name": "One Week Per Item", "type": "n8n-nodes-base.splitOut", "typeVersion": 1, "position": [-460, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "typeValidation": "strict", "version": 2},
+          "conditions": [
+            {"leftValue": "={{ Array.isArray($json.allowed_actions) && $json.allowed_actions.includes('claim_x_page') }}", "rightValue": true, "operator": {"type": "boolean", "operation": "true", "singleValue": true}},
+            {"leftValue": "={{ Boolean($json.x_window_start && $json.x_window_end) }}", "rightValue": true, "operator": {"type": "boolean", "operation": "true", "singleValue": true}}
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "x-ready", "name": "X Page Allowed?", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [-240, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "={{ $env.PICKEM_BASE_URL + '/tasks/correspondent/x/claim' }}", "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}]},
+        "sendBody": true, "contentType": "raw", "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ season_code: $json.season_code, week_number: $json.week_number, window_start: $json.x_window_start, window_end: $json.x_window_end }) }}",
+        "options": {"response": {"response": {"responseFormat": "json"}}}
+      },
+      "id": "x-claim", "name": "Claim Exactly One Paid Page", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-20, -80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "typeValidation": "strict", "version": 2},
+          "conditions": [{"leftValue": "={{ $json.claimed === true && $json.x_request.max_results > 0 && $json.x_request.max_results <= 100 }}", "rightValue": true, "operator": {"type": "boolean", "operation": "true", "singleValue": true}}],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "x-claim-valid", "name": "Claim Granted Within Cap?", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [200, -80]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.x.com/2/users/' + encodeURIComponent($env.X_USER_ID) + '/timelines/reverse_chronological?max_results=' + $json.x_request.max_results + '&start_time=' + encodeURIComponent($json.x_request.window_start) + '&end_time=' + encodeURIComponent($json.x_request.window_end) + '&tweet.fields=id,text,author_id,created_at,conversation_id,referenced_tweets,public_metrics,entities&expansions=author_id,referenced_tweets.id,referenced_tweets.id.author_id&user.fields=id,name,username,verified' + ($json.x_request.pagination_token ? '&pagination_token=' + encodeURIComponent($json.x_request.pagination_token) : '') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "twitterOAuth2Api",
+        "options": {"response": {"response": {"responseFormat": "json"}}}
+      },
+      "id": "x-fetch", "name": "Fetch One X Page", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [420, -160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const target = $('One Week Per Item').item.json;\nconst claim = $('Claim Exactly One Paid Page').item.json.x_request;\nconst page = $json ?? {};\nconst authors = new Map((page.includes?.users ?? []).map(user => [String(user.id), user]));\nconst seen = new Set();\nconst sources = [];\nfor (const post of (page.data ?? [])) {\n  const id = String(post.id ?? '');\n  if (!id || seen.has(id)) continue;\n  seen.add(id);\n  const author = authors.get(String(post.author_id ?? '')) ?? {};\n  const refs = Array.isArray(post.referenced_tweets) ? post.referenced_tweets : [];\n  sources.push({ season_code: target.season_code, week_number: Number(target.week_number), provider: 'x', source_type: 'curated_post', external_id: id, canonical_url: author.username ? `https://x.com/${author.username}/status/${id}` : null, author_name: author.name || author.username || null, body_text: String(post.text ?? ''), published_at: post.created_at || null, metadata: { x_author_id: post.author_id || null, x_username: author.username || null, conversation_id: post.conversation_id || null, referenced_tweets: refs, public_metrics: post.public_metrics || {}, entities: post.entities || {}, bare_retweet: refs.some(r => r.type === 'retweeted') && /^RT\\s+@/i.test(post.text ?? ''), reply: refs.some(r => r.type === 'replied_to'), quote_post: refs.some(r => r.type === 'quoted') } });\n}\nif (sources.length > claim.max_results || sources.length > 100) throw new Error('X response exceeded the Python-authorized page limit');\nconst rawToken = page.meta?.next_token;\nconst nextToken = typeof rawToken === 'string' && rawToken.trim() ? rawToken.trim() : null;\nreturn [{ json: { season_code: target.season_code, week_number: target.week_number, claim_token: claim.claim_token, next_token: nextToken, sources } }];"
+      },
+      "id": "x-normalize", "name": "Normalize One Page", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [640, -160]
+    },
+    {
+      "parameters": {
+        "method": "POST", "url": "={{ $env.PICKEM_BASE_URL + '/tasks/correspondent/x/checkpoint' }}", "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}]},
+        "sendBody": true, "contentType": "raw", "rawContentType": "application/json", "body": "={{ JSON.stringify($json) }}",
+        "options": {"response": {"response": {"responseFormat": "json"}}}
+      },
+      "id": "x-checkpoint", "name": "Persist Page And Checkpoint", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [860, -160]
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {"main": [[{"node": "Get Authoritative Targets", "type": "main", "index": 0}]]},
+    "Get Authoritative Targets": {"main": [[{"node": "One Week Per Item", "type": "main", "index": 0}]]},
+    "One Week Per Item": {"main": [[{"node": "X Page Allowed?", "type": "main", "index": 0}]]},
+    "X Page Allowed?": {"main": [[{"node": "Claim Exactly One Paid Page", "type": "main", "index": 0}], []]},
+    "Claim Exactly One Paid Page": {"main": [[{"node": "Claim Granted Within Cap?", "type": "main", "index": 0}]]},
+    "Claim Granted Within Cap?": {"main": [[{"node": "Fetch One X Page", "type": "main", "index": 0}], []]},
+    "Fetch One X Page": {"main": [[{"node": "Normalize One Page", "type": "main", "index": 0}]]},
+    "Normalize One Page": {"main": [[{"node": "Persist Page And Checkpoint", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "settings": {"executionOrder": "v1", "timezone": "America/New_York"},
+  "active": false,
+  "versionId": "675f386c-f274-4fc0-9ca4-1aa9c0de0001",
+  "meta": {"credentialsConfiguredInN8n": true, "onePaidPagePerExecution": true},
+  "tags": []
+}

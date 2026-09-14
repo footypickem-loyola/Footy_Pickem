@@ -5,11 +5,13 @@ import hmac
 import json
 import os
 import random
+import re
+import secrets
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -21,6 +23,7 @@ from sqlalchemy import (
     DateTime, event, func
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, scoped_session
+from sqlalchemy.exc import IntegrityError
 from jinja2 import DictLoader
 import pandas as pd
 import bleach
@@ -28,11 +31,22 @@ import markdown
 from markupsafe import Markup
 
 from correspondent import (
+    CLASSIFIER_PROMPT_VERSION,
     DEFAULT_MODEL as DEFAULT_CORRESPONDENT_MODEL,
     PROMPT_VERSION as CORRESPONDENT_PROMPT_VERSION,
+    ClassificationBatch,
     CorrespondentError,
     GeneratedRecap,
+    SourceClassification,
+    V2_PROMPT_VERSION,
+    build_v2_context,
+    build_classification_batch_request,
+    classifier_client,
+    classifier_model,
+    classify_candidate_sources,
     generate_weekly_recap,
+    generate_weekly_recap_v2,
+    validate_classification_response,
 )
 
 FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4"
@@ -276,7 +290,7 @@ ADMIN_HTML = """
     .col { flex:1; min-width: 320px; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align:left; padding:6px 8px; border-bottom:1px solid #eee; }
-    select, input { padding:6px; border:1px solid #ccc; border-radius:6px; }
+    select, input, textarea { padding:6px; border:1px solid #ccc; border-radius:6px; font:inherit; }
     .btn { padding:8px 12px; border:1px solid #ccc; background:#f8f8f8; border-radius:8px; cursor:pointer; }
     .btn.primary { background:#0ea5e9; color:#fff; border-color:#0284c7; }
     .muted { color:#666; }
@@ -286,6 +300,10 @@ ADMIN_HTML = """
     .api-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; }
     .api-stat { background:#f8fafc; border-radius:8px; padding:10px; }
     .recap-body { white-space:pre-wrap; line-height:1.55; background:#f8fafc; border-radius:8px; padding:14px; }
+    .source-form { display:grid; gap:8px; }
+    .source-form textarea { width:min(100%,760px); min-height:110px; box-sizing:border-box; }
+    .version-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .official { color:#166534; font-weight:700; }
   </style>
 </head>
 <body>
@@ -361,48 +379,102 @@ ADMIN_HTML = """
       <div class="card">
         <h3>AI Correspondent — Week {{ week.number }}</h3>
         {% if week.status == 'finalized' %}
-          <form method="post" action="{{ url_for('admin_generate_recap') }}">
-            <input type="hidden" name="week" value="{{ week.number }}">
-            <button class="btn primary" type="submit" {% if not openai_configured %}disabled{% endif %}>
-              {{ 'Regenerate Weekly Recap' if latest_recap else 'Generate Weekly Recap' }}
-            </button>
-          </form>
+          <div class="version-actions">
+            <form method="post" action="{{ url_for('admin_generate_recap') }}">
+              <input type="hidden" name="week" value="{{ week.number }}">
+              <input type="hidden" name="version" value="v1">
+              <button class="btn {% if correspondent_default_version == 'v1' %}primary{% endif %}" type="submit" {% if not openai_configured %}disabled{% endif %}>
+                Generate V1 Recap
+              </button>
+            </form>
+            {% if correspondent_v2_enabled %}
+              <form method="post" action="{{ url_for('admin_generate_recap') }}">
+                <input type="hidden" name="week" value="{{ week.number }}">
+                <input type="hidden" name="version" value="v2">
+                <button class="btn {% if correspondent_default_version == 'v2' %}primary{% endif %}" type="submit"
+                        {% if not openai_configured or not correspondent_automation or not correspondent_automation.classification.ready %}disabled{% endif %}>
+                  Generate V2 Recap
+                </button>
+              </form>
+            {% endif %}
+          </div>
           <p class="muted">
             Model: {{ correspondent_model }}.
             {% if not openai_configured %}Add OPENAI_API_KEY to enable generation.{% endif %}
+            {% if correspondent_v2_enabled and not correspondent_sources %}Add at least one source to enable V2.{% endif %}
           </p>
         {% else %}
           <p class="muted">The recap can be generated after all ten results are final.</p>
         {% endif %}
 
-        {% if latest_recap %}
-          <div class="notice {{ 'success' if latest_recap.status == 'ready' else 'error' }}">
-            Revision {{ latest_recap.revision }} — {{ latest_recap.status|capitalize }}
+        {% if displayed_recap %}
+          <div class="notice {{ 'success' if displayed_recap.status == 'ready' else 'error' }}">
+            Revision {{ displayed_recap.revision }} —
+            {{ displayed_recap.correspondent_version|upper }} —
+            {{ displayed_recap.status|capitalize }}
+            <span class="muted">· Viewing</span>
+            {% if selected_recap and selected_recap.id == displayed_recap.id %}
+              <span class="official">· Official</span>
+            {% endif %}
           </div>
-          {% if latest_recap.status == 'ready' %}
-            <h4>{{ latest_recap.title }}</h4>
-            <div class="recap-body">{{ latest_recap.body_markdown|recap_markdown }}</div>
-          {% elif latest_recap.error_message %}
-            <div class="recap-body">{{ latest_recap.error_message }}</div>
+          {% if displayed_recap.status == 'ready' %}
+            <h4>{{ displayed_recap.title }}</h4>
+            <div class="recap-body">{{ displayed_recap.body_markdown|recap_markdown }}</div>
+          {% elif displayed_recap.error_message %}
+            <div class="recap-body">{{ displayed_recap.error_message }}</div>
           {% endif %}
           <p class="muted">
-            Prompt {{ latest_recap.prompt_version }} · {{ latest_recap.model }} ·
-            {{ latest_recap.completed_at or latest_recap.created_at }}
+            Prompt {{ displayed_recap.prompt_version }} · {{ displayed_recap.model }} ·
+            {% if displayed_recap.correspondent_version == 'v2' %}
+              {{ displayed_recap.source_count }} candidate source{{ '' if displayed_recap.source_count == 1 else 's' }} ·
+              {{ recap_used_source_counts.get(displayed_recap.id, 0) }} used ·
+            {% endif %}
+            {{ displayed_recap.completed_at or displayed_recap.created_at }}
           </p>
         {% else %}
           <p class="muted">No recap has been generated for this week.</p>
         {% endif %}
 
-        {% if recaps|length > 1 %}
-          <details>
-            <summary>Previous revisions</summary>
+        {% if recaps %}
+          <details {% if displayed_recap and latest_recap and displayed_recap.id != latest_recap.id %}open{% endif %}>
+            <summary>All recap revisions</summary>
             <table>
-              <thead><tr><th>Revision</th><th>Status</th><th>Title</th><th>Generated</th></tr></thead>
+              <thead><tr><th>Revision</th><th>Version</th><th>Status</th><th>Title</th><th>Sources</th><th>View</th><th>Official recap</th></tr></thead>
               <tbody>
-                {% for recap in recaps[1:] %}
+                {% for recap in recaps %}
                   <tr>
-                    <td>{{ recap.revision }}</td><td>{{ recap.status }}</td>
-                    <td>{{ recap.title or '—' }}</td><td>{{ recap.completed_at or recap.created_at }}</td>
+                    <td>{{ recap.revision }}</td>
+                    <td>{{ recap.correspondent_version|upper }}</td>
+                    <td>{{ recap.status }}</td>
+                    <td>{{ recap.title or '—' }}</td>
+                    <td>
+                      {% if recap.correspondent_version == 'v2' %}
+                        {{ recap.source_count }} candidate{{ '' if recap.source_count == 1 else 's' }} /
+                        {{ recap_used_source_counts.get(recap.id, 0) }} used
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if displayed_recap and displayed_recap.id == recap.id %}
+                        <span class="official">Viewing</span>
+                      {% else %}
+                        <a class="btn" href="{{ url_for('admin', week=week.number, recap_id=recap.id) }}">View recap</a>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if selected_recap and selected_recap.id == recap.id %}
+                        <span class="official">Selected</span>
+                      {% elif recap.status == 'ready' %}
+                        <form method="post" action="{{ url_for('admin_select_recap') }}">
+                          <input type="hidden" name="week" value="{{ week.number }}">
+                          <input type="hidden" name="recap_id" value="{{ recap.id }}">
+                          <button class="btn" type="submit">Use this recap</button>
+                        </form>
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
                   </tr>
                 {% endfor %}
               </tbody>
@@ -410,6 +482,166 @@ ADMIN_HTML = """
           </details>
         {% endif %}
       </div>
+
+      {% if correspondent_v2_enabled %}
+      <div class="card">
+        <h3>Correspondent V2 Sources — Week {{ week.number }}</h3>
+        <p class="muted">
+          Source text is stored as untrusted material and cannot change picks, scores,
+          standings, or payouts. Workflow: ingest sources, classify them, inspect the
+          results below, then generate the V2 recap.
+        </p>
+        {% if correspondent_automation %}
+          <div style="padding:12px; margin:12px 0; border:1px solid #cbd5e1; border-radius:8px; background:#f8fafc;">
+            <h4 style="margin-top:0;">Automation status: {{ correspondent_automation.phase }}</h4>
+            <div class="api-grid">
+              <div class="api-stat"><strong>Week finalized</strong><br>{{ correspondent_automation.finalized_at or 'Not yet' }}</div>
+              <div class="api-stat"><strong>Eligible after</strong><br>{{ correspondent_automation.eligible_at or 'Waiting for finalization' }}</div>
+              <div class="api-stat"><strong>X collection</strong><br>
+                {% if correspondent_automation.x_collection %}
+                  {{ correspondent_automation.x_collection.status }} · {{ correspondent_automation.x_collection.retrieved_count }}/{{ correspondent_automation.x_collection.cap }} posts · {{ correspondent_automation.x_collection.page_count }} pages
+                {% else %}Not started{% endif %}
+              </div>
+              <div class="api-stat"><strong>Classifications</strong><br>{{ correspondent_automation.classification.final_classifications }}/{{ correspondent_automation.classification.article_candidates }} final</div>
+              <div class="api-stat"><strong>Automated recap</strong><br>{{ correspondent_automation.recap.status if correspondent_automation.recap else 'Not generated' }}</div>
+              <div class="api-stat"><strong>Recap email</strong><br>{{ correspondent_automation.delivery.status if correspondent_automation.delivery else 'Not claimed' }}</div>
+              <div class="api-stat"><strong>X cap alert</strong><br>{{ correspondent_automation.x_cap_notification.status if correspondent_automation.x_cap_notification else 'Not needed' }}</div>
+              <div class="api-stat"><strong>Allowed actions</strong><br>{{ correspondent_automation.allowed_actions|join(', ') if correspondent_automation.allowed_actions else 'None' }}</div>
+            </div>
+            {% if correspondent_automation.x_collection and correspondent_automation.x_collection.last_error %}<div class="notice error">X collection: {{ correspondent_automation.x_collection.last_error }}</div>{% endif %}
+            {% if correspondent_automation.delivery and correspondent_automation.delivery.error %}<div class="notice error">Recap delivery: {{ correspondent_automation.delivery.error }}</div>{% endif %}
+            {% if correspondent_automation.x_cap_notification and correspondent_automation.x_cap_notification.error %}<div class="notice error">X cap alert: {{ correspondent_automation.x_cap_notification.error }}</div>{% endif %}
+          </div>
+        {% endif %}
+        <div style="padding:12px; margin:12px 0; border:1px solid #bae6fd; border-radius:8px; background:#f0f9ff;">
+          <div class="version-actions">
+            <form method="post" action="{{ url_for('admin_classify_correspondent_sources') }}">
+              <input type="hidden" name="week" value="{{ week.number }}">
+              <button class="btn primary" type="submit"
+                      {% if not openai_configured or not correspondent_sources %}disabled{% endif %}>
+                Classify Sources
+              </button>
+            </form>
+            {% if correspondent_classification_jobs %}
+              <form method="post" action="{{ url_for('admin_sync_correspondent_classification_jobs') }}">
+                <input type="hidden" name="week" value="{{ week.number }}">
+                <button class="btn" type="submit" {% if not openai_configured %}disabled{% endif %}>
+                  Check Classification Status
+                </button>
+              </form>
+            {% endif %}
+          </div>
+          <p class="muted" style="margin:8px 0 0;">
+            Classification runs asynchronously and remains separate from recap generation.
+            Refreshing this page does not hold an OpenAI request open.
+          </p>
+          {% if correspondent_classification_jobs %}
+            <table style="margin-top:10px;">
+              <thead><tr><th>Pass</th><th>Status</th><th>Progress</th><th>Prompt</th><th>Updated</th></tr></thead>
+              <tbody>
+                {% for job in correspondent_classification_jobs %}
+                  <tr>
+                    <td>{{ job.pass_number }}</td>
+                    <td>{{ job.status }}</td>
+                    <td>{{ job.completed_count }}/{{ job.total_count }} completed{% if job.failed_count %}; {{ job.failed_count }} failed{% endif %}</td>
+                    <td>{{ job.prompt_version }}</td>
+                    <td>{{ job.last_synced_at or job.submitted_at or job.created_at }}</td>
+                  </tr>
+                  {% if job.error_message %}
+                    <tr><td colspan="5" class="notice error">{{ job.error_message }}</td></tr>
+                  {% endif %}
+                  {% for item in job.items if item.status == 'failed' %}
+                    <tr>
+                      <td colspan="5" class="muted">
+                        Source #{{ item.source_id }} failed: {{ item.error_message or 'No result returned' }}
+                      </td>
+                    </tr>
+                  {% endfor %}
+                {% endfor %}
+              </tbody>
+            </table>
+          {% endif %}
+        </div>
+        <form class="source-form" method="post" action="{{ url_for('admin_add_correspondent_source') }}">
+          <input type="hidden" name="week" value="{{ week.number }}">
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <label>Type
+              <select name="source_type">
+                <option value="curated_post">Curated X post</option>
+                <option value="member_dm">Member DM submission</option>
+                <option value="match_news">Match news</option>
+                <option value="manual">Other manual context</option>
+              </select>
+            </label>
+            <label>Author <input name="author_name" maxlength="160"></label>
+            <label>Source URL <input name="canonical_url" type="url" maxlength="1000"></label>
+          </div>
+          <label>Source text<br><textarea name="body_text" maxlength="5000" required></textarea></label>
+          <label>Optional submission note<br><textarea name="submission_note" maxlength="1000" style="min-height:70px;"></textarea></label>
+          <div><button class="btn" type="submit">Add V2 Source</button></div>
+        </form>
+
+        {% if correspondent_sources %}
+          <table style="margin-top:12px;">
+            <thead><tr><th>ID</th><th>Type</th><th>Author</th><th>Source</th><th>Status</th><th>Classification</th><th>Latest V2 recap</th><th>Action</th></tr></thead>
+            <tbody>
+              {% for source in correspondent_sources %}
+                <tr>
+                  <td>#{{ source.id }}</td>
+                  <td>{{ source.source_type }}</td>
+                  <td>{{ source.author_name or '—' }}</td>
+                  <td>
+                    {% if source.canonical_url %}<a href="{{ source.canonical_url }}" target="_blank" rel="noopener noreferrer">Open</a> · {% endif %}
+                    {{ source.body_text[:220] }}{% if source.body_text|length > 220 %}…{% endif %}
+                  </td>
+                  <td>{{ source.status }}</td>
+                  <td>
+                    {% set classification = correspondent_classifications.get(source.id) %}
+                    {% if classification %}
+                      <strong>{{ classification.route }}</strong><br>
+                      <span class="muted">
+                        {{ classification.pickem_impact }} · {{ classification.article_use }} ·
+                        {{ classification.confidence }}<br>{{ classification.reason }}
+                      </span>
+                    {% elif source.id in correspondent_signal_only_source_ids %}
+                      <strong>SIGNAL_ONLY</strong><br>
+                      <span class="muted">Structural routing; not sent to the article classifier.</span>
+                    {% else %}
+                      <span class="muted">Not classified</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if latest_v2_recap %}
+                      {% if source.id in latest_v2_used_source_ids %}
+                        <span class="official">Used in revision {{ latest_v2_recap.revision }}</span>
+                      {% else %}
+                        <span class="muted">Not used in revision {{ latest_v2_recap.revision }}</span>
+                      {% endif %}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td>
+                    <form method="post" action="{{ url_for('admin_set_correspondent_source_status', source_id=source.id) }}">
+                      <input type="hidden" name="week" value="{{ week.number }}">
+                      {% if source.status == 'accepted' %}
+                        <input type="hidden" name="status" value="excluded">
+                        <button class="btn" type="submit">Exclude</button>
+                      {% else %}
+                        <input type="hidden" name="status" value="accepted">
+                        <button class="btn" type="submit">Include</button>
+                      {% endif %}
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="muted">No external sources have been added for this week.</p>
+        {% endif %}
+      </div>
+      {% endif %}
 
       <div class="card">
         <h3>Results — Week {{ week.number }} ({{ week.status }})</h3>
@@ -457,6 +689,20 @@ ADMIN_HTML = """
 """
 
 ADMIN_SESSION_KEY = "is_admin"
+
+
+def correspondent_v2_enabled() -> bool:
+    return os.environ.get("CORRESPONDENT_V2_ENABLED", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def correspondent_default_version() -> str:
+    configured = os.environ.get("CORRESPONDENT_DEFAULT_VERSION", "v1").strip().lower()
+    if configured == "v2" and correspondent_v2_enabled():
+        return "v2"
+    return "v1"
+
 
 def is_admin_session() -> bool:
     return bool(session.get(ADMIN_SESSION_KEY, False))
@@ -971,6 +1217,7 @@ class Week(Base):
     number = Column(Integer, nullable=False)
     room_code = Column(String, nullable=False)
     status = Column(String, default="drafting") # drafting | provisional | finalized
+    finalized_at = Column(DateTime)
     season = relationship("Season")
     __table_args__ = (UniqueConstraint("season_id", "number", name="uix_season_week_number"),)
 
@@ -1054,12 +1301,249 @@ class WeeklyRecap(Base):
     model = Column(String, nullable=False)
     provider_response_id = Column(String)
     error_message = Column(Text)
+    correspondent_version = Column(String, nullable=False, default="v1")
+    source_count = Column(Integer, nullable=False, default=0)
+    external_context_hash = Column(String)
+    automation_key = Column(String, unique=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     completed_at = Column(DateTime)
     week = relationship("Week")
     __table_args__ = (
         UniqueConstraint("week_id", "revision", name="uix_weekly_recap_revision"),
     )
+
+
+class CorrespondentSource(Base):
+    __tablename__ = "correspondent_sources"
+    id = Column(Integer, primary_key=True)
+    week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False)
+    fixture_id = Column(Integer, ForeignKey("fixtures.id"))
+    provider = Column(String, nullable=False)
+    source_type = Column(String, nullable=False)
+    external_id = Column(String)
+    canonical_url = Column(String)
+    author_name = Column(String)
+    body_text = Column(Text, nullable=False)
+    published_at = Column(DateTime)
+    submitted_by_player_id = Column(Integer, ForeignKey("players.id"))
+    submission_note = Column(Text)
+    metadata_json = Column(Text)
+    content_hash = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="accepted")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    week = relationship("Week")
+    fixture = relationship("Fixture")
+    submitted_by = relationship("Player")
+    __table_args__ = (
+        UniqueConstraint(
+            "week_id", "provider", "content_hash",
+            name="uix_correspondent_source_content",
+        ),
+    )
+
+
+class CorrespondentSourceClassification(Base):
+    """Versioned, auditable semantic classification for one stored source."""
+
+    __tablename__ = "correspondent_source_classifications"
+    id = Column(Integer, primary_key=True)
+    source_id = Column(
+        Integer,
+        ForeignKey("correspondent_sources.id"),
+        nullable=False,
+    )
+    prompt_version = Column(String, nullable=False)
+    pass_number = Column(Integer, nullable=False)
+    pickem_impact = Column(String, nullable=False)
+    editorial_functions_json = Column(Text, nullable=False)
+    article_use = Column(String, nullable=False)
+    confidence = Column(String, nullable=False)
+    route = Column(String, nullable=False)
+    reason_codes_json = Column(Text, nullable=False)
+    reason = Column(Text, nullable=False)
+    model = Column(String, nullable=False)
+    provider_response_id = Column(String)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    source = relationship("CorrespondentSource")
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "prompt_version",
+            "pass_number",
+            name="uix_source_classification_version_pass",
+        ),
+    )
+
+
+class CorrespondentClassificationJob(Base):
+    """Durable state for one OpenAI source-classification Batch."""
+
+    __tablename__ = "correspondent_classification_jobs"
+    id = Column(Integer, primary_key=True)
+    season_id = Column(Integer, ForeignKey("seasons.id"), nullable=False)
+    week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False)
+    prompt_version = Column(String, nullable=False)
+    pass_number = Column(Integer, nullable=False)
+    model = Column(String, nullable=False)
+    openai_batch_id = Column(String, unique=True)
+    input_file_id = Column(String)
+    output_file_id = Column(String)
+    error_file_id = Column(String)
+    status = Column(String, nullable=False, default="submitting")
+    total_count = Column(Integer, nullable=False, default=0)
+    completed_count = Column(Integer, nullable=False, default=0)
+    failed_count = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    submitted_at = Column(DateTime)
+    last_synced_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    season = relationship("Season")
+    week = relationship("Week")
+    items = relationship(
+        "CorrespondentClassificationJobItem",
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+
+
+class CorrespondentClassificationJobItem(Base):
+    """Persistent source-to-custom_id mapping for a classification Batch."""
+
+    __tablename__ = "correspondent_classification_job_items"
+    id = Column(Integer, primary_key=True)
+    job_id = Column(
+        Integer,
+        ForeignKey("correspondent_classification_jobs.id"),
+        nullable=False,
+    )
+    source_id = Column(
+        Integer,
+        ForeignKey("correspondent_sources.id"),
+        nullable=False,
+    )
+    custom_id = Column(String, nullable=False, unique=True)
+    active_reservation_key = Column(String, unique=True)
+    status = Column(String, nullable=False, default="pending")
+    provider_response_id = Column(String)
+    error_message = Column(Text)
+    imported_at = Column(DateTime)
+    job = relationship("CorrespondentClassificationJob", back_populates="items")
+    source = relationship("CorrespondentSource")
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "source_id",
+            name="uix_classification_job_source",
+        ),
+    )
+
+
+class CorrespondentXCollectionState(Base):
+    """Authoritative one-page-at-a-time X collection checkpoint for a week."""
+
+    __tablename__ = "correspondent_x_collection_states"
+    id = Column(Integer, primary_key=True)
+    week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False, unique=True)
+    status = Column(String, nullable=False, default="ready")
+    window_start = Column(DateTime, nullable=False)
+    window_end = Column(DateTime, nullable=False)
+    next_token = Column(String)
+    page_count = Column(Integer, nullable=False, default=0)
+    retrieved_count = Column(Integer, nullable=False, default=0)
+    persisted_count = Column(Integer, nullable=False, default=0)
+    lease_token = Column(String, unique=True)
+    lease_expires_at = Column(DateTime)
+    last_error = Column(Text)
+    cap_reached_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    week = relationship("Week")
+
+
+class CorrespondentXPageReceipt(Base):
+    """Idempotency receipt proving one paid X page was checkpointed."""
+
+    __tablename__ = "correspondent_x_page_receipts"
+    id = Column(Integer, primary_key=True)
+    collection_id = Column(
+        Integer,
+        ForeignKey("correspondent_x_collection_states.id"),
+        nullable=False,
+    )
+    claim_token = Column(String, nullable=False, unique=True)
+    request_token = Column(String)
+    next_token = Column(String)
+    received_count = Column(Integer, nullable=False, default=0)
+    created_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    collection = relationship("CorrespondentXCollectionState")
+
+
+class CorrespondentEmailDelivery(Base):
+    """Durable reservation and acknowledgement for one automated recap email."""
+
+    __tablename__ = "correspondent_email_deliveries"
+    id = Column(Integer, primary_key=True)
+    recap_id = Column(Integer, ForeignKey("weekly_recaps.id"), nullable=False, unique=True)
+    delivery_marker = Column(String, nullable=False, unique=True)
+    recipients_json = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="pending")
+    claim_token = Column(String, unique=True)
+    claim_expires_at = Column(DateTime)
+    gmail_message_id = Column(String)
+    error_message = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    sent_at = Column(DateTime)
+    recap = relationship("WeeklyRecap")
+
+
+class CorrespondentNotification(Base):
+    """Durable one-time administrative notification for a week/event."""
+
+    __tablename__ = "correspondent_notifications"
+    id = Column(Integer, primary_key=True)
+    week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False)
+    event_type = Column(String, nullable=False)
+    delivery_marker = Column(String, nullable=False, unique=True)
+    recipients_json = Column(Text, nullable=False)
+    payload_json = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="pending")
+    claim_token = Column(String, unique=True)
+    claim_expires_at = Column(DateTime)
+    gmail_message_id = Column(String)
+    error_message = Column(Text)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    sent_at = Column(DateTime)
+    week = relationship("Week")
+    __table_args__ = (
+        UniqueConstraint("week_id", "event_type", name="uix_week_notification_event"),
+    )
+
+
+class RecapSourceUsage(Base):
+    __tablename__ = "recap_source_usages"
+    id = Column(Integer, primary_key=True)
+    recap_id = Column(Integer, ForeignKey("weekly_recaps.id"), nullable=False)
+    source_id = Column(Integer, ForeignKey("correspondent_sources.id"), nullable=False)
+    recap = relationship("WeeklyRecap")
+    source = relationship("CorrespondentSource")
+    __table_args__ = (
+        UniqueConstraint("recap_id", "source_id", name="uix_recap_source_usage"),
+    )
+
+
+class WeeklyRecapSelection(Base):
+    __tablename__ = "weekly_recap_selections"
+    id = Column(Integer, primary_key=True)
+    week_id = Column(Integer, ForeignKey("weeks.id"), nullable=False, unique=True)
+    recap_id = Column(Integer, ForeignKey("weekly_recaps.id"), nullable=False)
+    selected_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    week = relationship("Week")
+    recap = relationship("WeeklyRecap")
 
 def _database_file_path(target_engine) -> Optional[Path]:
     """Return the SQLite database file path, excluding in-memory databases."""
@@ -1224,6 +1708,62 @@ def ensure_database_schema(target_engine=engine) -> bool:
                 "ON fixtures(external_match_id) WHERE external_match_id IS NOT NULL"
             )
             raw.commit()
+
+        # V2 is additive: preserve every V1 recap and mark legacy rows as V1.
+        recap_exists = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='weekly_recaps'"
+        ).fetchone()
+        if recap_exists:
+            existing_recap_columns = {
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(weekly_recaps)").fetchall()
+            }
+            recap_columns = {
+                "correspondent_version": "VARCHAR DEFAULT 'v1'",
+                "source_count": "INTEGER DEFAULT 0",
+                "external_context_hash": "VARCHAR",
+            }
+            missing_recap_columns = [
+                (name, definition)
+                for name, definition in recap_columns.items()
+                if name not in existing_recap_columns
+            ]
+            if missing_recap_columns:
+                _backup_database(target_engine, "pre_correspondent_v2")
+                for name, definition in missing_recap_columns:
+                    cursor.execute(
+                        f"ALTER TABLE weekly_recaps ADD COLUMN {name} {definition}"
+                    )
+                cursor.execute(
+                    "UPDATE weekly_recaps SET correspondent_version='v1' "
+                    "WHERE correspondent_version IS NULL OR correspondent_version=''"
+                )
+                cursor.execute(
+                    "UPDATE weekly_recaps SET source_count=0 WHERE source_count IS NULL"
+                )
+                raw.commit()
+            if "automation_key" not in existing_recap_columns:
+                _backup_database(target_engine, "pre_recap_automation")
+                cursor.execute(
+                    "ALTER TABLE weekly_recaps ADD COLUMN automation_key VARCHAR"
+                )
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_weekly_recaps_automation_key "
+                "ON weekly_recaps(automation_key) WHERE automation_key IS NOT NULL"
+            )
+            raw.commit()
+
+        week_exists = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='weeks'"
+        ).fetchone()
+        if week_exists:
+            existing_week_columns = {
+                row[1] for row in cursor.execute("PRAGMA table_info(weeks)").fetchall()
+            }
+            if "finalized_at" not in existing_week_columns:
+                _backup_database(target_engine, "pre_week_finalized_at")
+                cursor.execute("ALTER TABLE weeks ADD COLUMN finalized_at DATETIME")
+                raw.commit()
     except Exception:
         raw.rollback()
         raise
@@ -1439,11 +1979,14 @@ def _set_week_status_without_commit(db, week: Week) -> None:
         return
     done, total = count_results_for_week(db, week)
     if done == 0:
-        week.status = "drafting"
+        new_status = "drafting"
     elif done < total:
-        week.status = "provisional"
+        new_status = "provisional"
     else:
-        week.status = "finalized"
+        new_status = "finalized"
+    week.status = new_status
+    if new_status == "finalized" and week.finalized_at is None:
+        week.finalized_at = utcnow()
     db.add(week)
 
 
@@ -2295,6 +2838,1857 @@ def build_weekly_recap_context(db, week: Week) -> Dict[str, Any]:
     }
 
 
+CORRESPONDENT_SOURCE_TYPES = {
+    "curated_post",
+    "member_dm",
+    "match_news",
+    "manual",
+}
+AUTOMATED_CORRESPONDENT_SOURCE_TYPES = CORRESPONDENT_SOURCE_TYPES - {"manual"}
+CORRESPONDENT_INGEST_ALLOWED_FIELDS = {
+    "season_code",
+    "week_number",
+    "provider",
+    "source_type",
+    "external_id",
+    "canonical_url",
+    "author_name",
+    "body_text",
+    "published_at",
+    "submitted_by_player",
+    "submission_note",
+    "metadata",
+}
+CORRESPONDENT_INGEST_REQUIRED_FIELDS = {
+    "season_code",
+    "week_number",
+    "provider",
+    "source_type",
+    "external_id",
+    "body_text",
+}
+CORRESPONDENT_INGEST_MAX_BODY_BYTES = 25_000
+CORRESPONDENT_BATCH_MAX_BODY_BYTES = 10_000_000
+CORRESPONDENT_BATCH_MAX_SOURCES = 1_000
+CORRESPONDENT_FINALIZATION_BUFFER = timedelta(hours=1)
+CORRESPONDENT_X_WEEKLY_CAP = 1_000
+CORRESPONDENT_X_PAGE_SIZE = 100
+CORRESPONDENT_X_LEASE_DURATION = timedelta(minutes=10)
+CORRESPONDENT_EMAIL_LEASE_DURATION = timedelta(minutes=15)
+CORRESPONDENT_PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+
+class CorrespondentIngestConflict(ValueError):
+    """Raised when an idempotency key is reused for different source data."""
+
+
+class CorrespondentIngestNotFound(ValueError):
+    """Raised when the requested application-owned target does not exist."""
+
+
+def accepted_correspondent_sources(db, week: Week) -> List[CorrespondentSource]:
+    return db.query(CorrespondentSource).filter_by(
+        week_id=week.id,
+        status="accepted",
+    ).order_by(
+        CorrespondentSource.created_at.asc(),
+        CorrespondentSource.id.asc(),
+    ).all()
+
+
+def _correspondent_source_metadata(source: CorrespondentSource) -> Dict[str, Any]:
+    try:
+        metadata = json.loads(source.metadata_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def correspondent_source_is_article_candidate(source: CorrespondentSource) -> bool:
+    """Apply the approved structural routing without deleting the raw source."""
+    metadata = _correspondent_source_metadata(source)
+    approved_routing = metadata.get("approved_routing")
+    if isinstance(approved_routing, Mapping):
+        article_candidate = approved_routing.get("article_candidate")
+        if isinstance(article_candidate, bool):
+            return article_candidate
+
+    objective_audit = metadata.get("objective_audit")
+    if isinstance(objective_audit, Mapping):
+        if objective_audit.get("is_retweet") is True:
+            return False
+        reference_types = objective_audit.get("reference_types")
+        if isinstance(reference_types, list) and "retweeted" in reference_types:
+            return False
+
+    references = metadata.get("referenced_tweets")
+    if isinstance(references, list):
+        for reference in references:
+            if isinstance(reference, Mapping) and reference.get("type") == "retweeted":
+                return False
+    return True
+
+
+def classification_candidate_sources(
+    db,
+    week: Week,
+) -> Tuple[List[Dict[str, Any]], List[CorrespondentSource]]:
+    """Return model-ready candidates and signal-only sources from durable rows."""
+    candidates: List[Dict[str, Any]] = []
+    signal_only: List[CorrespondentSource] = []
+    for source in accepted_correspondent_sources(db, week):
+        if not correspondent_source_is_article_candidate(source):
+            signal_only.append(source)
+            continue
+        candidates.append({
+            "source_id": source.id,
+            "provider": source.provider,
+            "source_type": source.source_type,
+            "external_id": source.external_id,
+            "canonical_url": source.canonical_url,
+            "author": source.author_name,
+            "text": source.body_text,
+            "published_at": (
+                source.published_at.isoformat() if source.published_at else None
+            ),
+            "metadata": _correspondent_source_metadata(source),
+        })
+    return candidates, signal_only
+
+
+def _classification_as_input(classification: SourceClassification) -> Dict[str, Any]:
+    return {
+        "pickem_impact": classification.pickem_impact,
+        "editorial_functions": list(classification.editorial_functions),
+        "article_use": classification.article_use,
+        "confidence": classification.confidence,
+        "route": classification.route,
+        "reason_codes": list(classification.reason_codes),
+        "reason": classification.reason,
+    }
+
+
+def store_source_classification(
+    db,
+    classification: SourceClassification,
+    batch: ClassificationBatch,
+    *,
+    prompt_version: str = CLASSIFIER_PROMPT_VERSION,
+) -> CorrespondentSourceClassification:
+    """Idempotently store one classifier decision and its explanation."""
+    record = db.query(CorrespondentSourceClassification).filter_by(
+        source_id=classification.source_id,
+        prompt_version=prompt_version,
+        pass_number=batch.pass_number,
+    ).first()
+    if record is None:
+        record = CorrespondentSourceClassification(
+            source_id=classification.source_id,
+            prompt_version=prompt_version,
+            pass_number=batch.pass_number,
+            created_at=utcnow(),
+        )
+    record.pickem_impact = classification.pickem_impact
+    record.editorial_functions_json = json.dumps(
+        list(classification.editorial_functions),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    record.article_use = classification.article_use
+    record.confidence = classification.confidence
+    record.route = classification.route
+    record.reason_codes_json = json.dumps(
+        list(classification.reason_codes),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    record.reason = classification.reason
+    record.model = batch.model
+    record.provider_response_id = batch.provider_response_id
+    db.add(record)
+    return record
+
+
+def _classification_batches(
+    candidates: List[Dict[str, Any]],
+    batch_size: int,
+) -> Iterable[List[Dict[str, Any]]]:
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+        raise ValueError("batch_size must be a positive integer")
+    for start in range(0, len(candidates), batch_size):
+        yield candidates[start:start + batch_size]
+
+
+def classify_and_store_week_sources(
+    db,
+    week: Week,
+    *,
+    client: Any = None,
+    model: Optional[str] = None,
+    batch_size: int = 20,
+) -> Dict[str, Any]:
+    """Run the approved two-pass classifier and persist every decision."""
+    league_context = build_weekly_recap_context(db, week)
+    candidates, signal_only = classification_candidate_sources(db, week)
+    if not candidates:
+        raise ValueError("No article-candidate sources are available for classification")
+
+    first_pass: Dict[int, SourceClassification] = {}
+    for candidate_batch in _classification_batches(candidates, batch_size):
+        result = classify_candidate_sources(
+            candidate_batch,
+            league_context,
+            pass_number=1,
+            client=client,
+            model=model,
+        )
+        for classification in result.classifications:
+            first_pass[classification.source_id] = classification
+            store_source_classification(db, classification, result)
+        db.commit()
+
+    candidates_by_id = {candidate["source_id"]: candidate for candidate in candidates}
+    review_candidates: List[Dict[str, Any]] = []
+    for source_id, classification in first_pass.items():
+        if classification.route != "AUTOMATED_REVIEW":
+            continue
+        enriched = dict(candidates_by_id[source_id])
+        enriched["initial_classification"] = _classification_as_input(classification)
+        review_candidates.append(enriched)
+
+    second_pass: Dict[int, SourceClassification] = {}
+    for candidate_batch in _classification_batches(review_candidates, batch_size):
+        result = classify_candidate_sources(
+            candidate_batch,
+            league_context,
+            pass_number=2,
+            client=client,
+            model=model,
+        )
+        for classification in result.classifications:
+            second_pass[classification.source_id] = classification
+            store_source_classification(db, classification, result)
+        db.commit()
+
+    effective = dict(first_pass)
+    effective.update(second_pass)
+    route_counts: Dict[str, int] = {}
+    for classification in effective.values():
+        route_counts[classification.route] = route_counts.get(classification.route, 0) + 1
+
+    return {
+        "stored_sources": len(candidates) + len(signal_only),
+        "article_candidates": len(candidates),
+        "signal_only_sources": len(signal_only),
+        "first_pass_classifications": len(first_pass),
+        "automated_reviews": len(review_candidates),
+        "second_pass_classifications": len(second_pass),
+        "effective_route_counts": route_counts,
+        "prompt_version": CLASSIFIER_PROMPT_VERSION,
+    }
+
+
+ACTIVE_CLASSIFICATION_JOB_STATUSES = frozenset({
+    "submitting",
+    "submission_unknown",
+    "validating",
+    "in_progress",
+    "finalizing",
+    "cancelling",
+})
+TERMINAL_CLASSIFICATION_JOB_STATUSES = frozenset({
+    "completed",
+    "failed",
+    "expired",
+    "cancelled",
+})
+CLASSIFICATION_IMPORT_CHUNK_SIZE = 50
+
+
+def _openai_value(value: Any, name: str, default: Any = None) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _classification_record_as_input(
+    record: CorrespondentSourceClassification,
+) -> Dict[str, Any]:
+    return {
+        "pickem_impact": record.pickem_impact,
+        "editorial_functions": json.loads(record.editorial_functions_json),
+        "article_use": record.article_use,
+        "confidence": record.confidence,
+        "route": record.route,
+        "reason_codes": json.loads(record.reason_codes_json),
+        "reason": record.reason,
+    }
+
+
+def _active_classification_source_ids(
+    db,
+    week: Week,
+    pass_number: int,
+) -> set[int]:
+    rows = db.query(CorrespondentClassificationJobItem.source_id).join(
+        CorrespondentClassificationJob
+    ).filter(
+        CorrespondentClassificationJob.week_id == week.id,
+        CorrespondentClassificationJob.prompt_version == CLASSIFIER_PROMPT_VERSION,
+        CorrespondentClassificationJob.pass_number == pass_number,
+        CorrespondentClassificationJob.status.in_(ACTIVE_CLASSIFICATION_JOB_STATUSES),
+    ).all()
+    return {row[0] for row in rows}
+
+
+def classification_batch_candidates(
+    db,
+    week: Week,
+    pass_number: int,
+) -> Tuple[List[Dict[str, Any]], List[CorrespondentSource]]:
+    """Select unclassified article candidates not reserved by an active Batch."""
+    if pass_number not in {1, 2}:
+        raise ValueError("pass_number must be 1 or 2")
+    candidates, signal_only = classification_candidate_sources(db, week)
+    active_source_ids = _active_classification_source_ids(db, week, pass_number)
+    completed = {
+        record.source_id: record
+        for record in db.query(CorrespondentSourceClassification).filter(
+            CorrespondentSourceClassification.source_id.in_(
+                [candidate["source_id"] for candidate in candidates]
+            ),
+            CorrespondentSourceClassification.prompt_version
+            == CLASSIFIER_PROMPT_VERSION,
+            CorrespondentSourceClassification.pass_number == pass_number,
+        )
+    } if candidates else {}
+
+    selected: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        source_id = candidate["source_id"]
+        if source_id in completed or source_id in active_source_ids:
+            continue
+        if pass_number == 1:
+            selected.append(candidate)
+            continue
+        first_pass = db.query(CorrespondentSourceClassification).filter_by(
+            source_id=source_id,
+            prompt_version=CLASSIFIER_PROMPT_VERSION,
+            pass_number=1,
+        ).first()
+        if first_pass is None or first_pass.route != "AUTOMATED_REVIEW":
+            continue
+        enriched = dict(candidate)
+        enriched["initial_classification"] = _classification_record_as_input(first_pass)
+        selected.append(enriched)
+    return selected, signal_only
+
+
+def _classification_custom_id(job_id: int, source_id: int, pass_number: int) -> str:
+    return (
+        f"source_{source_id}__{CLASSIFIER_PROMPT_VERSION}__"
+        f"pass_{pass_number}__job_{job_id}"
+    )
+
+
+def _classification_reservation_key(source_id: int, pass_number: int) -> str:
+    return f"{source_id}:{CLASSIFIER_PROMPT_VERSION}:{pass_number}"
+
+
+def _update_classification_job_from_batch(
+    job: CorrespondentClassificationJob,
+    remote_batch: Any,
+) -> None:
+    job.openai_batch_id = _openai_value(remote_batch, "id", job.openai_batch_id)
+    job.output_file_id = _openai_value(
+        remote_batch,
+        "output_file_id",
+        job.output_file_id,
+    )
+    job.error_file_id = _openai_value(
+        remote_batch,
+        "error_file_id",
+        job.error_file_id,
+    )
+    job.status = _openai_value(remote_batch, "status", job.status)
+    counts = _openai_value(remote_batch, "request_counts")
+    if counts is not None:
+        job.total_count = int(_openai_value(counts, "total", job.total_count) or 0)
+        job.completed_count = int(
+            _openai_value(counts, "completed", job.completed_count) or 0
+        )
+        job.failed_count = int(_openai_value(counts, "failed", job.failed_count) or 0)
+    job.last_synced_at = utcnow()
+    if job.status in TERMINAL_CLASSIFICATION_JOB_STATUSES and job.completed_at is None:
+        job.completed_at = utcnow()
+
+
+def submit_week_classification_batch(
+    db,
+    week: Week,
+    *,
+    pass_number: int = 1,
+    client: Any = None,
+    model: Optional[str] = None,
+) -> CorrespondentClassificationJob:
+    """Reserve eligible sources and submit one asynchronous OpenAI Batch."""
+    candidates, _signal_only = classification_batch_candidates(db, week, pass_number)
+    if not candidates:
+        raise ValueError(
+            f"No pass-{pass_number} sources are eligible for classification; "
+            "they are already completed or assigned to an active batch"
+        )
+    selected_model = classifier_model(model)
+    league_context = build_weekly_recap_context(db, week)
+    job = CorrespondentClassificationJob(
+        season_id=week.season_id,
+        week_id=week.id,
+        prompt_version=CLASSIFIER_PROMPT_VERSION,
+        pass_number=pass_number,
+        model=selected_model,
+        status="submitting",
+        total_count=len(candidates),
+        created_at=utcnow(),
+    )
+    db.add(job)
+    db.flush()
+
+    request_lines: List[str] = []
+    for candidate in candidates:
+        custom_id = _classification_custom_id(
+            job.id,
+            candidate["source_id"],
+            pass_number,
+        )
+        db.add(CorrespondentClassificationJobItem(
+            job_id=job.id,
+            source_id=candidate["source_id"],
+            custom_id=custom_id,
+            active_reservation_key=_classification_reservation_key(
+                candidate["source_id"],
+                pass_number,
+            ),
+            status="pending",
+        ))
+        request_lines.append(json.dumps(
+            build_classification_batch_request(
+                custom_id,
+                [candidate],
+                league_context,
+                pass_number=pass_number,
+                model=selected_model,
+            ),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ))
+    # Commit the reservation before network I/O so a duplicate click cannot submit
+    # the same source while the OpenAI upload is in progress.
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ValueError(
+            "One or more sources were assigned to another active classification batch"
+        ) from exc
+
+    openai_client = classifier_client(client)
+    input_bytes = ("\n".join(request_lines) + "\n").encode("utf-8")
+    try:
+        uploaded = openai_client.files.create(
+            file=(f"correspondent-classification-job-{job.id}.jsonl", input_bytes),
+            purpose="batch",
+        )
+        job.input_file_id = _openai_value(uploaded, "id")
+        db.commit()
+    except Exception as exc:
+        job.status = "failed"
+        job.error_message = f"OpenAI Batch input upload failed: {exc}"
+        job.completed_at = utcnow()
+        for item in job.items:
+            item.status = "failed"
+            item.error_message = job.error_message
+            item.active_reservation_key = None
+        db.commit()
+        raise CorrespondentError(job.error_message) from exc
+
+    try:
+        remote_batch = openai_client.batches.create(
+            input_file_id=job.input_file_id,
+            endpoint="/v1/responses",
+            completion_window="24h",
+            metadata={
+                "season_id": str(week.season_id),
+                "week_id": str(week.id),
+                "prompt_version": CLASSIFIER_PROMPT_VERSION,
+                "pass_number": str(pass_number),
+            },
+        )
+        _update_classification_job_from_batch(job, remote_batch)
+        if job.status in TERMINAL_CLASSIFICATION_JOB_STATUSES:
+            for item in job.items:
+                item.active_reservation_key = None
+        job.submitted_at = utcnow()
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        job = db.get(CorrespondentClassificationJob, job.id)
+        job.status = "submission_unknown"
+        job.error_message = (
+            "OpenAI Batch submission outcome is unknown; the source reservation "
+            f"was retained to prevent a duplicate Batch: {exc}"
+        )
+        job.last_synced_at = utcnow()
+        db.commit()
+        raise CorrespondentError(job.error_message) from exc
+    return job
+
+
+def ensure_week_classification_batch(
+    db,
+    week: Week,
+    *,
+    pass_number: int,
+    client: Any = None,
+    model: Optional[str] = None,
+) -> Tuple[Optional[CorrespondentClassificationJob], bool]:
+    """Idempotently return or create the Batch needed for one classifier pass."""
+    if pass_number not in {1, 2}:
+        raise ValueError("pass_number must be 1 or 2")
+    candidates, _ = classification_batch_candidates(db, week, pass_number)
+    if candidates:
+        return submit_week_classification_batch(
+            db,
+            week,
+            pass_number=pass_number,
+            client=client,
+            model=model,
+        ), True
+    latest = db.query(CorrespondentClassificationJob).filter_by(
+        week_id=week.id,
+        prompt_version=CLASSIFIER_PROMPT_VERSION,
+        pass_number=pass_number,
+    ).order_by(CorrespondentClassificationJob.id.desc()).first()
+    return latest, False
+
+
+def _download_openai_file_text(openai_client: Any, file_id: str) -> str:
+    content = openai_client.files.content(file_id)
+    text_value = getattr(content, "text", None)
+    if isinstance(text_value, str):
+        return text_value
+    byte_value = getattr(content, "content", None)
+    if isinstance(byte_value, bytes):
+        return byte_value.decode("utf-8")
+    read = getattr(content, "read", None)
+    if callable(read):
+        value = read()
+        return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+    if isinstance(content, bytes):
+        return content.decode("utf-8")
+    if isinstance(content, str):
+        return content
+    raise CorrespondentError(f"Unable to read OpenAI Batch file {file_id}")
+
+
+def _batch_error_message(line: Mapping[str, Any]) -> str:
+    error = line.get("error")
+    if isinstance(error, Mapping):
+        return str(error.get("message") or error.get("code") or "Batch request failed")
+    response = line.get("response")
+    if isinstance(response, Mapping):
+        body = response.get("body")
+        if isinstance(body, Mapping):
+            nested_error = body.get("error")
+            if isinstance(nested_error, Mapping):
+                return str(
+                    nested_error.get("message")
+                    or nested_error.get("code")
+                    or "Batch request failed"
+                )
+        status_code = response.get("status_code")
+        if status_code:
+            return f"Batch request returned HTTP {status_code}"
+    return "Batch request failed"
+
+
+def _import_classification_file(
+    db,
+    job: CorrespondentClassificationJob,
+    openai_client: Any,
+    file_id: str,
+    *,
+    error_file: bool = False,
+) -> int:
+    items_by_custom_id = {item.custom_id: item for item in job.items}
+    imported = 0
+    pending_changes = 0
+
+    def record_change() -> None:
+        nonlocal pending_changes
+        pending_changes += 1
+        if pending_changes >= CLASSIFICATION_IMPORT_CHUNK_SIZE:
+            db.commit()
+            pending_changes = 0
+
+    for raw_line in _download_openai_file_text(openai_client, file_id).splitlines():
+        if not raw_line.strip():
+            continue
+        try:
+            line = json.loads(raw_line)
+        except json.JSONDecodeError as exc:
+            job.error_message = f"OpenAI Batch file contains invalid JSONL: {exc}"
+            record_change()
+            continue
+        custom_id = line.get("custom_id") if isinstance(line, Mapping) else None
+        item = items_by_custom_id.get(custom_id)
+        if item is None:
+            job.error_message = f"OpenAI Batch returned unknown custom_id: {custom_id}"
+            record_change()
+            continue
+        if item.status == "completed" and item.imported_at is not None:
+            continue
+        response = line.get("response") if isinstance(line, Mapping) else None
+        status_code = (
+            response.get("status_code") if isinstance(response, Mapping) else None
+        )
+        if error_file or line.get("error") is not None or status_code != 200:
+            item.status = "failed"
+            item.error_message = _batch_error_message(line)
+            record_change()
+            continue
+        response_body = response.get("body")
+        try:
+            result = validate_classification_response(
+                response_body,
+                [item.source_id],
+                pass_number=job.pass_number,
+                model=job.model,
+            )
+            store_source_classification(
+                db,
+                result.classifications[0],
+                result,
+                prompt_version=job.prompt_version,
+            )
+        except (CorrespondentError, TypeError, ValueError) as exc:
+            item.status = "failed"
+            item.error_message = f"Classification import failed: {exc}"
+            record_change()
+            continue
+        item.status = "completed"
+        item.provider_response_id = result.provider_response_id
+        item.error_message = None
+        item.imported_at = utcnow()
+        imported += 1
+        record_change()
+    db.commit()
+    return imported
+
+
+def sync_week_classification_jobs(
+    db,
+    week: Week,
+    *,
+    client: Any = None,
+    create_second_pass: bool = True,
+) -> Dict[str, Any]:
+    """Refresh Batch state, idempotently import results, and start pass 2."""
+    jobs = db.query(CorrespondentClassificationJob).filter_by(
+        week_id=week.id,
+    ).order_by(CorrespondentClassificationJob.id.asc()).all()
+    if not jobs:
+        raise ValueError("No classification batches exist for this week")
+    openai_client = classifier_client(client)
+    imported = 0
+    for job in jobs:
+        if not job.openai_batch_id:
+            continue
+        try:
+            remote_batch = openai_client.batches.retrieve(job.openai_batch_id)
+            _update_classification_job_from_batch(job, remote_batch)
+            if job.output_file_id:
+                imported += _import_classification_file(
+                    db,
+                    job,
+                    openai_client,
+                    job.output_file_id,
+                )
+            if job.error_file_id:
+                _import_classification_file(
+                    db,
+                    job,
+                    openai_client,
+                    job.error_file_id,
+                    error_file=True,
+                )
+            if job.status in TERMINAL_CLASSIFICATION_JOB_STATUSES:
+                for item in job.items:
+                    if item.status == "pending":
+                        item.status = "failed"
+                        item.error_message = (
+                            f"Batch ended with status {job.status} without a result"
+                        )
+                    item.active_reservation_key = None
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            persisted_job = db.get(CorrespondentClassificationJob, job.id)
+            persisted_job.last_synced_at = utcnow()
+            persisted_job.error_message = f"Batch status sync failed: {exc}"
+            db.commit()
+
+    second_pass_job = None
+    completed_pass_one_jobs = [
+        job for job in jobs
+        if job.prompt_version == CLASSIFIER_PROMPT_VERSION
+        and job.pass_number == 1
+        and job.status == "completed"
+    ]
+    if create_second_pass and completed_pass_one_jobs:
+        pass_two_candidates, _ = classification_batch_candidates(db, week, 2)
+        if pass_two_candidates:
+            second_pass_job, _created = ensure_week_classification_batch(
+                db,
+                week,
+                pass_number=2,
+                client=openai_client,
+                model=completed_pass_one_jobs[-1].model,
+            )
+    return {
+        "jobs_checked": len(jobs),
+        "classifications_imported": imported,
+        "second_pass_job_id": None if second_pass_job is None else second_pass_job.id,
+        "prompt_version": CLASSIFIER_PROMPT_VERSION,
+    }
+
+
+def create_manual_correspondent_source(
+    db,
+    week: Week,
+    *,
+    source_type: str,
+    canonical_url: str,
+    author_name: str,
+    body_text: str,
+    submission_note: str = "",
+) -> CorrespondentSource:
+    """Validate and store one source without allowing it to touch game state."""
+    source_type = source_type.strip().lower()
+    canonical_url = canonical_url.strip()
+    author_name = author_name.strip()
+    body_text = body_text.strip()
+    submission_note = submission_note.strip()
+    if source_type not in CORRESPONDENT_SOURCE_TYPES:
+        raise ValueError("Unknown Correspondent source type")
+    if not body_text:
+        raise ValueError("Source text is required")
+    if len(body_text) > 5000:
+        raise ValueError("Source text must be 5,000 characters or fewer")
+    if len(author_name) > 160:
+        raise ValueError("Source author must be 160 characters or fewer")
+    if len(canonical_url) > 1000:
+        raise ValueError("Source URL must be 1,000 characters or fewer")
+    if canonical_url and not canonical_url.lower().startswith(("https://", "http://")):
+        raise ValueError("Source URL must begin with http:// or https://")
+    if len(submission_note) > 1000:
+        raise ValueError("Submission note must be 1,000 characters or fewer")
+
+    normalized = json.dumps(
+        {
+            "url": canonical_url,
+            "author": author_name,
+            "text": body_text,
+            "note": submission_note,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    content_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    existing = db.query(CorrespondentSource).filter_by(
+        week_id=week.id,
+        provider="manual",
+        content_hash=content_hash,
+    ).first()
+    if existing:
+        raise ValueError("That source has already been added")
+
+    source = CorrespondentSource(
+        week_id=week.id,
+        provider="manual",
+        source_type=source_type,
+        external_id=content_hash,
+        canonical_url=canonical_url or None,
+        author_name=author_name or None,
+        body_text=body_text,
+        submission_note=submission_note or None,
+        metadata_json="{}",
+        content_hash=content_hash,
+        status="accepted",
+        created_at=utcnow(),
+    )
+    db.add(source)
+    db.commit()
+    return source
+
+
+def _required_ingest_text(payload: Mapping[str, Any], name: str, max_length: int) -> str:
+    value = payload.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
+    value = value.strip()
+    if len(value) > max_length:
+        raise ValueError(f"{name} must be {max_length:,} characters or fewer")
+    return value
+
+
+def _optional_ingest_text(payload: Mapping[str, Any], name: str, max_length: int) -> str:
+    value = payload.get(name)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string or null")
+    value = value.strip()
+    if len(value) > max_length:
+        raise ValueError(f"{name} must be {max_length:,} characters or fewer")
+    return value
+
+
+def _parse_correspondent_published_at(value: Any) -> Optional[datetime]:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError("published_at must be an ISO-8601 string or null")
+    normalized = value.strip()
+    if normalized.endswith(("Z", "z")):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        published_at = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError("published_at must be a valid ISO-8601 timestamp") from exc
+    if published_at.tzinfo is None:
+        raise ValueError("published_at must include a timezone")
+    return published_at.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def ingest_correspondent_source(
+    db,
+    payload: Mapping[str, Any],
+    *,
+    commit: bool = True,
+) -> Tuple[CorrespondentSource, bool]:
+    """Validate and idempotently store one normalized external source."""
+    if not isinstance(payload, Mapping):
+        raise ValueError("Request JSON must be an object")
+
+    unknown_fields = set(payload) - CORRESPONDENT_INGEST_ALLOWED_FIELDS
+    if unknown_fields:
+        raise ValueError(
+            "Unknown field(s): " + ", ".join(sorted(str(field) for field in unknown_fields))
+        )
+    missing_fields = CORRESPONDENT_INGEST_REQUIRED_FIELDS - set(payload)
+    if missing_fields:
+        raise ValueError(
+            "Missing required field(s): " + ", ".join(sorted(missing_fields))
+        )
+
+    season_code = _required_ingest_text(payload, "season_code", 80)
+    provider = _required_ingest_text(payload, "provider", 80).lower()
+    source_type = _required_ingest_text(payload, "source_type", 40).lower()
+    external_id = _required_ingest_text(payload, "external_id", 255)
+    body_text = _required_ingest_text(payload, "body_text", 5000)
+    canonical_url = _optional_ingest_text(payload, "canonical_url", 1000)
+    author_name = _optional_ingest_text(payload, "author_name", 160)
+    submitted_by_name = _optional_ingest_text(
+        payload, "submitted_by_player", 160
+    )
+    submission_note = _optional_ingest_text(payload, "submission_note", 1000)
+
+    week_number = payload.get("week_number")
+    if isinstance(week_number, bool) or not isinstance(week_number, int):
+        raise ValueError("week_number must be an integer")
+    if not 1 <= week_number <= 38:
+        raise ValueError("week_number must be between 1 and 38")
+    if provider == "manual" or not CORRESPONDENT_PROVIDER_PATTERN.fullmatch(provider):
+        raise ValueError(
+            "provider must use lowercase letters, numbers, dots, underscores, or hyphens"
+        )
+    if source_type not in AUTOMATED_CORRESPONDENT_SOURCE_TYPES:
+        raise ValueError("Unknown automated Correspondent source type")
+    if canonical_url and not canonical_url.lower().startswith(("https://", "http://")):
+        raise ValueError("canonical_url must begin with http:// or https://")
+
+    published_at = _parse_correspondent_published_at(payload.get("published_at"))
+    metadata = payload.get("metadata", {})
+    if not isinstance(metadata, dict):
+        raise ValueError("metadata must be a JSON object")
+    if any(not isinstance(key, str) for key in metadata):
+        raise ValueError("metadata keys must be strings")
+    try:
+        metadata_json = json.dumps(
+            metadata,
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("metadata must contain valid JSON values") from exc
+    if len(metadata_json.encode("utf-8")) > 10_000:
+        raise ValueError("metadata must be 10,000 bytes or fewer")
+
+    season = active_season(db)
+    if season is None or season.is_archived or season.code != season_code:
+        raise CorrespondentIngestConflict(
+            "Sources may only be added to the writable active season"
+        )
+    week = season_week(db, season, week_number)
+    if week is None:
+        raise CorrespondentIngestNotFound("Week not found")
+
+    submitted_by = None
+    if submitted_by_name:
+        submitted_by = next(
+            (
+                player
+                for player in season_players(db, season)
+                if player.name.casefold() == submitted_by_name.casefold()
+            ),
+            None,
+        )
+        if submitted_by is None:
+            raise ValueError("submitted_by_player is not a player in the active season")
+
+    normalized = json.dumps(
+        {
+            "external_id": external_id,
+            "source_type": source_type,
+            "url": canonical_url,
+            "author": author_name,
+            "text": body_text,
+            "published_at": None if published_at is None else published_at.isoformat(),
+            "submitted_by_player": None if submitted_by is None else submitted_by.name,
+            "note": submission_note,
+            "metadata": metadata,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    content_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    existing = db.query(CorrespondentSource).filter_by(
+        week_id=week.id,
+        provider=provider,
+        external_id=external_id,
+    ).first()
+    if existing:
+        if existing.content_hash == content_hash:
+            return existing, False
+        raise CorrespondentIngestConflict(
+            "provider and external_id already identify different source data"
+        )
+
+    source = CorrespondentSource(
+        week_id=week.id,
+        provider=provider,
+        source_type=source_type,
+        external_id=external_id,
+        canonical_url=canonical_url or None,
+        author_name=author_name or None,
+        body_text=body_text,
+        published_at=published_at,
+        submitted_by_player_id=None if submitted_by is None else submitted_by.id,
+        submission_note=submission_note or None,
+        metadata_json=metadata_json,
+        content_hash=content_hash,
+        status="accepted",
+        created_at=utcnow(),
+    )
+    db.add(source)
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return source, True
+
+
+def effective_source_classifications(
+    db,
+    week: Week,
+) -> Dict[int, CorrespondentSourceClassification]:
+    """Return the latest completed classifier pass for each source in a week."""
+    records = db.query(CorrespondentSourceClassification).join(
+        CorrespondentSource,
+        CorrespondentSource.id == CorrespondentSourceClassification.source_id,
+    ).filter(
+        CorrespondentSource.week_id == week.id,
+        CorrespondentSourceClassification.prompt_version
+        == CLASSIFIER_PROMPT_VERSION,
+    ).order_by(
+        CorrespondentSourceClassification.source_id.asc(),
+        CorrespondentSourceClassification.pass_number.asc(),
+    ).all()
+    effective: Dict[int, CorrespondentSourceClassification] = {}
+    for record in records:
+        effective[record.source_id] = record
+    return effective
+
+
+def correspondent_classification_readiness(
+    db,
+    week: Week,
+) -> Dict[str, Any]:
+    """Derive whether every accepted article candidate has its final V2 pass."""
+    candidates, signal_only = classification_candidate_sources(db, week)
+    candidate_ids = [candidate["source_id"] for candidate in candidates]
+    records = (
+        db.query(CorrespondentSourceClassification).filter(
+            CorrespondentSourceClassification.source_id.in_(candidate_ids),
+            CorrespondentSourceClassification.prompt_version
+            == CLASSIFIER_PROMPT_VERSION,
+        ).all()
+        if candidate_ids
+        else []
+    )
+    by_source_and_pass = {
+        (record.source_id, record.pass_number): record for record in records
+    }
+    missing_pass_one: List[int] = []
+    awaiting_pass_two: List[int] = []
+    final_source_ids: List[int] = []
+    for source_id in candidate_ids:
+        first_pass = by_source_and_pass.get((source_id, 1))
+        if first_pass is None:
+            missing_pass_one.append(source_id)
+            continue
+        if first_pass.route == "AUTOMATED_REVIEW":
+            if by_source_and_pass.get((source_id, 2)) is None:
+                awaiting_pass_two.append(source_id)
+                continue
+        final_source_ids.append(source_id)
+    return {
+        "ready": bool(candidate_ids)
+        and not missing_pass_one
+        and not awaiting_pass_two,
+        "article_candidates": len(candidate_ids),
+        "signal_only_sources": len(signal_only),
+        "final_classifications": len(final_source_ids),
+        "missing_pass_one_source_ids": missing_pass_one,
+        "awaiting_pass_two_source_ids": awaiting_pass_two,
+        "prompt_version": CLASSIFIER_PROMPT_VERSION,
+    }
+
+
+def _utc_iso(value: Optional[datetime]) -> Optional[str]:
+    return None if value is None else f"{value.isoformat(timespec='seconds')}Z"
+
+
+def correspondent_recap_automation_key(week: Week) -> str:
+    return (
+        f"week:{week.id}:classifier:{CLASSIFIER_PROMPT_VERSION}:"
+        f"recap:{V2_PROMPT_VERSION}"
+    )
+
+
+def _normalized_x_next_token(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("next_token must be a string or null")
+    value = value.strip()
+    return value or None
+
+
+def _x_collection_json(
+    state: Optional[CorrespondentXCollectionState],
+) -> Optional[Dict[str, Any]]:
+    if state is None:
+        return None
+    return {
+        "id": state.id,
+        "status": state.status,
+        "window_start": _utc_iso(state.window_start),
+        "window_end": _utc_iso(state.window_end),
+        "has_next_token": bool(state.next_token),
+        "page_count": state.page_count,
+        "retrieved_count": state.retrieved_count,
+        "persisted_count": state.persisted_count,
+        "cap": CORRESPONDENT_X_WEEKLY_CAP,
+        "cap_reached": state.status == "capped",
+        "cap_reached_at": _utc_iso(state.cap_reached_at),
+        "completed_at": _utc_iso(state.completed_at),
+        "last_error": state.last_error,
+    }
+
+
+def _week_x_source_count(db, week: Week) -> int:
+    return db.query(func.count(CorrespondentSource.id)).filter_by(
+        week_id=week.id,
+        provider="x",
+        status="accepted",
+    ).scalar() or 0
+
+
+def _configured_email_recipients(
+    environment_name: str,
+    *,
+    required: bool = True,
+) -> List[str]:
+    raw = os.environ.get(environment_name, "")
+    recipients = [value.strip() for value in raw.split(",") if value.strip()]
+    if required and not recipients:
+        raise ValueError(f"{environment_name} is not configured")
+    return recipients
+
+
+def _delivery_marker(kind: str, durable_key: str) -> str:
+    digest = hashlib.sha256(durable_key.encode("utf-8")).hexdigest()[:24]
+    return f"FootyPickem-{kind}-{digest}"
+
+
+def _ensure_x_cap_notification(
+    db,
+    week: Week,
+    state: CorrespondentXCollectionState,
+    *,
+    now: datetime,
+) -> CorrespondentNotification:
+    notification = db.query(CorrespondentNotification).filter_by(
+        week_id=week.id,
+        event_type="x_weekly_cap_reached",
+    ).one_or_none()
+    if notification is not None:
+        return notification
+    recipients = _configured_email_recipients(
+        "CORRESPONDENT_ADMIN_ALERT_RECIPIENTS",
+        required=False,
+    )
+    notification = CorrespondentNotification(
+        week_id=week.id,
+        event_type="x_weekly_cap_reached",
+        delivery_marker=_delivery_marker("XCap", f"week:{week.id}"),
+        recipients_json=json.dumps(recipients),
+        payload_json=json.dumps({
+            "subject": f"Pick 'Em Week {week.number}: X collection cap reached",
+            "body": (
+                f"The 1,000-post X collection cap was reached for {week.season.name} "
+                f"Week {week.number}. Collection stopped and the source window may "
+                "have been truncated. Classification and recap processing may continue "
+                "with the posts already collected."
+            ),
+            "retrieved_count": state.retrieved_count,
+        }, sort_keys=True),
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(notification)
+    return notification
+
+
+def claim_x_collection_page(
+    db,
+    week: Week,
+    *,
+    window_start: datetime,
+    window_end: datetime,
+    now: Optional[datetime] = None,
+) -> Tuple[CorrespondentXCollectionState, Optional[Dict[str, Any]]]:
+    """Reserve exactly one paid X page request for a bounded lease."""
+    now = now or utcnow()
+    if window_end <= window_start:
+        raise ValueError("X collection window_end must be after window_start")
+    state = db.query(CorrespondentXCollectionState).filter_by(
+        week_id=week.id,
+    ).one_or_none()
+    if state is None:
+        existing_count = _week_x_source_count(db, week)
+        status = "capped" if existing_count >= CORRESPONDENT_X_WEEKLY_CAP else "ready"
+        state = CorrespondentXCollectionState(
+            week_id=week.id,
+            status=status,
+            window_start=window_start,
+            window_end=window_end,
+            retrieved_count=min(existing_count, CORRESPONDENT_X_WEEKLY_CAP),
+            persisted_count=min(existing_count, CORRESPONDENT_X_WEEKLY_CAP),
+            cap_reached_at=now if status == "capped" else None,
+            completed_at=now if status == "capped" else None,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(state)
+        if status == "capped":
+            db.flush()
+            _ensure_x_cap_notification(db, week, state, now=now)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            state = db.query(CorrespondentXCollectionState).filter_by(
+                week_id=week.id,
+            ).one()
+    if state.window_start != window_start or state.window_end != window_end:
+        raise ValueError("X collection window cannot change after collection starts")
+
+    if state.status in {"completed", "capped"}:
+        return state, None
+    if state.status == "claimed" and state.lease_token:
+        if state.lease_expires_at is not None and state.lease_expires_at <= now:
+            state.status = "error"
+            state.last_error = (
+                "X page claim expired without a checkpoint; automatic re-fetch is "
+                "blocked to avoid a duplicate paid request"
+            )
+            state.updated_at = now
+            db.commit()
+        return state, None
+    if state.status == "error":
+        return state, None
+
+    remaining = CORRESPONDENT_X_WEEKLY_CAP - state.retrieved_count
+    if remaining <= 0:
+        state.status = "capped"
+        state.cap_reached_at = state.cap_reached_at or now
+        state.completed_at = state.completed_at or now
+        state.lease_token = None
+        state.lease_expires_at = None
+        state.last_error = None
+        state.updated_at = now
+        _ensure_x_cap_notification(db, week, state, now=now)
+        db.commit()
+        return state, None
+
+    claim_token = secrets.token_urlsafe(24)
+    claimed = db.query(CorrespondentXCollectionState).filter_by(
+        id=state.id,
+        status="ready",
+        lease_token=None,
+    ).update({
+        CorrespondentXCollectionState.status: "claimed",
+        CorrespondentXCollectionState.lease_token: claim_token,
+        CorrespondentXCollectionState.lease_expires_at: (
+            now + CORRESPONDENT_X_LEASE_DURATION
+        ),
+        CorrespondentXCollectionState.last_error: None,
+        CorrespondentXCollectionState.updated_at: now,
+    }, synchronize_session=False)
+    db.commit()
+    state = db.get(CorrespondentXCollectionState, state.id)
+    if not claimed:
+        return state, None
+    return state, {
+        "claim_token": state.lease_token,
+        "pagination_token": state.next_token,
+        "max_results": min(CORRESPONDENT_X_PAGE_SIZE, remaining),
+        "window_start": _utc_iso(state.window_start),
+        "window_end": _utc_iso(state.window_end),
+    }
+
+
+def checkpoint_x_collection_page(
+    db,
+    week: Week,
+    *,
+    claim_token: str,
+    next_token: Any,
+    sources: List[Mapping[str, Any]],
+    now: Optional[datetime] = None,
+) -> Tuple[CorrespondentXCollectionState, CorrespondentXPageReceipt, bool]:
+    """Atomically persist one X page and its continuation checkpoint."""
+    now = now or utcnow()
+    claim_token = str(claim_token or "").strip()
+    if not claim_token:
+        raise ValueError("claim_token is required")
+    existing_receipt = db.query(CorrespondentXPageReceipt).filter_by(
+        claim_token=claim_token,
+    ).one_or_none()
+    if existing_receipt is not None:
+        state = db.get(CorrespondentXCollectionState, existing_receipt.collection_id)
+        if state is None or state.week_id != week.id:
+            raise ValueError("claim_token belongs to a different week")
+        return state, existing_receipt, False
+
+    state = db.query(CorrespondentXCollectionState).filter_by(
+        week_id=week.id,
+    ).one_or_none()
+    if (
+        state is None
+        or state.status not in {"claimed", "error"}
+        or state.lease_token != claim_token
+    ):
+        raise ValueError("X page claim is missing, expired, or already superseded")
+    if not isinstance(sources, list):
+        raise ValueError("sources must be an array")
+    if len(sources) > CORRESPONDENT_X_PAGE_SIZE:
+        raise ValueError(
+            f"sources must contain no more than {CORRESPONDENT_X_PAGE_SIZE} items"
+        )
+    normalized_next_token = _normalized_x_next_token(next_token)
+    request_token = state.next_token
+    season_code = week.season.code
+    external_ids = set()
+    for source in sources:
+        if not isinstance(source, Mapping):
+            raise ValueError("Every source must be a JSON object")
+        if str(source.get("provider") or "").strip().lower() != "x":
+            raise ValueError("X collection checkpoints may contain only provider=x")
+        if source.get("season_code") != season_code or source.get("week_number") != week.number:
+            raise ValueError("X source target does not match the claimed season/week")
+        external_id = str(source.get("external_id") or "").strip()
+        if not external_id:
+            raise ValueError("Every X source must have an external_id")
+        external_ids.add(external_id)
+    remaining = CORRESPONDENT_X_WEEKLY_CAP - state.retrieved_count
+    if len(external_ids) > remaining:
+        raise ValueError("X page would exceed the 1,000-post weekly ceiling")
+
+    created_count = 0
+    try:
+        for source in sources:
+            _, created = ingest_correspondent_source(db, source, commit=False)
+            created_count += int(created)
+        state.page_count += 1
+        state.retrieved_count += created_count
+        state.persisted_count += created_count
+        state.next_token = normalized_next_token
+        state.lease_token = None
+        state.lease_expires_at = None
+        state.last_error = None
+        state.updated_at = now
+        if state.retrieved_count >= CORRESPONDENT_X_WEEKLY_CAP:
+            state.status = "capped"
+            state.cap_reached_at = state.cap_reached_at or now
+            state.completed_at = state.completed_at or now
+            _ensure_x_cap_notification(db, week, state, now=now)
+        elif normalized_next_token is None:
+            state.status = "completed"
+            state.completed_at = state.completed_at or now
+        else:
+            state.status = "ready"
+        receipt = CorrespondentXPageReceipt(
+            collection_id=state.id,
+            claim_token=claim_token,
+            request_token=request_token,
+            next_token=normalized_next_token,
+            received_count=len(sources),
+            created_count=created_count,
+            created_at=now,
+        )
+        db.add(receipt)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return state, receipt, True
+
+
+def _email_delivery_json(
+    delivery: Optional[CorrespondentEmailDelivery],
+) -> Optional[Dict[str, Any]]:
+    if delivery is None:
+        return None
+    return {
+        "id": delivery.id,
+        "status": delivery.status,
+        "delivery_marker": delivery.delivery_marker,
+        "gmail_message_id": delivery.gmail_message_id,
+        "error": delivery.error_message,
+        "sent_at": _utc_iso(delivery.sent_at),
+    }
+
+
+def _notification_json(
+    notification: Optional[CorrespondentNotification],
+) -> Optional[Dict[str, Any]]:
+    if notification is None:
+        return None
+    return {
+        "id": notification.id,
+        "event_type": notification.event_type,
+        "status": notification.status,
+        "delivery_marker": notification.delivery_marker,
+        "gmail_message_id": notification.gmail_message_id,
+        "error": notification.error_message,
+        "sent_at": _utc_iso(notification.sent_at),
+    }
+
+
+def claim_recap_email_delivery(
+    db,
+    week: Week,
+    *,
+    now: Optional[datetime] = None,
+) -> Tuple[CorrespondentEmailDelivery, Optional[Dict[str, Any]]]:
+    """Reserve one Gmail delivery; retries use the stable marker for Sent lookup."""
+    now = now or utcnow()
+    recap = db.query(WeeklyRecap).filter_by(
+        week_id=week.id,
+        automation_key=correspondent_recap_automation_key(week),
+        status="ready",
+    ).one_or_none()
+    if recap is None:
+        raise ValueError("Automated recap is not ready for delivery")
+    delivery = db.query(CorrespondentEmailDelivery).filter_by(
+        recap_id=recap.id,
+    ).one_or_none()
+    if delivery is None:
+        recipients = _configured_email_recipients("CORRESPONDENT_RECAP_RECIPIENTS")
+        delivery = CorrespondentEmailDelivery(
+            recap_id=recap.id,
+            delivery_marker=_delivery_marker("Recap", recap.automation_key),
+            recipients_json=json.dumps(recipients),
+            status="pending",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(delivery)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            delivery = db.query(CorrespondentEmailDelivery).filter_by(
+                recap_id=recap.id,
+            ).one()
+    if delivery.status == "sent":
+        return delivery, None
+    if (
+        delivery.status == "claimed"
+        and delivery.claim_token
+        and delivery.claim_expires_at
+        and delivery.claim_expires_at > now
+    ):
+        return delivery, None
+    prior_status = delivery.status
+    prior_claim_token = delivery.claim_token
+    claim_token = secrets.token_urlsafe(24)
+    claimed = db.query(CorrespondentEmailDelivery).filter_by(
+        id=delivery.id,
+        status=prior_status,
+        claim_token=prior_claim_token,
+    ).update({
+        CorrespondentEmailDelivery.status: "claimed",
+        CorrespondentEmailDelivery.claim_token: claim_token,
+        CorrespondentEmailDelivery.claim_expires_at: (
+            now + CORRESPONDENT_EMAIL_LEASE_DURATION
+        ),
+        CorrespondentEmailDelivery.error_message: None,
+        CorrespondentEmailDelivery.updated_at: now,
+    }, synchronize_session=False)
+    db.commit()
+    delivery = db.get(CorrespondentEmailDelivery, delivery.id)
+    if not claimed:
+        return delivery, None
+    marker = delivery.delivery_marker
+    return delivery, {
+        "kind": "recap",
+        "claim_token": delivery.claim_token,
+        "delivery_marker": marker,
+        "gmail_sent_query": f'in:sent "{marker}"',
+        "recipients": json.loads(delivery.recipients_json),
+        "subject": f"{recap.title} [{marker}]",
+        "body_markdown": recap.body_markdown,
+    }
+
+
+def acknowledge_recap_email_delivery(
+    db,
+    week: Week,
+    *,
+    claim_token: str,
+    outcome: str,
+    gmail_message_id: Optional[str] = None,
+    error: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> CorrespondentEmailDelivery:
+    now = now or utcnow()
+    delivery = db.query(CorrespondentEmailDelivery).join(WeeklyRecap).filter(
+        WeeklyRecap.week_id == week.id,
+        WeeklyRecap.automation_key == correspondent_recap_automation_key(week),
+    ).one_or_none()
+    if delivery is None:
+        raise ValueError("Recap email delivery has not been claimed")
+    if delivery.status == "sent":
+        return delivery
+    if delivery.claim_token != str(claim_token or "").strip():
+        raise ValueError("Recap email claim_token is invalid")
+    if outcome == "sent":
+        gmail_message_id = str(gmail_message_id or "").strip()
+        if not gmail_message_id:
+            raise ValueError("gmail_message_id is required for a sent acknowledgement")
+        delivery.status = "sent"
+        delivery.gmail_message_id = gmail_message_id
+        delivery.sent_at = now
+        delivery.error_message = None
+    elif outcome == "failed":
+        delivery.status = "error"
+        delivery.error_message = str(error or "Gmail delivery failed")[:2000]
+    else:
+        raise ValueError("outcome must be sent or failed")
+    delivery.claim_token = None
+    delivery.claim_expires_at = None
+    delivery.updated_at = now
+    db.commit()
+    return delivery
+
+
+def claim_x_cap_notification(
+    db,
+    week: Week,
+    *,
+    now: Optional[datetime] = None,
+) -> Tuple[CorrespondentNotification, Optional[Dict[str, Any]]]:
+    now = now or utcnow()
+    notification = db.query(CorrespondentNotification).filter_by(
+        week_id=week.id,
+        event_type="x_weekly_cap_reached",
+    ).one_or_none()
+    if notification is None:
+        raise ValueError("No X collection cap notification is pending")
+    if notification.status == "sent":
+        return notification, None
+    if (
+        notification.status == "claimed"
+        and notification.claim_token
+        and notification.claim_expires_at
+        and notification.claim_expires_at > now
+    ):
+        return notification, None
+    recipients = json.loads(notification.recipients_json)
+    if not recipients:
+        recipients = _configured_email_recipients(
+            "CORRESPONDENT_ADMIN_ALERT_RECIPIENTS"
+        )
+        notification.recipients_json = json.dumps(recipients)
+    prior_status = notification.status
+    prior_claim_token = notification.claim_token
+    claim_token = secrets.token_urlsafe(24)
+    claimed = db.query(CorrespondentNotification).filter_by(
+        id=notification.id,
+        status=prior_status,
+        claim_token=prior_claim_token,
+    ).update({
+        CorrespondentNotification.status: "claimed",
+        CorrespondentNotification.claim_token: claim_token,
+        CorrespondentNotification.claim_expires_at: (
+            now + CORRESPONDENT_EMAIL_LEASE_DURATION
+        ),
+        CorrespondentNotification.error_message: None,
+        CorrespondentNotification.updated_at: now,
+    }, synchronize_session=False)
+    db.commit()
+    notification = db.get(CorrespondentNotification, notification.id)
+    if not claimed:
+        return notification, None
+    payload = json.loads(notification.payload_json)
+    marker = notification.delivery_marker
+    return notification, {
+        "kind": "x_cap_alert",
+        "claim_token": notification.claim_token,
+        "delivery_marker": marker,
+        "gmail_sent_query": f'in:sent "{marker}"',
+        "recipients": recipients,
+        "subject": f"{payload['subject']} [{marker}]",
+        "body": payload["body"],
+    }
+
+
+def acknowledge_x_cap_notification(
+    db,
+    week: Week,
+    *,
+    claim_token: str,
+    outcome: str,
+    gmail_message_id: Optional[str] = None,
+    error: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> CorrespondentNotification:
+    now = now or utcnow()
+    notification = db.query(CorrespondentNotification).filter_by(
+        week_id=week.id,
+        event_type="x_weekly_cap_reached",
+    ).one_or_none()
+    if notification is None:
+        raise ValueError("X collection cap notification has not been claimed")
+    if notification.status == "sent":
+        return notification
+    if notification.claim_token != str(claim_token or "").strip():
+        raise ValueError("Notification claim_token is invalid")
+    if outcome == "sent":
+        gmail_message_id = str(gmail_message_id or "").strip()
+        if not gmail_message_id:
+            raise ValueError("gmail_message_id is required for a sent acknowledgement")
+        notification.status = "sent"
+        notification.gmail_message_id = gmail_message_id
+        notification.sent_at = now
+        notification.error_message = None
+    elif outcome == "failed":
+        notification.status = "error"
+        notification.error_message = str(error or "Gmail notification failed")[:2000]
+    else:
+        raise ValueError("outcome must be sent or failed")
+    notification.claim_token = None
+    notification.claim_expires_at = None
+    notification.updated_at = now
+    db.commit()
+    return notification
+
+
+def correspondent_automation_status(
+    db,
+    week: Week,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Derive the current automation phase from authoritative persisted facts."""
+    now = now or utcnow()
+    completed_results, fixture_count = count_results_for_week(db, week)
+    eligible_at = (
+        None
+        if week.finalized_at is None
+        else week.finalized_at + CORRESPONDENT_FINALIZATION_BUFFER
+    )
+    readiness = correspondent_classification_readiness(db, week)
+    jobs = db.query(CorrespondentClassificationJob).filter_by(
+        week_id=week.id,
+        prompt_version=CLASSIFIER_PROMPT_VERSION,
+    ).order_by(CorrespondentClassificationJob.id.asc()).all()
+    active_jobs = [job for job in jobs if job.status in ACTIVE_CLASSIFICATION_JOB_STATUSES]
+    active_passes = {job.pass_number for job in active_jobs}
+    unknown_submission = next(
+        (job for job in reversed(jobs) if job.status == "submission_unknown"),
+        None,
+    )
+    recap = db.query(WeeklyRecap).filter_by(
+        week_id=week.id,
+        correspondent_version="v2",
+        prompt_version=V2_PROMPT_VERSION,
+        automation_key=correspondent_recap_automation_key(week),
+    ).order_by(WeeklyRecap.id.desc()).first()
+    x_collection = db.query(CorrespondentXCollectionState).filter_by(
+        week_id=week.id,
+    ).one_or_none()
+    delivery = (
+        None
+        if recap is None
+        else db.query(CorrespondentEmailDelivery).filter_by(recap_id=recap.id).one_or_none()
+    )
+    cap_notification = db.query(CorrespondentNotification).filter_by(
+        week_id=week.id,
+        event_type="x_weekly_cap_reached",
+    ).one_or_none()
+
+    if week.status != "finalized" or fixture_count != 10 or completed_results != 10:
+        phase = "WAITING_FOR_FINALIZATION"
+        allowed_actions: List[str] = []
+    elif eligible_at is None:
+        phase = "WAITING_FOR_FINALIZATION_TIMESTAMP"
+        allowed_actions = []
+    elif now < eligible_at:
+        phase = "WAITING_FOR_BUFFER"
+        allowed_actions = []
+    elif x_collection is None:
+        phase = "READY_FOR_X_COLLECTION"
+        allowed_actions = ["claim_x_page"]
+    elif x_collection.status == "error":
+        phase = "ERROR_RETRY"
+        allowed_actions = []
+    elif x_collection.status in {"ready", "claimed"}:
+        phase = "COLLECTING_X"
+        allowed_actions = ["claim_x_page"] if x_collection.status != "claimed" else []
+    elif recap is not None and recap.status == "generating":
+        phase = "GENERATING_RECAP"
+        allowed_actions = []
+    elif recap is not None and recap.status == "failed":
+        phase = "ERROR_RETRY"
+        allowed_actions = []
+    elif recap is not None and recap.status == "ready":
+        if delivery is not None and delivery.status == "sent":
+            phase = "EMAIL_SENT"
+            allowed_actions = []
+        else:
+            phase = "WAITING_FOR_EMAIL"
+            allowed_actions = []
+            if (
+                delivery is None
+                or delivery.status in {"pending", "error"}
+                or (
+                    delivery.status == "claimed"
+                    and delivery.claim_expires_at is not None
+                    and delivery.claim_expires_at <= now
+                )
+            ):
+                allowed_actions.append("claim_recap_email")
+    elif unknown_submission is not None:
+        phase = "ERROR_RETRY"
+        allowed_actions = []
+    elif 1 in active_passes:
+        phase = "CLASSIFYING_PASS_1"
+        allowed_actions = ["reconcile_classification"]
+    elif readiness["missing_pass_one_source_ids"]:
+        phase = "READY_FOR_PASS_1"
+        allowed_actions = ["submit_pass_1"]
+    elif 2 in active_passes:
+        phase = "CLASSIFYING_PASS_2"
+        allowed_actions = ["reconcile_classification"]
+    elif readiness["awaiting_pass_two_source_ids"]:
+        phase = "PASS_1_COMPLETE_PASS_2_REQUIRED"
+        allowed_actions = ["reconcile_classification"]
+    elif readiness["ready"]:
+        phase = "READY_TO_GENERATE"
+        allowed_actions = ["generate_recap"]
+    else:
+        phase = "WAITING_FOR_SOURCES"
+        allowed_actions = []
+
+    if cap_notification is not None and cap_notification.status != "sent":
+        if (
+            cap_notification.status in {"pending", "error"}
+            or (
+                cap_notification.status == "claimed"
+                and cap_notification.claim_expires_at is not None
+                and cap_notification.claim_expires_at <= now
+            )
+        ):
+            allowed_actions.append("claim_x_cap_alert")
+
+    return {
+        "phase": phase,
+        "allowed_actions": allowed_actions,
+        "season_code": week.season.code,
+        "week_number": week.number,
+        "week_status": week.status,
+        "fixture_count": fixture_count,
+        "completed_results": completed_results,
+        "finalized_at": _utc_iso(week.finalized_at),
+        "eligible_at": _utc_iso(eligible_at),
+        "x_collection": _x_collection_json(x_collection),
+        "delivery": _email_delivery_json(delivery),
+        "x_cap_notification": _notification_json(cap_notification),
+        "classification": readiness,
+        "jobs": [
+            {
+                "id": job.id,
+                "pass_number": job.pass_number,
+                "status": job.status,
+                "total": job.total_count,
+                "completed": job.completed_count,
+                "failed": job.failed_count,
+            }
+            for job in jobs
+        ],
+        "recap": None if recap is None else {
+            "id": recap.id,
+            "status": recap.status,
+            "revision": recap.revision,
+        },
+    }
+
+
+def _classification_for_writer(
+    record: CorrespondentSourceClassification,
+) -> Dict[str, Any]:
+    try:
+        editorial_functions = json.loads(record.editorial_functions_json)
+    except (TypeError, json.JSONDecodeError):
+        editorial_functions = []
+    try:
+        reason_codes = json.loads(record.reason_codes_json)
+    except (TypeError, json.JSONDecodeError):
+        reason_codes = []
+    return {
+        "prompt_version": record.prompt_version,
+        "pass_number": record.pass_number,
+        "pickem_impact": record.pickem_impact,
+        "editorial_functions": editorial_functions,
+        "article_use": record.article_use,
+        "confidence": record.confidence,
+        "route": record.route,
+        "reason_codes": reason_codes,
+        "reason": record.reason,
+    }
+
+
+def writer_candidate_sources(
+    db,
+    week: Week,
+) -> Tuple[List[CorrespondentSource], Dict[int, Dict[str, Any]]]:
+    """Select only approved, classified sources for the V2 writer."""
+    structural_candidates = [
+        source
+        for source in accepted_correspondent_sources(db, week)
+        if correspondent_source_is_article_candidate(source)
+    ]
+    if not structural_candidates:
+        raise ValueError("Correspondent V2 requires at least one accepted source")
+
+    readiness = correspondent_classification_readiness(db, week)
+    if not readiness["ready"]:
+        if readiness["missing_pass_one_source_ids"]:
+            raise ValueError(
+                "Every eligible Correspondent V2 source must be classified; "
+                "Pass 1 is required"
+            )
+        raise ValueError(
+            "Correspondent V2 classification is incomplete; Pass 2 is required "
+            "for every AUTOMATED_REVIEW source"
+        )
+
+    effective = effective_source_classifications(db, week)
+
+    selected: List[CorrespondentSource] = []
+    classification_context: Dict[int, Dict[str, Any]] = {}
+    for source in structural_candidates:
+        record = effective[source.id]
+        if record.route not in {"ADVANCE", "ADVANCE_LOW_CONFIDENCE"}:
+            continue
+        if record.article_use == "NO_USE":
+            continue
+        selected.append(source)
+        classification_context[source.id] = _classification_for_writer(record)
+    if not selected:
+        raise ValueError("No classified Correspondent sources advanced to the V2 writer")
+    return selected, classification_context
+
+
+def build_weekly_recap_context_v2(db, week: Week) -> Dict[str, Any]:
+    """Add approved external candidates around the unchanged V1 fact packet."""
+    league_context = build_weekly_recap_context(db, week)
+    sources, classifications = writer_candidate_sources(db, week)
+    return build_v2_context(
+        league_context,
+        sources,
+        classifications=classifications,
+    )
+
+
+def selected_weekly_recap(db, week: Week) -> Optional[WeeklyRecap]:
+    selection = db.query(WeeklyRecapSelection).filter_by(week_id=week.id).first()
+    return None if selection is None else db.get(WeeklyRecap, selection.recap_id)
+
+
+def _select_recap_if_none(db, week: Week, recap: WeeklyRecap) -> None:
+    if db.query(WeeklyRecapSelection).filter_by(week_id=week.id).first() is None:
+        db.add(WeeklyRecapSelection(
+            week_id=week.id,
+            recap_id=recap.id,
+            selected_at=utcnow(),
+        ))
+
+
+def select_weekly_recap(db, week: Week, recap: WeeklyRecap) -> WeeklyRecapSelection:
+    if recap.week_id != week.id:
+        raise ValueError("The recap does not belong to that week")
+    if recap.status != "ready":
+        raise ValueError("Only a completed recap can be selected")
+    selection = db.query(WeeklyRecapSelection).filter_by(week_id=week.id).first()
+    if selection is None:
+        selection = WeeklyRecapSelection(week_id=week.id)
+    selection.recap_id = recap.id
+    selection.selected_at = utcnow()
+    db.add(selection)
+    db.commit()
+    return selection
+
+
 def generate_and_store_weekly_recap(db, week: Week) -> WeeklyRecap:
     """Persist the fact snapshot, call the writer, and retain success or failure."""
     context = build_weekly_recap_context(db, week)
@@ -2312,6 +4706,8 @@ def generate_and_store_weekly_recap(db, week: Week) -> WeeklyRecap:
         context_hash=context_hash,
         prompt_version=CORRESPONDENT_PROMPT_VERSION,
         model=model,
+        correspondent_version="v1",
+        source_count=0,
         created_at=utcnow(),
     )
     db.add(recap)
@@ -2325,6 +4721,105 @@ def generate_and_store_weekly_recap(db, week: Week) -> WeeklyRecap:
         recap.model = generated.model
         recap.provider_response_id = generated.provider_response_id
         recap.completed_at = utcnow()
+        db.flush()
+        _select_recap_if_none(db, week, recap)
+    except CorrespondentError as exc:
+        recap.status = "failed"
+        recap.error_message = str(exc)[:1000]
+        recap.completed_at = utcnow()
+    db.add(recap)
+    db.commit()
+    return recap
+
+
+def generate_and_store_weekly_recap_v2(
+    db,
+    week: Week,
+    *,
+    automation_key: Optional[str] = None,
+) -> WeeklyRecap:
+    """Generate V2 beside V1; a V2 attempt never replaces the selected recap."""
+    if not correspondent_v2_enabled():
+        raise ValueError("Correspondent V2 is not enabled")
+    recap = None
+    if automation_key:
+        existing = db.query(WeeklyRecap).filter_by(
+            automation_key=automation_key,
+        ).first()
+        if existing is not None:
+            if existing.status != "failed":
+                return existing
+            reserved = db.query(WeeklyRecap).filter_by(
+                id=existing.id,
+                status="failed",
+            ).update({
+                WeeklyRecap.status: "generating",
+                WeeklyRecap.error_message: None,
+                WeeklyRecap.completed_at: None,
+            }, synchronize_session=False)
+            db.commit()
+            if not reserved:
+                return db.query(WeeklyRecap).filter_by(
+                    automation_key=automation_key,
+                ).one()
+            recap = db.get(WeeklyRecap, existing.id)
+    context = build_weekly_recap_context_v2(db, week)
+    context_json = json.dumps(context, ensure_ascii=False, sort_keys=True)
+    context_hash = hashlib.sha256(context_json.encode("utf-8")).hexdigest()
+    external_json = json.dumps(
+        context["external_context"], ensure_ascii=False, sort_keys=True
+    )
+    external_context_hash = hashlib.sha256(external_json.encode("utf-8")).hexdigest()
+    latest_revision = db.query(func.max(WeeklyRecap.revision)).filter_by(
+        week_id=week.id
+    ).scalar() or 0
+    model = (os.environ.get("OPENAI_MODEL") or DEFAULT_CORRESPONDENT_MODEL).strip()
+    if recap is None:
+        recap = WeeklyRecap(
+            week_id=week.id,
+            revision=latest_revision + 1,
+            status="generating",
+            context_json=context_json,
+            context_hash=context_hash,
+            prompt_version=V2_PROMPT_VERSION,
+            model=model,
+            correspondent_version="v2",
+            source_count=context["external_context"]["candidate_source_count"],
+            external_context_hash=external_context_hash,
+            automation_key=automation_key,
+            created_at=utcnow(),
+        )
+        db.add(recap)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            if not automation_key:
+                raise
+            return db.query(WeeklyRecap).filter_by(
+                automation_key=automation_key,
+            ).one()
+    else:
+        recap.context_json = context_json
+        recap.context_hash = context_hash
+        recap.prompt_version = V2_PROMPT_VERSION
+        recap.model = model
+        recap.source_count = context["external_context"]["candidate_source_count"]
+        recap.external_context_hash = external_context_hash
+        db.add(recap)
+        db.commit()
+
+    try:
+        generated = generate_weekly_recap_v2(context, model=model)
+        recap.status = "ready"
+        recap.title = generated.title
+        recap.body_markdown = generated.body_markdown
+        recap.model = generated.model
+        recap.provider_response_id = generated.provider_response_id
+        recap.completed_at = utcnow()
+        for source_id in generated.used_source_ids:
+            db.add(RecapSourceUsage(recap_id=recap.id, source_id=source_id))
+        _select_recap_if_none(db, week, recap)
     except CorrespondentError as exc:
         recap.status = "failed"
         recap.error_message = str(exc)[:1000]
@@ -2339,16 +4834,8 @@ def count_results_for_week(db, wk: Week) -> Tuple[int,int]:
     return done, total
 
 def update_week_status(db, wk: Week) -> None:
-    if wk.season and wk.season.is_archived:
-        return
-    done, total = count_results_for_week(db, wk)
-    if done == 0:
-        wk.status = "drafting"
-    elif done < total:
-        wk.status = "provisional"
-    else:
-        wk.status = "finalized"
-    db.add(wk); db.commit()
+    _set_week_status_without_commit(db, wk)
+    db.commit()
 
 def current_drafting_week(db, season: Season) -> Optional[Week]:
     base = db.query(Week).filter_by(season_id=season.id)
@@ -2411,6 +4898,17 @@ def admin():
     fixtures = []
     res_map = {}
     recaps = []
+    correspondent_sources = []
+    correspondent_classifications = {}
+    correspondent_classification_jobs = []
+    correspondent_signal_only_source_ids = set()
+    selected_recap = None
+    latest_recap = None
+    displayed_recap = None
+    latest_v2_recap = None
+    recap_used_source_counts = {}
+    latest_v2_used_source_ids = set()
+    correspondent_automation = None
     if weeks:
         sel = request.args.get("week", type=int)
         wk = season_week(db, season, sel) if sel else current_drafting_week(db, season)
@@ -2425,6 +4923,62 @@ def admin():
         recaps = db.query(WeeklyRecap).filter_by(week_id=wk.id).order_by(
             WeeklyRecap.revision.desc()
         ).all()
+        latest_recap = recaps[0] if recaps else None
+        requested_recap_id = request.args.get("recap_id", type=int)
+        if request.args.get("recap_id") is not None and requested_recap_id is None:
+            abort(404, "Recap not found")
+        if requested_recap_id is None:
+            displayed_recap = latest_recap
+        else:
+            displayed_recap = next(
+                (recap for recap in recaps if recap.id == requested_recap_id),
+                None,
+            )
+            if displayed_recap is None:
+                abort(404, "Recap not found")
+        latest_v2_recap = next(
+            (
+                recap for recap in recaps
+                if recap.correspondent_version == "v2" and recap.status == "ready"
+            ),
+            None,
+        )
+        recap_ids = [recap.id for recap in recaps]
+        recap_used_source_ids = {recap_id: set() for recap_id in recap_ids}
+        if recap_ids:
+            for usage in db.query(RecapSourceUsage).filter(
+                RecapSourceUsage.recap_id.in_(recap_ids)
+            ):
+                recap_used_source_ids[usage.recap_id].add(usage.source_id)
+        recap_used_source_counts = {
+            recap_id: len(source_ids)
+            for recap_id, source_ids in recap_used_source_ids.items()
+        }
+        if latest_v2_recap is not None:
+            latest_v2_used_source_ids = recap_used_source_ids[latest_v2_recap.id]
+        correspondent_sources = db.query(CorrespondentSource).filter_by(
+            week_id=wk.id
+        ).order_by(
+            CorrespondentSource.created_at.desc(),
+            CorrespondentSource.id.desc(),
+        ).all()
+        correspondent_classifications = effective_source_classifications(db, wk)
+        correspondent_classification_jobs = db.query(
+            CorrespondentClassificationJob
+        ).filter_by(
+            week_id=wk.id,
+        ).order_by(
+            CorrespondentClassificationJob.id.desc()
+        ).all()
+        correspondent_signal_only_source_ids = {
+            source.id
+            for source in correspondent_sources
+            if source.status == "accepted"
+            and not correspondent_source_is_article_candidate(source)
+        }
+        selected_recap = selected_weekly_recap(db, wk)
+        if correspondent_v2_enabled():
+            correspondent_automation = correspondent_automation_status(db, wk)
 
     year_two = db.query(Season).filter_by(code="year-2").first()
     can_import_api = year_two is None or db.query(Week).filter_by(
@@ -2454,7 +5008,19 @@ def admin():
             os.environ.get("OPENAI_MODEL") or DEFAULT_CORRESPONDENT_MODEL
         ).strip(),
         recaps=recaps,
-        latest_recap=recaps[0] if recaps else None,
+        latest_recap=latest_recap,
+        displayed_recap=displayed_recap,
+        selected_recap=selected_recap,
+        latest_v2_recap=latest_v2_recap,
+        recap_used_source_counts=recap_used_source_counts,
+        latest_v2_used_source_ids=latest_v2_used_source_ids,
+        correspondent_sources=correspondent_sources,
+        correspondent_classifications=correspondent_classifications,
+        correspondent_classification_jobs=correspondent_classification_jobs,
+        correspondent_signal_only_source_ids=correspondent_signal_only_source_ids,
+        correspondent_automation=correspondent_automation,
+        correspondent_v2_enabled=correspondent_v2_enabled(),
+        correspondent_default_version=correspondent_default_version(),
         can_import_api=can_import_api,
         default_players=",".join(player.name for player in defaults_from),
         default_room_code=wk.room_code if wk is not None else "",
@@ -2528,17 +5094,161 @@ def admin_generate_recap():
     week = None if week_number is None else season_week(db, season, week_number)
     if week is None:
         abort(404, "Week not found")
+    version = request.form.get(
+        "version", correspondent_default_version()
+    ).strip().lower()
     try:
-        recap = generate_and_store_weekly_recap(db, week)
+        if version == "v1":
+            recap = generate_and_store_weekly_recap(db, week)
+        elif version == "v2":
+            recap = generate_and_store_weekly_recap_v2(db, week)
+        else:
+            raise ValueError("Unknown Correspondent version")
         if recap.status == "ready":
             flash(
-                f"Week {week.number} recap revision {recap.revision} generated.",
+                f"Week {week.number} {version.upper()} recap revision "
+                f"{recap.revision} generated.",
                 "success",
             )
         else:
             flash(recap.error_message or "Recap generation failed", "error")
     except ValueError as exc:
         flash(str(exc), "error")
+    return redirect(url_for("admin", week=week.number))
+
+
+@app.post("/admin/classify-correspondent-sources")
+def admin_classify_correspondent_sources():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    if not correspondent_v2_enabled():
+        abort(404, "Correspondent V2 is not enabled")
+    db = SessionLocal()
+    season = active_season(db)
+    if season is None:
+        abort(404, "No active season")
+    week_number = request.form.get("week", type=int)
+    week = None if week_number is None else season_week(db, season, week_number)
+    if week is None:
+        abort(404, "Week not found")
+    try:
+        job = submit_week_classification_batch(db, week, pass_number=1)
+        flash(
+            f"Week {week.number} classification Batch submitted: "
+            f"pass={job.pass_number}; requests={job.total_count}; "
+            f"status={job.status}; prompt_version={job.prompt_version}.",
+            "success",
+        )
+    except (ValueError, CorrespondentError) as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("admin", week=week.number))
+
+
+@app.post("/admin/sync-correspondent-classification-jobs")
+def admin_sync_correspondent_classification_jobs():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    if not correspondent_v2_enabled():
+        abort(404, "Correspondent V2 is not enabled")
+    db = SessionLocal()
+    season = active_season(db)
+    if season is None:
+        abort(404, "No active season")
+    week_number = request.form.get("week", type=int)
+    week = None if week_number is None else season_week(db, season, week_number)
+    if week is None:
+        abort(404, "Week not found")
+    try:
+        summary = sync_week_classification_jobs(db, week)
+        second_pass = summary.get("second_pass_job_id")
+        flash(
+            f"Week {week.number} classification status checked: "
+            f"jobs={summary['jobs_checked']}; "
+            f"classifications_imported={summary['classifications_imported']}; "
+            f"pass_2_submitted={'yes' if second_pass is not None else 'no'}; "
+            f"prompt_version={summary['prompt_version']}.",
+            "success",
+        )
+    except (ValueError, CorrespondentError) as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("admin", week=week.number))
+
+
+@app.post("/admin/correspondent-sources")
+def admin_add_correspondent_source():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    if not correspondent_v2_enabled():
+        abort(404, "Correspondent V2 is not enabled")
+    db = SessionLocal()
+    season = active_season(db)
+    if season is None:
+        abort(404, "No active season")
+    week_number = request.form.get("week", type=int)
+    week = None if week_number is None else season_week(db, season, week_number)
+    if week is None:
+        abort(404, "Week not found")
+    try:
+        source = create_manual_correspondent_source(
+            db,
+            week,
+            source_type=request.form.get("source_type", "manual"),
+            canonical_url=request.form.get("canonical_url", ""),
+            author_name=request.form.get("author_name", ""),
+            body_text=request.form.get("body_text", ""),
+            submission_note=request.form.get("submission_note", ""),
+        )
+        flash(f"Added Correspondent source #{source.id}.", "success")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("admin", week=week.number))
+
+
+@app.post("/admin/select-recap")
+def admin_select_recap():
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    db = SessionLocal()
+    season = active_season(db)
+    if season is None:
+        abort(404, "No active season")
+    week_number = request.form.get("week", type=int)
+    recap_id = request.form.get("recap_id", type=int)
+    week = None if week_number is None else season_week(db, season, week_number)
+    recap = None if recap_id is None else db.get(WeeklyRecap, recap_id)
+    if week is None or recap is None:
+        abort(404, "Week or recap not found")
+    try:
+        select_weekly_recap(db, week, recap)
+        flash(
+            f"Revision {recap.revision} ({recap.correspondent_version.upper()}) "
+            "is now the official recap.",
+            "success",
+        )
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("admin", week=week.number))
+
+
+@app.post("/admin/correspondent-sources/<int:source_id>/status")
+def admin_set_correspondent_source_status(source_id: int):
+    if not is_admin_session():
+        abort(403, "Admin locked")
+    if not correspondent_v2_enabled():
+        abort(404, "Correspondent V2 is not enabled")
+    db = SessionLocal()
+    season = active_season(db)
+    source = db.get(CorrespondentSource, source_id)
+    week = None if source is None else db.get(Week, source.week_id)
+    if season is None or source is None or week is None or week.season_id != season.id:
+        abort(404, "Correspondent source not found")
+    status = request.form.get("status", "").strip().lower()
+    if status not in {"accepted", "excluded"}:
+        abort(400, "Invalid Correspondent source status")
+    source.status = status
+    db.add(source)
+    db.commit()
+    flash(f"Source #{source.id} is now {status}.", "success")
     return redirect(url_for("admin", week=week.number))
 
 
@@ -2565,6 +5275,567 @@ def scheduled_sync_results():
     except (FootballDataError, RuntimeError) as exc:
         return jsonify(ok=False, error=str(exc)), 502
     return jsonify(ok=True, season=season.code, **summary)
+
+
+def _correspondent_automation_request_error():
+    expected_secret = os.environ.get("CORRESPONDENT_AUTOMATION_SECRET", "").strip()
+    if not expected_secret:
+        return jsonify(ok=False, error="Correspondent automation is not configured"), 503
+    supplied_secret = request.headers.get("X-Correspondent-Automation-Secret", "")
+    if not hmac.compare_digest(supplied_secret, expected_secret):
+        return jsonify(ok=False, error="Forbidden"), 403
+    if not correspondent_v2_enabled():
+        return jsonify(ok=False, error="Correspondent V2 is not enabled"), 404
+    return None
+
+
+def _correspondent_automation_week(db, values: Mapping[str, Any]) -> Week:
+    season_code = str(values.get("season_code") or "").strip()
+    try:
+        week_number = int(values.get("week_number"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("week_number must be an integer") from exc
+    season = db.query(Season).filter_by(
+        code=season_code,
+        is_active=1,
+        is_archived=0,
+    ).one_or_none()
+    if season is None:
+        raise ValueError("Requested season is not the active writable season")
+    week = season_week(db, season, week_number)
+    if week is None:
+        raise ValueError("Week not found")
+    return week
+
+
+@app.get("/tasks/correspondent/status")
+def scheduled_correspondent_status():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, request.args)
+        return jsonify(ok=True, **correspondent_automation_status(db, week))
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+
+
+@app.get("/tasks/correspondent/targets")
+def scheduled_correspondent_targets():
+    """Return active-season finalized weeks that still need automated work."""
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    season = db.query(Season).filter_by(is_active=1, is_archived=0).one_or_none()
+    if season is None:
+        return jsonify(ok=False, error="No unique active writable season"), 409
+    targets = []
+    weeks = db.query(Week).filter_by(
+        season_id=season.id,
+        status="finalized",
+    ).order_by(Week.number.asc()).all()
+    for week in weeks:
+        status = correspondent_automation_status(db, week)
+        if status["phase"] == "EMAIL_SENT" and not status["allowed_actions"]:
+            continue
+        first_kickoff = db.query(func.min(Fixture.kickoff_utc)).filter_by(
+            week_id=week.id,
+        ).scalar()
+        eligible_at = (
+            None
+            if week.finalized_at is None
+            else week.finalized_at + CORRESPONDENT_FINALIZATION_BUFFER
+        )
+        targets.append({
+            "season_code": season.code,
+            "week_number": week.number,
+            "phase": status["phase"],
+            "allowed_actions": status["allowed_actions"],
+            "x_window_start": _utc_iso(
+                None if first_kickoff is None else first_kickoff - timedelta(hours=2)
+            ),
+            "x_window_end": _utc_iso(eligible_at),
+        })
+    return jsonify(ok=True, targets=targets)
+
+
+def _correspondent_automation_json() -> Mapping[str, Any]:
+    if not request.is_json:
+        raise ValueError("Content-Type must be application/json")
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    unknown = set(payload) - {"season_code", "week_number"}
+    if unknown:
+        raise ValueError(
+            "Unknown field(s): " + ", ".join(sorted(str(field) for field in unknown))
+        )
+    return payload
+
+
+def _require_week_correspondent_eligible(db, week: Week) -> None:
+    completed_results, fixture_count = count_results_for_week(db, week)
+    if (
+        week.status != "finalized"
+        or week.finalized_at is None
+        or fixture_count != 10
+        or completed_results != 10
+    ):
+        raise ValueError("Week is not finalized for Correspondent automation")
+    if utcnow() < week.finalized_at + CORRESPONDENT_FINALIZATION_BUFFER:
+        raise ValueError("Correspondent one-hour finalization buffer has not elapsed")
+
+
+def _require_x_collection_complete(db, week: Week) -> None:
+    state = db.query(CorrespondentXCollectionState).filter_by(
+        week_id=week.id,
+    ).one_or_none()
+    if state is None or state.status not in {"completed", "capped"}:
+        raise ValueError("X collection is not complete for this week")
+
+
+def _parse_required_utc_timestamp(value: Any, field_name: str) -> datetime:
+    try:
+        parsed = _parse_correspondent_published_at(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a valid ISO-8601 timestamp") from exc
+    if parsed is None:
+        raise ValueError(f"{field_name} is required")
+    return parsed
+
+
+@app.post("/tasks/correspondent/x/claim")
+def scheduled_correspondent_x_claim():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        if not request.is_json:
+            raise ValueError("Content-Type must be application/json")
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object")
+        unknown = set(payload) - {
+            "season_code", "week_number", "window_start", "window_end"
+        }
+        if unknown:
+            raise ValueError(
+                "Unknown field(s): "
+                + ", ".join(sorted(str(field) for field in unknown))
+            )
+        week = _correspondent_automation_week(db, payload)
+        state, x_request = claim_x_collection_page(
+            db,
+            week,
+            window_start=_parse_required_utc_timestamp(
+                payload.get("window_start"), "window_start"
+            ),
+            window_end=_parse_required_utc_timestamp(
+                payload.get("window_end"), "window_end"
+            ),
+        )
+        return jsonify(
+            ok=True,
+            claimed=x_request is not None,
+            x_request=x_request,
+            x_collection=_x_collection_json(state),
+        ), 202 if x_request is not None else 200
+    except ValueError as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+@app.post("/tasks/correspondent/x/checkpoint")
+def scheduled_correspondent_x_checkpoint():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        if not request.is_json:
+            raise ValueError("Content-Type must be application/json")
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object")
+        unknown = set(payload) - {
+            "season_code", "week_number", "claim_token", "next_token", "sources"
+        }
+        if unknown:
+            raise ValueError(
+                "Unknown field(s): "
+                + ", ".join(sorted(str(field) for field in unknown))
+            )
+        week = _correspondent_automation_week(db, payload)
+        state, receipt, imported = checkpoint_x_collection_page(
+            db,
+            week,
+            claim_token=payload.get("claim_token"),
+            next_token=payload.get("next_token"),
+            sources=payload.get("sources"),
+        )
+        return jsonify(
+            ok=True,
+            imported=imported,
+            receipt={
+                "id": receipt.id,
+                "received": receipt.received_count,
+                "created": receipt.created_count,
+            },
+            x_collection=_x_collection_json(state),
+        ), 201 if imported else 200
+    except CorrespondentIngestNotFound as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 404
+    except (CorrespondentIngestConflict, ValueError) as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+def _classification_job_json(
+    job: Optional[CorrespondentClassificationJob],
+) -> Optional[Dict[str, Any]]:
+    if job is None:
+        return None
+    return {
+        "id": job.id,
+        "pass_number": job.pass_number,
+        "status": job.status,
+        "total": job.total_count,
+        "completed": job.completed_count,
+        "failed": job.failed_count,
+        "prompt_version": job.prompt_version,
+    }
+
+
+@app.post("/tasks/correspondent/classification/submit")
+def scheduled_correspondent_classification_submit():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, _correspondent_automation_json())
+        _require_week_correspondent_eligible(db, week)
+        _require_x_collection_complete(db, week)
+        job, created = ensure_week_classification_batch(db, week, pass_number=1)
+        return jsonify(
+            ok=True,
+            created=created,
+            job=_classification_job_json(job),
+            status=correspondent_automation_status(db, week),
+        ), 202 if created else 200
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    except CorrespondentError as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+
+
+@app.post("/tasks/correspondent/classification/reconcile")
+def scheduled_correspondent_classification_reconcile():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, _correspondent_automation_json())
+        _require_week_correspondent_eligible(db, week)
+        job_count = db.query(CorrespondentClassificationJob).filter_by(
+            week_id=week.id,
+            prompt_version=CLASSIFIER_PROMPT_VERSION,
+        ).count()
+        summary = (
+            sync_week_classification_jobs(db, week)
+            if job_count
+            else {
+                "jobs_checked": 0,
+                "classifications_imported": 0,
+                "second_pass_job_id": None,
+                "prompt_version": CLASSIFIER_PROMPT_VERSION,
+            }
+        )
+        return jsonify(
+            ok=True,
+            **summary,
+            status=correspondent_automation_status(db, week),
+        )
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    except CorrespondentError as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+
+
+@app.post("/tasks/correspondent/recap/generate")
+def scheduled_correspondent_recap_generate():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, _correspondent_automation_json())
+        _require_week_correspondent_eligible(db, week)
+        _require_x_collection_complete(db, week)
+        recap = generate_and_store_weekly_recap_v2(
+            db,
+            week,
+            automation_key=correspondent_recap_automation_key(week),
+        )
+        payload = {
+            "id": recap.id,
+            "revision": recap.revision,
+            "status": recap.status,
+            "title": recap.title,
+            "prompt_version": recap.prompt_version,
+            "automation_key": recap.automation_key,
+        }
+        if recap.status == "failed":
+            return jsonify(
+                ok=False,
+                error=recap.error_message or "Automated V2 recap generation failed",
+                recap=payload,
+            ), 502
+        return jsonify(
+            ok=True,
+            recap=payload,
+            status=correspondent_automation_status(db, week),
+        )
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+def _correspondent_ack_json() -> Mapping[str, Any]:
+    if not request.is_json:
+        raise ValueError("Content-Type must be application/json")
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object")
+    unknown = set(payload) - {
+        "season_code", "week_number", "claim_token", "outcome",
+        "gmail_message_id", "error",
+    }
+    if unknown:
+        raise ValueError(
+            "Unknown field(s): " + ", ".join(sorted(str(field) for field in unknown))
+        )
+    return payload
+
+
+@app.post("/tasks/correspondent/delivery/claim")
+def scheduled_correspondent_delivery_claim():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, _correspondent_automation_json())
+        delivery, email = claim_recap_email_delivery(db, week)
+        return jsonify(
+            ok=True,
+            claimed=email is not None,
+            email=email,
+            delivery=_email_delivery_json(delivery),
+        ), 202 if email is not None else 200
+    except ValueError as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+@app.post("/tasks/correspondent/delivery/ack")
+def scheduled_correspondent_delivery_ack():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        payload = _correspondent_ack_json()
+        week = _correspondent_automation_week(db, payload)
+        delivery = acknowledge_recap_email_delivery(
+            db,
+            week,
+            claim_token=payload.get("claim_token"),
+            outcome=str(payload.get("outcome") or ""),
+            gmail_message_id=payload.get("gmail_message_id"),
+            error=payload.get("error"),
+        )
+        return jsonify(ok=True, delivery=_email_delivery_json(delivery))
+    except ValueError as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+@app.post("/tasks/correspondent/notifications/x-cap/claim")
+def scheduled_correspondent_x_cap_notification_claim():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        week = _correspondent_automation_week(db, _correspondent_automation_json())
+        notification, email = claim_x_cap_notification(db, week)
+        return jsonify(
+            ok=True,
+            claimed=email is not None,
+            email=email,
+            notification=_notification_json(notification),
+        ), 202 if email is not None else 200
+    except ValueError as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+@app.post("/tasks/correspondent/notifications/x-cap/ack")
+def scheduled_correspondent_x_cap_notification_ack():
+    auth_error = _correspondent_automation_request_error()
+    if auth_error is not None:
+        return auth_error
+    db = SessionLocal()
+    try:
+        payload = _correspondent_ack_json()
+        week = _correspondent_automation_week(db, payload)
+        notification = acknowledge_x_cap_notification(
+            db,
+            week,
+            claim_token=payload.get("claim_token"),
+            outcome=str(payload.get("outcome") or ""),
+            gmail_message_id=payload.get("gmail_message_id"),
+            error=payload.get("error"),
+        )
+        return jsonify(ok=True, notification=_notification_json(notification))
+    except ValueError as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc)), 409
+
+
+@app.post("/api/correspondent/sources")
+def ingest_correspondent_source_api():
+    """Accept one normalized, untrusted source from n8n or another ingester."""
+    expected_secret = os.environ.get("CORRESPONDENT_INGEST_SECRET", "").strip()
+    if not expected_secret:
+        return jsonify(ok=False, error="Correspondent ingestion is not configured"), 503
+
+    supplied_secret = request.headers.get("X-Correspondent-Secret", "")
+    if not hmac.compare_digest(supplied_secret, expected_secret):
+        return jsonify(ok=False, error="Forbidden"), 403
+    if (
+        request.content_length
+        and request.content_length > CORRESPONDENT_INGEST_MAX_BODY_BYTES
+    ):
+        return jsonify(ok=False, error="Request body is too large"), 413
+    if not request.is_json:
+        return jsonify(ok=False, error="Content-Type must be application/json"), 415
+    if len(request.get_data(cache=True)) > CORRESPONDENT_INGEST_MAX_BODY_BYTES:
+        return jsonify(ok=False, error="Request body is too large"), 413
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(ok=False, error="Request body must be a JSON object"), 400
+
+    db = SessionLocal()
+    try:
+        source, created = ingest_correspondent_source(db, payload)
+    except CorrespondentIngestNotFound as exc:
+        return jsonify(ok=False, error=str(exc)), 404
+    except CorrespondentIngestConflict as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+
+    week = db.get(Week, source.week_id)
+    season = None if week is None else db.get(Season, week.season_id)
+    return jsonify(
+        ok=True,
+        created=created,
+        source={
+            "id": source.id,
+            "season_code": None if season is None else season.code,
+            "week_number": None if week is None else week.number,
+            "provider": source.provider,
+            "source_type": source.source_type,
+            "external_id": source.external_id,
+            "status": source.status,
+        },
+    ), 201 if created else 200
+
+
+@app.post("/api/correspondent/sources/batch")
+def ingest_correspondent_source_batch_api():
+    """Atomically accept one bounded gameweek batch from n8n."""
+    expected_secret = os.environ.get("CORRESPONDENT_INGEST_SECRET", "").strip()
+    if not expected_secret:
+        return jsonify(ok=False, error="Correspondent ingestion is not configured"), 503
+
+    supplied_secret = request.headers.get("X-Correspondent-Secret", "")
+    if not hmac.compare_digest(supplied_secret, expected_secret):
+        return jsonify(ok=False, error="Forbidden"), 403
+    if (
+        request.content_length
+        and request.content_length > CORRESPONDENT_BATCH_MAX_BODY_BYTES
+    ):
+        return jsonify(ok=False, error="Request body is too large"), 413
+    if not request.is_json:
+        return jsonify(ok=False, error="Content-Type must be application/json"), 415
+    if len(request.get_data(cache=True)) > CORRESPONDENT_BATCH_MAX_BODY_BYTES:
+        return jsonify(ok=False, error="Request body is too large"), 413
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(ok=False, error="Request body must be a JSON object"), 400
+    unknown_fields = set(payload) - {"sources"}
+    if unknown_fields:
+        return jsonify(
+            ok=False,
+            error="Unknown batch field(s): "
+            + ", ".join(sorted(str(field) for field in unknown_fields)),
+        ), 400
+    sources = payload.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return jsonify(ok=False, error="sources must be a non-empty array"), 400
+    if len(sources) > CORRESPONDENT_BATCH_MAX_SOURCES:
+        return jsonify(
+            ok=False,
+            error=(
+                "sources must contain no more than "
+                f"{CORRESPONDENT_BATCH_MAX_SOURCES:,} items"
+            ),
+        ), 400
+
+    db = SessionLocal()
+    results: List[Tuple[CorrespondentSource, bool]] = []
+    failed_index: Optional[int] = None
+    try:
+        for failed_index, source_payload in enumerate(sources):
+            results.append(
+                ingest_correspondent_source(db, source_payload, commit=False)
+            )
+        db.commit()
+    except CorrespondentIngestNotFound as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc), failed_index=failed_index), 404
+    except CorrespondentIngestConflict as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc), failed_index=failed_index), 409
+    except ValueError as exc:
+        db.rollback()
+        return jsonify(ok=False, error=str(exc), failed_index=failed_index), 400
+
+    created_count = sum(1 for _, created in results if created)
+    return jsonify(
+        ok=True,
+        received=len(sources),
+        created=created_count,
+        existing=len(sources) - created_count,
+        sources=[
+            {
+                "id": source.id,
+                "external_id": source.external_id,
+                "created": created,
+            }
+            for source, created in results
+        ],
+    ), 201 if created_count else 200
+
 
 @app.post("/admin/set-results")
 def admin_set_results():
@@ -3018,9 +6289,38 @@ def _delete_season_weeks(db, season: Season) -> None:
         return
     fixture_ids = [row[0] for row in db.query(Fixture.id).filter(Fixture.week_id.in_(week_ids)).all()]
     matchup_ids = [row[0] for row in db.query(Matchup.id).filter(Matchup.week_id.in_(week_ids)).all()]
+    recap_ids = [
+        row[0]
+        for row in db.query(WeeklyRecap.id).filter(
+            WeeklyRecap.week_id.in_(week_ids)
+        ).all()
+    ]
+    source_ids = [
+        row[0]
+        for row in db.query(CorrespondentSource.id).filter(
+            CorrespondentSource.week_id.in_(week_ids)
+        ).all()
+    ]
+    db.query(WeeklyRecapSelection).filter(
+        WeeklyRecapSelection.week_id.in_(week_ids)
+    ).delete(synchronize_session=False)
+    if recap_ids:
+        db.query(RecapSourceUsage).filter(
+            RecapSourceUsage.recap_id.in_(recap_ids)
+        ).delete(synchronize_session=False)
+    if source_ids:
+        db.query(RecapSourceUsage).filter(
+            RecapSourceUsage.source_id.in_(source_ids)
+        ).delete(synchronize_session=False)
+        db.query(CorrespondentSourceClassification).filter(
+            CorrespondentSourceClassification.source_id.in_(source_ids)
+        ).delete(synchronize_session=False)
     db.query(WeeklyRecap).filter(WeeklyRecap.week_id.in_(week_ids)).delete(
         synchronize_session=False
     )
+    db.query(CorrespondentSource).filter(
+        CorrespondentSource.week_id.in_(week_ids)
+    ).delete(synchronize_session=False)
     if fixture_ids:
         db.query(Result).filter(Result.fixture_id.in_(fixture_ids)).delete(synchronize_session=False)
     if matchup_ids:
