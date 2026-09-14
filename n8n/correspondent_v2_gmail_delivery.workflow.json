@@ -26,12 +26,18 @@
     {
       "parameters": {
         "method": "POST", "url": "={{ $env.PICKEM_BASE_URL + $json.claim_path }}", "sendHeaders": true,
-        "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}]},
+        "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}, {"name": "Accept-Encoding", "value": "identity"}]},
         "sendBody": true, "contentType": "raw", "rawContentType": "application/json",
         "body": "={{ JSON.stringify({ season_code: $json.season_code, week_number: $json.week_number }) }}",
         "options": {"response": {"response": {"responseFormat": "json"}}}
       },
       "id": "gmail-claim", "name": "Claim Gmail Work", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-40, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputs = $input.all();\n\nconst outputs = [];\n\nfor (const input of inputs) {\n  const chunks = input.json?._readableState?.buffer;\n\n  if (!Array.isArray(chunks) || chunks.length === 0) {\n    throw new Error('Could not find HTTP response buffer');\n  }\n\n  const bytes = [];\n\n  for (const chunk of chunks) {\n    const data = chunk?.data?.data ?? chunk?.data;\n\n    if (Array.isArray(data)) {\n      bytes.push(...data);\n    }\n  }\n\n  if (bytes.length === 0) {\n    throw new Error('HTTP response buffer was empty');\n  }\n\n  const text = Buffer.from(bytes).toString('utf8').trim();\n  const parsed = JSON.parse(text);\n\n  outputs.push({\n    json: {\n      claimed: parsed.claimed,\n      ok: parsed.ok,\n      email: parsed.email,\n      notification: parsed.notification,\n      claim_token: parsed.claim_token,\n      delivery_marker: parsed.delivery_marker,\n      gmail_sent_query: parsed.gmail_sent_query,\n      kind: parsed.kind,\n      recipients: parsed.recipients,\n      subject: parsed.subject,\n    }\n  });\n}\n\nreturn outputs;"
+      },
+      "id": "gmail-normalize", "name": "Code in JavaScript", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [180, 120]
     },
     {
       "parameters": {
@@ -41,7 +47,7 @@
       "id": "gmail-granted", "name": "Claim Granted?", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [180, 0]
     },
     {
-      "parameters": {"operation": "getAll", "returnAll": false, "limit": 1, "filters": {"q": "={{ $('Claim Gmail Work').item.json.email.gmail_sent_query }}"}},
+      "parameters": {"operation": "getAll", "returnAll": false, "limit": 1, "filters": {"q": "={{ $('Code in JavaScript').item.json.email.gmail_sent_query }}"}},
       "id": "gmail-search", "name": "Gmail Sent Lookup", "type": "n8n-nodes-base.gmail", "typeVersion": 2.1, "position": [400, -80], "alwaysOutputData": true
     },
     {
@@ -53,16 +59,16 @@
     },
     {
       "parameters": {
-        "sendTo": "={{ $('Claim Gmail Work').item.json.email.recipients.join(',') }}",
-        "subject": "={{ $('Claim Gmail Work').item.json.email.subject }}",
-        "message": "={{ $('Claim Gmail Work').item.json.email.body_markdown || $('Claim Gmail Work').item.json.email.body }}",
+        "sendTo": "={{ $('Code in JavaScript').item.json.email.recipients.join(',') }}",
+        "subject": "={{ $('Code in JavaScript').item.json.email.subject }}",
+        "message": "={{ $('Code in JavaScript').item.json.email.body_markdown || $('Code in JavaScript').item.json.email.body }}",
         "options": {}
       },
       "id": "gmail-send", "name": "Send From footypickem Gmail", "type": "n8n-nodes-base.gmail", "typeVersion": 2.1, "position": [840, 20]
     },
     {
       "parameters": {
-        "jsCode": "const target = $('Prepare Gmail Claims').item.json;\nconst claim = $('Claim Gmail Work').item.json.email;\nconst messageId = String($json.id || $json.threadId || '');\nif (!messageId) throw new Error('Gmail did not return a message ID; leave the claim unacknowledged for Sent lookup retry');\nreturn [{ json: { season_code: target.season_code, week_number: target.week_number, ack_path: target.ack_path, claim_token: claim.claim_token, outcome: 'sent', gmail_message_id: messageId } }];"
+        "jsCode": "const target = $('Prepare Gmail Claims').item.json;\nconst claim = $('Code in JavaScript').item.json.email;\nconst messageId = String($json.id || $json.threadId || '');\nif (!messageId) throw new Error('Gmail did not return a message ID; leave the claim unacknowledged for Sent lookup retry');\nreturn [{ json: { season_code: target.season_code, week_number: target.week_number, ack_path: target.ack_path, claim_token: claim.claim_token, outcome: 'sent', gmail_message_id: messageId } }];"
       },
       "id": "gmail-ack-body", "name": "Build Sent Acknowledgement", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1060, -80]
     },
@@ -81,7 +87,8 @@
     "Get Authoritative Targets": {"main": [[{"node": "One Week Per Item", "type": "main", "index": 0}]]},
     "One Week Per Item": {"main": [[{"node": "Prepare Gmail Claims", "type": "main", "index": 0}]]},
     "Prepare Gmail Claims": {"main": [[{"node": "Claim Gmail Work", "type": "main", "index": 0}]]},
-    "Claim Gmail Work": {"main": [[{"node": "Claim Granted?", "type": "main", "index": 0}]]},
+    "Claim Gmail Work": {"main": [[{"node": "Code in JavaScript", "type": "main", "index": 0}]]},
+    "Code in JavaScript": {"main": [[{"node": "Claim Granted?", "type": "main", "index": 0}]]},
     "Claim Granted?": {"main": [[{"node": "Gmail Sent Lookup", "type": "main", "index": 0}], []]},
     "Gmail Sent Lookup": {"main": [[{"node": "Already In Sent?", "type": "main", "index": 0}]]},
     "Already In Sent?": {"main": [[{"node": "Build Sent Acknowledgement", "type": "main", "index": 0}], [{"node": "Send From footypickem Gmail", "type": "main", "index": 0}]]},
