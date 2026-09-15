@@ -36,8 +36,13 @@
       "parameters": {
         "method": "POST", "url": "={{ $env.PICKEM_BASE_URL + '/tasks/correspondent/x/claim' }}", "sendHeaders": true,
         "headerParameters": {"parameters": [{"name": "X-Correspondent-Automation-Secret", "value": "={{ $env.CORRESPONDENT_AUTOMATION_SECRET }}"}]},
-        "sendBody": true, "contentType": "raw", "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ season_code: $json.season_code, week_number: $json.week_number, window_start: $json.x_window_start, window_end: $json.x_window_end }) }}",
+        "sendBody": true, "contentType": "json", "specifyBody": "keypair",
+        "bodyParameters": {"parameters": [
+          {"name": "season_code", "value": "={{ $json.season_code }}"},
+          {"name": "week_number", "value": "={{ $json.week_number }}"},
+          {"name": "window_start", "value": "={{ $json.x_window_start }}"},
+          {"name": "window_end", "value": "={{ $json.x_window_end }}"}
+        ]},
         "options": {"response": {"response": {"responseFormat": "json"}}}
       },
       "id": "x-claim", "name": "Claim Exactly One Paid Page", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-20, -80]
