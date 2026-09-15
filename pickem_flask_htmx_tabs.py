@@ -3103,6 +3103,7 @@ TERMINAL_CLASSIFICATION_JOB_STATUSES = frozenset({
     "cancelled",
 })
 CLASSIFICATION_IMPORT_CHUNK_SIZE = 50
+CLASSIFICATION_SUBMIT_CHUNK_SIZE = 100
 
 
 def _openai_value(value: Any, name: str, default: Any = None) -> Any:
@@ -3195,6 +3196,21 @@ def _classification_reservation_key(source_id: int, pass_number: int) -> str:
     return f"{source_id}:{CLASSIFIER_PROMPT_VERSION}:{pass_number}"
 
 
+def _batch_level_error_message(remote_batch: Any) -> Optional[str]:
+    errors = _openai_value(remote_batch, "errors")
+    data = _openai_value(errors, "data") if errors is not None else None
+    if not isinstance(data, (list, tuple)) or not data:
+        return None
+    first = data[0]
+    message = _openai_value(first, "message")
+    code = _openai_value(first, "code")
+    if message and code:
+        return f"{code}: {message}"
+    if message or code:
+        return str(message or code)
+    return "OpenAI Batch failed"
+
+
 def _update_classification_job_from_batch(
     job: CorrespondentClassificationJob,
     remote_batch: Any,
@@ -3218,6 +3234,9 @@ def _update_classification_job_from_batch(
             _openai_value(counts, "completed", job.completed_count) or 0
         )
         job.failed_count = int(_openai_value(counts, "failed", job.failed_count) or 0)
+    batch_error_message = _batch_level_error_message(remote_batch)
+    if batch_error_message:
+        job.error_message = batch_error_message[:2000]
     job.last_synced_at = utcnow()
     if job.status in TERMINAL_CLASSIFICATION_JOB_STATUSES and job.completed_at is None:
         job.completed_at = utcnow()
@@ -3232,12 +3251,24 @@ def submit_week_classification_batch(
     model: Optional[str] = None,
 ) -> CorrespondentClassificationJob:
     """Reserve eligible sources and submit one asynchronous OpenAI Batch."""
+    active_job = db.query(CorrespondentClassificationJob).filter(
+        CorrespondentClassificationJob.week_id == week.id,
+        CorrespondentClassificationJob.prompt_version == CLASSIFIER_PROMPT_VERSION,
+        CorrespondentClassificationJob.pass_number == pass_number,
+        CorrespondentClassificationJob.status.in_(ACTIVE_CLASSIFICATION_JOB_STATUSES),
+    ).order_by(CorrespondentClassificationJob.id.desc()).first()
+    if active_job is not None:
+        raise ValueError(
+            f"Pass {pass_number} already has an active classification Batch"
+        )
+
     candidates, _signal_only = classification_batch_candidates(db, week, pass_number)
     if not candidates:
         raise ValueError(
             f"No pass-{pass_number} sources are eligible for classification; "
             "they are already completed or assigned to an active batch"
         )
+    candidates = candidates[:CLASSIFICATION_SUBMIT_CHUNK_SIZE]
     selected_model = classifier_model(model)
     league_context = build_weekly_recap_context(db, week)
     job = CorrespondentClassificationJob(
@@ -3544,7 +3575,26 @@ def sync_week_classification_jobs(
         and job.pass_number == 1
         and job.status == "completed"
     ]
-    if create_second_pass and completed_pass_one_jobs:
+    active_pass_one_jobs = [
+        job for job in jobs
+        if job.prompt_version == CLASSIFIER_PROMPT_VERSION
+        and job.pass_number == 1
+        and job.status in ACTIVE_CLASSIFICATION_JOB_STATUSES
+    ]
+    active_pass_two_jobs = [
+        job for job in jobs
+        if job.prompt_version == CLASSIFIER_PROMPT_VERSION
+        and job.pass_number == 2
+        and job.status in ACTIVE_CLASSIFICATION_JOB_STATUSES
+    ]
+    readiness = correspondent_classification_readiness(db, week)
+    if (
+        create_second_pass
+        and completed_pass_one_jobs
+        and not active_pass_one_jobs
+        and not active_pass_two_jobs
+        and not readiness["missing_pass_one_source_ids"]
+    ):
         pass_two_candidates, _ = classification_batch_candidates(db, week, 2)
         if pass_two_candidates:
             second_pass_job, _created = ensure_week_classification_batch(
