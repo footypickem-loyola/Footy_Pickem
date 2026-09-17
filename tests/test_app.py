@@ -4,7 +4,8 @@ import sqlite3
 import tempfile
 import unittest
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -190,6 +191,146 @@ class PickemAppTests(unittest.TestCase):
 
     def tearDown(self):
         app_module.SessionLocal.remove()
+
+    def test_kickoff_eastern_format_handles_dst_utc_rollover_and_missing_time(self):
+        cases = [
+            (None, "Kickoff TBD (Eastern)"),
+            (datetime(2026, 9, 19, 16), "Sat, Sep 19, 2026 · 12:00 PM EDT"),
+            (datetime(2026, 1, 10, 17, 30), "Sat, Jan 10, 2026 · 12:30 PM EST"),
+            (datetime(2026, 9, 19, 1, tzinfo=timezone.utc), "Fri, Sep 18, 2026 · 9:00 PM EDT"),
+            (datetime(2026, 11, 1, 5, 30), "Sun, Nov 1, 2026 · 1:30 AM EDT"),
+            (datetime(2026, 11, 1, 6, 30), "Sun, Nov 1, 2026 · 1:30 AM EST"),
+        ]
+        for value, expected in cases:
+            with self.subTest(value=value):
+                self.assertEqual(app_module.format_kickoff_eastern(value), expected)
+
+    def test_synced_reschedule_updates_fixture_and_draft_displays(self):
+        db = app_module.SessionLocal()
+        season = db.query(app_module.Season).filter_by(code="year-2").one()
+        season.api_competition_code = "PL"
+        season.api_season_year = 2026
+        fixture = db.query(app_module.Fixture).first()
+        fixture.external_match_id = 12345
+        fixture.kickoff_utc = datetime(2026, 9, 19, 16)
+        db.commit()
+        season_id = season.id
+        fixture_id = fixture.id
+        with app_module.app.test_client() as client:
+            for path in ("/partials/fixtures/1", "/partials/matchups/1"):
+                self.assertIn("Sat, Sep 19, 2026 · 12:00 PM EDT", client.get(path).get_data(as_text=True))
+            db = app_module.SessionLocal()
+            app_module.sync_results_from_api(db.get(app_module.Season, season_id), client=FakeFootballDataClient([{
+                "id": 12345, "utcDate": "2026-09-20T19:30:00Z", "status": "TIMED",
+            }]))
+            for path in ("/partials/fixtures/1", "/partials/matchups/1"):
+                html = client.get(path).get_data(as_text=True)
+                self.assertIn("Sun, Sep 20, 2026 · 3:30 PM EDT", html)
+                self.assertNotIn("Sat, Sep 19, 2026 · 12:00 PM EDT", html)
+            db = app_module.SessionLocal()
+            self.assertEqual(db.get(app_module.Fixture, fixture_id).kickoff_utc, datetime(2026, 9, 20, 19, 30))
+            self.assertEqual(db.query(app_module.Result).count(), 0)
+
+    def test_pick_log_result_and_viewer_classes(self):
+        db, week, matchup, a, b = self.finalize_one_sided_matchup()
+        picks = db.query(app_module.Pick).order_by(app_module.Pick.id).all()
+        ids = [p.id for p in picks[:4]]
+        viewer = a.name
+        db.query(app_module.Result).filter_by(fixture_id=picks[2].fixture_id).delete()
+        db.query(app_module.Result).filter_by(fixture_id=picks[3].fixture_id).one().outcome = "Draw"
+        db.commit()
+        with app_module.app.test_client() as client:
+            with client.session_transaction() as user_session:
+                user_session["player_name"] = viewer
+            html = client.get("/partials/matchups/1").get_data(as_text=True)
+            rows = {int(pid): (classes, body) for classes, pid, body in re.findall(
+                r'<li class="([^"]+)" data-pick-id="(\d+)">(.*?)</li>', html,
+            )}
+            for classes, body in rows.values():
+                self.assertEqual(classes, "pick-log-row")
+                self.assertNotIn('<br', body)
+                self.assertNotIn('pick-outcome', body)
+                self.assertNotIn('Your pick', body)
+                self.assertNotRegex(body, r'>(Pending|Correct|Incorrect|Draw)</')
+            for index, outcome in enumerate(('correct', 'incorrect', 'pending', 'draw')):
+                self.assertIn(f'<strong class="pick-team-{outcome}">', rows[ids[index]][1])
+            self.assertIn(f'<strong class="pick-player-own">{viewer}</strong>', rows[ids[0]][1])
+            self.assertIn('pick-player-own', rows[ids[2]][1])
+            self.assertNotIn('pick-player-own', rows[ids[1]][1])
+            self.assertNotIn('pick-player-own', rows[ids[3]][1])
+            with client.session_transaction() as user_session:
+                user_session.pop("player_name")
+            guest = client.get("/partials/matchups/1").get_data(as_text=True)
+            self.assertNotIn("pick-player-own", guest)
+
+    def test_navigation_has_one_active_tab_for_full_htmx_and_history_requests(self):
+        with app_module.app.test_client() as client:
+            for tab in ("current", "open", "season", "stats"):
+                for headers in ({}, {"HX-Request": "true"}, {
+                    "HX-Request": "true", "HX-History-Restore-Request": "true",
+                }):
+                    with self.subTest(tab=tab, headers=headers):
+                        response = client.get(f"/tab/{tab}", headers=headers)
+                        self.assertEqual(response.status_code, 200)
+                        html = response.get_data(as_text=True)
+                        active = re.findall(r'data-tab="([^"]+)" class="tab active"', html)
+                        self.assertEqual(active, [tab])
+                        self.assertEqual(html.count('aria-current="page"'), 1)
+                        partial = headers == {"HX-Request": "true"}
+                        self.assertEqual('hx-swap-oob="outerHTML"' in html, partial)
+                        self.assertEqual('<html>' in html, not partial)
+            response = client.get('/partials/fixtures/1', headers={"HX-Request": "true"})
+            self.assertNotIn(b'navigation-tabs', response.data)
+            error = client.get('/tab/current?force_week=999', headers={"HX-Request": "true"})
+            self.assertEqual(error.status_code, 404)
+            self.assertNotIn(b'navigation-tabs', error.data)
+
+    def test_weekly_details_match_existing_weekly_calculations(self):
+        db, week, matchup, a, b = self.finalize_one_sided_matchup()
+        db.query(app_module.Result).first().outcome = "Draw"
+        db.commit()
+        players = app_module.season_players(db, week.season)
+        points = app_module.weekly_for_against(db, week)
+        weekly_points = app_module.weekly_points_map(db, week)
+        expected = []
+        for player in players:
+            values = points[player.id]
+            self.assertEqual(values['for'], weekly_points[player.id])
+            expected.extend([str(values['for']), str(values['against']),
+                             str(values['for'] - values['against'])])
+        names = [p.name for p in players]
+        with app_module.app.test_client() as client:
+            html = client.get('/tab/season').get_data(as_text=True)
+            self.assertIn('id="weekly-summary" class="table-scroll">', html)
+            self.assertIn('id="weekly-detailed" class="table-scroll" hidden>', html)
+            self.assertIn('data-view="summary" aria-pressed="true"', html)
+            self.assertIn('data-view="detailed" aria-pressed="false"', html)
+            detail = html.split('id="weekly-detailed"', 1)[1]
+            self.assertEqual(re.findall(r'<th colspan="3" scope="colgroup" class="player-start">(.*?)</th>', detail), names)
+            self.assertEqual(detail.count('>For Net</th>'), len(names))
+            self.assertEqual(detail.count('>Against Net</th>'), len(names))
+            self.assertEqual(detail.count('>Total Net</th>'), len(names))
+            row = re.search(r'<tr data-week="1">(.*?)</tr>', detail, re.S).group(1)
+            cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.S)
+            self.assertEqual(cells[1:-1], expected)
+            self.assertEqual(len(cells), 2 + 3 * len(names))
+            self.assertNotIn('Show detailed weekly breakdown', html)
+
+    def test_rendering_never_updates_week_status_or_core_rows(self):
+        db, week, matchup, a, b = self.finalize_one_sided_matchup()
+        # Deliberately inconsistent saved status detects GET-side recalculation.
+        week.status = 'provisional'
+        db.commit()
+        def snapshot():
+            with app_module.engine.connect() as connection:
+                return {table: connection.exec_driver_sql(f'SELECT * FROM {table} ORDER BY id').fetchall()
+                        for table in ('players', 'weeks', 'fixtures', 'matchups', 'picks', 'results')}
+        before = snapshot()
+        with app_module.app.test_client() as client:
+            for path in ('/', '/tab/current', '/tab/open', '/tab/season', '/tab/stats',
+                         '/partials/fixtures/1', '/partials/matchups/1', '/partials/scores/1'):
+                self.assertEqual(client.get(path).status_code, 200)
+        self.assertEqual(snapshot(), before)
 
     def finalize_one_sided_matchup(self):
         db = app_module.SessionLocal()
@@ -767,6 +908,7 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b"Against Net", response.data)
         self.assertIn(b"Total Net", response.data)
         html = response.get_data(as_text=True)
+        html = html.split('<h4>Weekly rollup</h4>', 1)[0]
         ordered_headers = [
             "Correct", "Incorrect", "Draws", "For Net",
             "Against Correct", "Against Incorrect", "Against Draws", "Against Net",
@@ -3180,7 +3322,7 @@ class PickemAppTests(unittest.TestCase):
             client=openai,
             model="test-model",
         )
-        with self.assertRaisesRegex(ValueError, "already completed or assigned"):
+        with self.assertRaisesRegex(ValueError, "Pass 1 already has an active classification Batch"):
             app_module.submit_week_classification_batch(
                 db,
                 week,

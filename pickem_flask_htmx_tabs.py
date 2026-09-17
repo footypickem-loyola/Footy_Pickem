@@ -11,6 +11,7 @@ import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -60,6 +61,31 @@ ARSENAL_BANTER_FILENAMES = [
 ARSENAL_TEAM_ALIASES = {"arsenal", "arsenal fc"}
 
 # -------------------- In-memory base + partial templates --------------------
+TABS_HTML = """
+<div id="navigation-tabs" class="tabs"{% if tabs_oob %} hx-swap-oob="outerHTML"{% endif %}>
+      <button data-tab="current" class="tab {% if active_tab=='current' %}active{% endif %}" {% if active_tab=='current' %}aria-current="page"{% endif %}
+              hx-get="{{ url_for('tab_current') }}"
+              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
+        Current Week
+      </button>
+      <button data-tab="open" class="tab {% if active_tab=='open' %}active{% endif %}" {% if active_tab=='open' %}aria-current="page"{% endif %}
+              hx-get="{{ url_for('tab_open') }}"
+              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
+        Open Weeks
+      </button>
+      <button data-tab="season" class="tab {% if active_tab=='season' %}active{% endif %}" {% if active_tab=='season' %}aria-current="page"{% endif %}
+              hx-get="{{ url_for('tab_season') }}"
+              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
+        Season
+      </button>
+      <button data-tab="stats" class="tab {% if active_tab=='stats' %}active{% endif %}" {% if active_tab=='stats' %}aria-current="page"{% endif %}
+              hx-get="{{ url_for('tab_stats') }}"
+              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
+        Stats
+      </button>
+</div>
+"""
+
 BASE_HTML = """
 <!doctype html>
 <html>
@@ -75,6 +101,21 @@ BASE_HTML = """
     .tabs { display:flex; gap:8px; align-items:center; }
     .tab { padding:8px 12px; border:1px solid #ddd; border-radius:999px; cursor:pointer; background:#f8f8f8; }
     .tab.active { background:var(--blue); color:#fff; border-color:#0284c7; }
+    .pick-log-row { padding:0; margin:0; }
+    .pick-player-own { background:#fef3c7; border-radius:2px; }
+    .pick-team-correct { background:#dbeafe; color:#1e40af; border-radius:2px; }
+    .pick-team-incorrect { background:#fee2e2; color:#991b1b; border-radius:2px; }
+    .weekly-heading { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+    .weekly-toggle { display:inline-flex; border:1px solid #cbd5e1; border-radius:6px; overflow:hidden; }
+    .weekly-toggle button { border:0; background:#fff; color:#475569; padding:4px 9px; cursor:pointer; font:inherit; font-size:13px; }
+    .weekly-toggle button + button { border-left:1px solid #cbd5e1; }
+    .weekly-toggle button[aria-pressed="true"] { background:#e2e8f0; color:#1e293b; font-weight:600; }
+    .weekly-detailed-table { min-width:1280px; white-space:nowrap; }
+    .weekly-detailed-table th { background:#f8fafc; }
+    .weekly-detailed-table .player-start { border-left:2px solid #cbd5e1; }
+    .weekly-detailed-table .weekly-total { background:#f1f5f9; font-weight:650; }
+    .weekly-detailed-table .week-edge { border-right:2px solid #cbd5e1; }
+    .weekly-detailed-table .status-edge { border-left:2px solid #cbd5e1; }
     .navright { margin-left:auto; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 12px 0; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
     .row { display: flex; gap: 16px; flex-wrap: wrap; }
@@ -132,31 +173,9 @@ BASE_HTML = """
 </head>
 <body>
   <nav>
-    <div class="tabs">
-      <button class="tab {% if active_tab=='current' %}active{% endif %}"
-              hx-get="{{ url_for('tab_current') }}"
-              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
-        Current Week
-      </button>
-      <button class="tab {% if active_tab=='open' %}active{% endif %}"
-              hx-get="{{ url_for('tab_open') }}"
-              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
-        Open Weeks
-      </button>
-      <button class="tab {% if active_tab=='season' %}active{% endif %}"
-              hx-get="{{ url_for('tab_season') }}"
-              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
-        Season
-      </button>
-      <button class="tab {% if active_tab=='stats' %}active{% endif %}"
-              hx-get="{{ url_for('tab_stats') }}"
-              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
-        Stats
-      </button>
-    </div>
+    {% include 'tabs.html' %}
     <div class="navright muted">Logged in as: {{ you.name if you else 'Guest' }}</div>
   </nav>
-
   <div id="main">
     {{ body|safe }}
   </div>
@@ -194,6 +213,16 @@ BASE_HTML = """
     let arsenalBanterTimer = null;
     let lastArsenalBanterIndex = -1;
     const arsenalBanterImages = {{ arsenal_banter_images|tojson }};
+
+    function setWeeklyView(button) {
+      const rollup = button.closest('#weekly-rollup');
+      const detailed = button.dataset.view === 'detailed';
+      rollup.querySelector('#weekly-summary').hidden = detailed;
+      rollup.querySelector('#weekly-detailed').hidden = !detailed;
+      rollup.querySelectorAll('.weekly-toggle button').forEach((choice) => {
+        choice.setAttribute('aria-pressed', String(choice === button));
+      });
+    }
 
     function syncTeamOptions(gameSelect) {
       const form = gameSelect.closest('form');
@@ -854,8 +883,15 @@ SEASON_PARTIAL = """
   </details>
 </div>
 
-<div class="card">
-  <h4>Weekly rollup</h4>
+<div class="card" id="weekly-rollup">
+  <div class="weekly-heading">
+    <h4>Weekly rollup</h4>
+    <div class="weekly-toggle" role="group" aria-label="Weekly rollup view">
+      <button type="button" data-view="summary" aria-pressed="true" aria-controls="weekly-summary" onclick="setWeeklyView(this)">Summary</button>
+      <button type="button" data-view="detailed" aria-pressed="false" aria-controls="weekly-detailed" onclick="setWeeklyView(this)">Detailed</button>
+    </div>
+  </div>
+  <div id="weekly-summary" class="table-scroll">
   <table class="centered-table">
     <thead>
       <tr>
@@ -876,6 +912,39 @@ SEASON_PARTIAL = """
       {% endfor %}
     </tbody>
   </table>
+  </div>
+  <div id="weekly-detailed" class="table-scroll" hidden>
+    <table class="centered-table weekly-detailed-table">
+      <thead>
+        <tr>
+          <th rowspan="2" scope="col" class="week-edge">Week</th>
+          {% for p in players %}<th colspan="3" scope="colgroup" class="player-start">{{ p.name }}</th>{% endfor %}
+          <th rowspan="2" scope="col" class="status-edge">Status</th>
+        </tr>
+        <tr>
+          {% for p in players %}
+            <th scope="col" class="player-start">For Net</th>
+            <th scope="col">Against Net</th>
+            <th scope="col" class="weekly-total">Total Net</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for wk in weeks %}
+          <tr data-week="{{ wk.number }}">
+            <td class="week-edge"><a href="#" hx-get="{{ url_for('tab_current', force_week=wk.number, season=selected_season.code) }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">Week {{ wk.number }}</a></td>
+            {% for p in players %}
+              {% set values = weekly_details[wk.number].get(p.id, {'for': 0, 'against': 0}) %}
+              <td class="player-start">{{ values['for'] }}</td>
+              <td>{{ values['against'] }}</td>
+              <td class="weekly-total">{{ values['for'] - values['against'] }}</td>
+            {% endfor %}
+            <td class="status-edge"><span class="status {{ wk.status }}">{{ wk.status|capitalize }}</span></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 """
 
@@ -993,7 +1062,7 @@ FIXTURES_PARTIAL = """
 <h4>Fixtures</h4>
 <div class="grid">
 {% for f in fixtures %}
-  <div class="chip"><span>#{{ f.match_number }}: {{ f.home }} vs {{ f.away }}</span></div>
+  <div class="chip"><span>#{{ f.match_number }}: {{ f.home }} vs {{ f.away }}<br><small class="muted">{{ f.kickoff_utc|kickoff_eastern }}</small></span></div>
 {% endfor %}
 </div>
 """
@@ -1023,7 +1092,7 @@ MATCHUPS_PARTIAL = """
               <label>Game
                 <select name="fixture_id" required onchange="syncTeamOptions(this)">
                   {% for fx in m['available'] %}
-                    <option value="{{ fx['id'] }}" data-home="{{ fx['home'] }}" data-away="{{ fx['away'] }}">#{{ fx['match_number'] }}: {{ fx['home'] }} vs {{ fx['away'] }}</option>
+                    <option value="{{ fx['id'] }}" data-home="{{ fx['home'] }}" data-away="{{ fx['away'] }}">#{{ fx['match_number'] }}: {{ fx['home'] }} vs {{ fx['away'] }} — {{ fx['kickoff_utc']|kickoff_eastern }}</option>
                   {% endfor %}
                 </select>
               </label>
@@ -1051,7 +1120,7 @@ MATCHUPS_PARTIAL = """
         {% if m['log'] %}
         <ul>
           {% for p in m['log'] %}
-            <li>{{ p['when'] }} — <strong>{{ p['player'] }}</strong> picked <strong>{{ p['team'] }}</strong> in #{{ p['match_number'] }} ({{ p['home'] }} vs {{ p['away'] }})</li>
+            <li class="pick-log-row" data-pick-id="{{ p['id'] }}">{{ p['when'] }} — <strong{% if you and you.id == p['player_id'] %} class="pick-player-own"{% endif %}>{{ p['player'] }}</strong> picked <strong class="pick-team-{{ p['outcome'] }}">{{ p['team'] }}</strong> in #{{ p['match_number'] }} ({{ p['home'] }} vs {{ p['away'] }})</li>
           {% endfor %}
         </ul>
         {% else %}
@@ -1153,6 +1222,42 @@ app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
 
 
+@app.template_filter("kickoff_eastern")
+def format_kickoff_eastern(value: Optional[datetime]) -> str:
+    """Stored naive timestamps are UTC; use Eastern's actual DST offset."""
+    if value is None:
+        return "Kickoff TBD (Eastern)"
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    local = value.astimezone(ZoneInfo("America/New_York"))
+    return f"{local:%a, %b} {local.day}, {local.year} · {local.strftime('%I:%M %p').lstrip('0')} {local:%Z}"
+
+
+@app.after_request
+def render_tab_navigation(response):
+    """Keep navigation in the same successful response as its tab content."""
+    tab = {
+        "tab_current": "current", "tab_open": "open",
+        "tab_season": "season", "tab_stats": "stats",
+    }.get(request.endpoint)
+    if tab is None or response.status_code != 200:
+        return response
+    response.vary.add("HX-Request")
+    response.vary.add("HX-History-Restore-Request")
+    body = response.get_data(as_text=True)
+    if (request.headers.get("HX-Request") == "true"
+            and request.headers.get("HX-History-Restore-Request") != "true"):
+        body += render_template_string(TABS_HTML, active_tab=tab, tabs_oob=True)
+    else:
+        body = render_template_string(
+            BASE_HTML, body=body, active_tab=tab,
+            you=current_player(SessionLocal()),
+            arsenal_banter_images=[url_for("static", filename=f) for f in ARSENAL_BANTER_FILENAMES],
+        )
+    response.set_data(body)
+    return response
+
+
 def render_recap_markdown(value: Optional[str]) -> Markup:
     """Render the Correspondent's Markdown using a deliberately small safe subset."""
     rendered = markdown.markdown(value or "")
@@ -1171,7 +1276,7 @@ def render_recap_markdown(value: Optional[str]) -> Markup:
 app.jinja_env.filters["recap_markdown"] = render_recap_markdown
 
 # For possible template inheritance later
-app.jinja_loader = DictLoader({'base.html': BASE_HTML})
+app.jinja_loader = DictLoader({'base.html': BASE_HTML, 'tabs.html': TABS_HTML})
 
 engine = create_engine(DB_PATH, connect_args={"check_same_thread": False})
 SessionLocal = scoped_session(sessionmaker(bind=engine))
@@ -2301,6 +2406,15 @@ def weekly_pick_records(db, week: Week) -> Dict[int, Dict[str, int]]:
             bucket = "correct" if pick.team == winning_team else "incorrect"
         records[pick.player_id][bucket] += 1
     return records
+
+def pick_display_outcome(pick: Pick, outcome: Optional[str]) -> str:
+    if outcome == "Draw":
+        return "draw"
+    if outcome not in ("Home", "Away"):
+        return "pending"
+    winner = pick.fixture.home if outcome == "Home" else pick.fixture.away
+    return "correct" if pick.team == winner else "incorrect"
+
 
 def season_detailed_totals_finalized(db, season: Season) -> Dict[int, Dict[str, int]]:
     """Aggregate pick records and opponents' pick records across finalized weeks."""
@@ -4913,7 +5027,6 @@ def tab_current():
         wk = current_drafting_week(db, season)
     if wk is None:
         return f"<div class='card'>No weeks initialized for {season.name} yet.</div>"
-    update_week_status(db, wk)
     return render_template_string(
         CURRENT_PARTIAL,
         current_week=wk,
@@ -5975,11 +6088,12 @@ def tab_season():
             current_rank = position
             previous_key = rank_key
         row["rank"] = current_rank
+    weekly_details = {wk.number: weekly_for_against(db, wk) for wk in weeks}
     weekly_points: Dict[int, Dict[int,int]] = {}
     for wk in weeks:
         weekly_points[wk.number] = weekly_points_map(db, wk)
     return render_template_string(SEASON_PARTIAL, season_rows=season_rows, players=players,
-                                  weeks=weeks, weekly_points=weekly_points, you=you,
+                                  weeks=weeks, weekly_points=weekly_points, weekly_details=weekly_details, you=you,
                                   seasons=seasons, selected_season=selected_season)
 
 
@@ -6082,14 +6196,18 @@ def matchups_partial(week_number: int):
     if wk is None:
         abort(404, "Week not found")
     you = current_player(db)
+    results = {r.fixture_id: r.outcome for r in db.query(Result).join(Fixture).filter(Fixture.week_id == wk.id)}
     matchups = []
     for m in db.query(Matchup).filter_by(week_id=wk.id).all():
         turn_id = compute_next_turn(db, m)
         avail = available_fixtures_for_matchup(db, m)
-        avail_view = [{"id": f.id, "match_number": f.match_number, "home": f.home, "away": f.away} for f in avail]
+        avail_view = [{"id": f.id, "match_number": f.match_number, "home": f.home, "away": f.away, "kickoff_utc": f.kickoff_utc} for f in avail]
         log = []
         for p in db.query(Pick).filter_by(matchup_id=m.id).order_by(Pick.created_at.asc(), Pick.id.asc()).all():
             log.append({
+                "id": p.id,
+                "player_id": p.player_id,
+                "outcome": pick_display_outcome(p, results.get(p.fixture_id)),
                 "player": p.player.name,
                 "match_number": p.fixture.match_number,
                 "home": p.fixture.home,
@@ -6117,7 +6235,6 @@ def scores_partial(week_number: int):
     wk = None if season is None else season_week(db, season, week_number)
     if wk is None:
         abort(404, "Week not found")
-    update_week_status(db, wk)
     points = weekly_points_map(db, wk)
     records = weekly_pick_records(db, wk)
     scores = []

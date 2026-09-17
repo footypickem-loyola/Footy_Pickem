@@ -1,6 +1,6 @@
 import json
 import unittest
-from datetime import datetime, timezone
+from unittest.mock import patch
 
 import trigger_score_sync
 
@@ -21,26 +21,16 @@ class FakeResponse:
 
 
 class TriggerScoreSyncTests(unittest.TestCase):
-    def test_schedule_runs_every_quarter_hour_on_eastern_weekends(self):
-        saturday = datetime(2026, 8, 22, 16, 15, tzinfo=timezone.utc)
-
-        self.assertTrue(trigger_score_sync.should_sync_now(saturday))
-
-    def test_schedule_runs_only_at_top_of_hour_on_eastern_weekdays(self):
-        monday_quarter_hour = datetime(2026, 8, 24, 16, 15, tzinfo=timezone.utc)
-        monday_top_of_hour = datetime(2026, 8, 24, 17, 0, tzinfo=timezone.utc)
-
-        self.assertFalse(trigger_score_sync.should_sync_now(monday_quarter_hour))
-        self.assertTrue(trigger_score_sync.should_sync_now(monday_top_of_hour))
-
-    def test_schedule_uses_eastern_day_at_utc_boundary(self):
-        saturday_utc_friday_eastern = datetime(
-            2026, 8, 22, 0, 15, tzinfo=timezone.utc
-        )
-
-        self.assertFalse(
-            trigger_score_sync.should_sync_now(saturday_utc_friday_eastern)
-        )
+    def test_every_cron_invocation_syncs_without_weekday_or_timezone_gate(self):
+        with patch.dict(trigger_score_sync.os.environ, {
+            "SYNC_URL": "https://pickem.example/tasks/sync-results",
+            "SYNC_SECRET": "test-secret",
+            "SYNC_SCHEDULE_TIMEZONE": "unused-legacy-value",
+        }), patch.object(trigger_score_sync, "trigger_score_sync", return_value={"ok": True}) as sync:
+            self.assertEqual(trigger_score_sync.main(), 0)
+            sync.assert_called_once_with(
+                "https://pickem.example/tasks/sync-results", "test-secret", timeout_seconds=180,
+            )
 
     def test_trigger_posts_secret_and_returns_summary(self):
         captured = {}

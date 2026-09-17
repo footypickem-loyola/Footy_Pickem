@@ -240,23 +240,22 @@ Set the same random value as the web service's `SYNC_SECRET` environment
 variable. The endpoint returns `403` for an incorrect secret and `503` when the
 server secret is not configured. Never put the secret in the URL or repository.
 
-The production cadence is every 15 minutes on Saturday and Sunday and hourly
-Monday through Friday, using Eastern time. Create a separate Railway cron
-service from this repository with:
+The intended production cadence is every 5 minutes, seven days a week.
+The caller syncs on every invocation. Railway scheduling is managed outside
+Git; this change does **not** update or deploy the production cron service.
+See [the pre-kickoff release notes](docs/minor-pre-kickoff-fixes.md) for the
+exact pending Railway change:
 
 ```text
 Start Command: python trigger_score_sync.py
-Cron Schedule: */15 * * * *
+Cron Schedule: */5 * * * *
 SYNC_URL: https://YOUR-APP.up.railway.app/tasks/sync-results
 SYNC_SECRET: the same secret configured on the web service
-SYNC_SCHEDULE_TIMEZONE: America/New_York
 ```
 
-Railway starts the caller every 15 minutes. The caller syncs on every weekend
-run and exits without calling the API on weekday quarter-hour runs except at
-the top of each hour. This application-level Eastern-time check keeps the
-Saturday/Sunday boundary correct through daylight-saving changes even though
-Railway evaluates cron expressions in UTC. The caller prints its result and
+Railway evaluates cron expressions in UTC; this cadence runs all day and is
+independent of Eastern daylight-saving changes. `SYNC_SCHEDULE_TIMEZONE` is
+no longer used. The caller prints its result and
 exits after every run. The web service performs the database write on the
 service that owns the persistent volume.
 Do not enable the cron schedule until the endpoint is deployed and Year 2 has
