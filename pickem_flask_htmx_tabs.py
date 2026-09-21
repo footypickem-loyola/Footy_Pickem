@@ -1180,7 +1180,7 @@ SCORES_PARTIAL = """
 
 <div class="card">
   <h5>Enter Results</h5>
-  {% if not read_only %}
+  {% if can_set_results %}
   <form hx-post="{{ url_for('set_result') }}" hx-target="#scores" hx-swap="outerHTML">
     <input type="hidden" name="week" value="{{ week.number }}">
     <input type="hidden" name="season" value="{{ season.code }}">
@@ -1204,7 +1204,7 @@ SCORES_PARTIAL = """
     </div>
     <button class="btn" type="submit">Set Result</button>
   </form>
-  {% else %}
+  {% elif read_only %}
     <div class="muted">Archived — results are read only.</div>
   {% endif %}
 </div>
@@ -1214,7 +1214,11 @@ SCORES_PARTIAL = """
 
 # -------------------- App + DB --------------------
 DB_PATH = os.environ.get("DB_PATH", "sqlite:///pickem.db")
-SECRET = os.environ.get("FLASK_SECRET", "devsecret")
+SECRET = os.environ.get("FLASK_SECRET", "").strip()
+if not SECRET:
+    if os.environ.get("RAILWAY_ENVIRONMENT_NAME", "").strip():
+        raise RuntimeError("FLASK_SECRET must be configured in Railway environments")
+    SECRET = "devsecret"
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = SECRET
@@ -6282,7 +6286,8 @@ def scores_partial(week_number: int):
         })
     return render_template_string(SCORES_PARTIAL, week=wk, season=season, scores=scores, payouts=payouts,
                                   fixtures=fixtures, fixtures_with_results=fixtures_with_results,
-                                  read_only=bool(season.is_archived))
+                                  read_only=bool(season.is_archived),
+                                  can_set_results=(not season.is_archived and is_admin_session()))
 
 
 def payouts_for_week(db, week):
@@ -6368,6 +6373,8 @@ def make_pick():
 
 @app.post("/set_result")
 def set_result():
+    if not is_admin_session():
+        abort(403, "Admin locked")
     db = SessionLocal()
     season = requested_season(db, request.form.get("season"))
     if season is None or season.is_archived:
