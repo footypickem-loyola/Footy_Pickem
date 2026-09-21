@@ -1178,6 +1178,7 @@ SCORES_PARTIAL = """
   </table>
 </div>
 
+{% if can_set_results or read_only %}
 <div class="card">
   <h5>Enter Results</h5>
   {% if can_set_results %}
@@ -1208,6 +1209,7 @@ SCORES_PARTIAL = """
     <div class="muted">Archived — results are read only.</div>
   {% endif %}
 </div>
+{% endif %}
 </div>
 """
 
