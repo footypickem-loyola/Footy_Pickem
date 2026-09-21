@@ -1,6 +1,8 @@
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from collections import Counter
@@ -875,11 +877,23 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn("Games Finalized", html)
         self.assertIn(f"<td>{player.name}</td><td>0</td><td>3</td>", html)
 
-    def test_result_submission_returns_replaceable_scores_panel(self):
+    def test_result_submission_requires_admin_and_returns_replaceable_scores_panel(self):
         db = app_module.SessionLocal()
         fixture = db.query(app_module.Fixture).order_by(app_module.Fixture.match_number).first()
 
         with app_module.app.test_client() as client:
+            unauthorized = client.post("/set_result", data={
+                "week": 1,
+                "fixture_id": fixture.id,
+                "outcome": fixture.home,
+            })
+            self.assertEqual(unauthorized.status_code, 403)
+            self.assertIsNone(
+                db.query(app_module.Result).filter_by(fixture_id=fixture.id).first()
+            )
+
+            with client.session_transaction() as admin_session:
+                admin_session[app_module.ADMIN_SESSION_KEY] = True
             response = client.post("/set_result", data={
                 "week": 1,
                 "fixture_id": fixture.id,
@@ -889,6 +903,37 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data.count(b'id="scores"'), 1)
         self.assertIn(fixture.home.encode(), response.data)
+
+    def test_scores_panel_hides_legacy_result_form_without_admin_session(self):
+        with app_module.app.test_client() as client:
+            response = client.get("/partials/scores/1")
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn(b"Enter Results", response.data)
+
+            with client.session_transaction() as admin_session:
+                admin_session[app_module.ADMIN_SESSION_KEY] = True
+            admin_response = client.get("/partials/scores/1")
+
+        self.assertEqual(admin_response.status_code, 200)
+        self.assertIn(b"Enter Results", admin_response.data)
+
+    def test_railway_import_requires_flask_secret(self):
+        env = os.environ.copy()
+        env["RAILWAY_ENVIRONMENT_NAME"] = "production"
+        env.pop("FLASK_SECRET", None)
+        env["DB_PATH"] = f"sqlite:///{Path(TEST_DIR.name) / 'missing-secret.db'}"
+        completed = subprocess.run(
+            [sys.executable, "-c", "import pickem_flask_htmx_tabs"],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "FLASK_SECRET must be configured in Railway environments",
+            completed.stderr,
+        )
 
     def test_season_page_has_centered_net_breakdown(self):
         db = app_module.SessionLocal()
