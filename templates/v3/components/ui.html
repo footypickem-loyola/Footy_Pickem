@@ -1,0 +1,24 @@
+{# Caller-based shells keep future page markup outside the application module.
+   Values autoescape; callers supply already-rendered Jinja markup. #}
+{% macro page_header(title, description='') -%}
+<header class="v3-page-header"><h1>{{ title }}</h1>{% if description %}<p class="muted">{{ description }}</p>{% endif %}</header>
+{%- endmacro %}
+{% macro card(title='') -%}
+<section class="card">{% if title %}{{ section_header(title) }}{% endif %}{{ caller() }}</section>
+{%- endmacro %}
+{% macro status_badge(label, state='neutral') -%}
+<span class="v3-status v3-status--{{ state if state in ['success', 'wrong', 'neutral'] else 'neutral' }}">{{ label }}</span>
+{%- endmacro %}
+{% macro section_header(title) -%}<h2 class="v3-section-header">{{ title }}</h2>{%- endmacro %}
+{% macro table_container(label) -%}
+<div class="table-scroll" role="region" aria-label="{{ label }}" tabindex="0">{{ caller() }}</div>
+{%- endmacro %}
+{% macro accordion(title) -%}
+<details class="card v3-accordion"><summary>{{ title }}</summary><div class="v3-accordion-body">{{ caller() }}</div></details>
+{%- endmacro %}
+{% macro matchup(home, away, description='') -%}
+<div class="v3-matchup"><strong>{{ home }}</strong><span class="muted">vs</span><strong>{{ away }}</strong>{% if description %}<span class="muted">{{ description }}</span>{% endif %}</div>
+{%- endmacro %}
+{% macro empty_state(title, description) -%}
+<div class="v3-empty-state"><h2>{{ title }}</h2><p class="muted">{{ description }}</p></div>
+{%- endmacro %}

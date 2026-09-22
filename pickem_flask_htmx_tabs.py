@@ -17,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from flask import Flask, abort, flash, jsonify, make_response, redirect, render_template_string, request, session, url_for
+from flask import Flask, abort, flash, jsonify, make_response, redirect, render_template, render_template_string, request, session, url_for
 from flask_session import Session
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text, ForeignKey, UniqueConstraint,
@@ -25,7 +25,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship, scoped_session
 from sqlalchemy.exc import IntegrityError
-from jinja2 import DictLoader
 import pandas as pd
 import bleach
 import markdown
@@ -61,249 +60,6 @@ ARSENAL_BANTER_FILENAMES = [
 ARSENAL_TEAM_ALIASES = {"arsenal", "arsenal fc"}
 
 # -------------------- In-memory base + partial templates --------------------
-TABS_HTML = """
-<div id="navigation-tabs" class="tabs"{% if tabs_oob %} hx-swap-oob="outerHTML"{% endif %}>
-      <button data-tab="current" class="tab {% if active_tab=='current' %}active{% endif %}" {% if active_tab=='current' %}aria-current="page"{% endif %}
-              hx-get="{{ url_for('tab_current') }}"
-              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
-        Current Week
-      </button>
-      <button data-tab="open" class="tab {% if active_tab=='open' %}active{% endif %}" {% if active_tab=='open' %}aria-current="page"{% endif %}
-              hx-get="{{ url_for('tab_open') }}"
-              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
-        Open Weeks
-      </button>
-      <button data-tab="season" class="tab {% if active_tab=='season' %}active{% endif %}" {% if active_tab=='season' %}aria-current="page"{% endif %}
-              hx-get="{{ url_for('tab_season') }}"
-              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
-        Season
-      </button>
-      <button data-tab="stats" class="tab {% if active_tab=='stats' %}active{% endif %}" {% if active_tab=='stats' %}aria-current="page"{% endif %}
-              hx-get="{{ url_for('tab_stats') }}"
-              hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
-        Stats
-      </button>
-</div>
-"""
-
-BASE_HTML = """
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>EPL Pick 'Em</title>
-  <script src="https://unpkg.com/htmx.org@2.0.2"></script>
-  <style>
-    :root { --blue:#0ea5e9; }
-    body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin: 24px; color: #111; }
-    a { color: var(--blue); text-decoration: none; }
-    nav { display:flex; gap:12px; align-items:center; margin-bottom:16px; }
-    .tabs { display:flex; gap:8px; align-items:center; }
-    .tab { padding:8px 12px; border:1px solid #ddd; border-radius:999px; cursor:pointer; background:#f8f8f8; }
-    .tab.active { background:var(--blue); color:#fff; border-color:#0284c7; }
-    .pick-log-row { padding:0; margin:0; }
-    .pick-player-own { background:#fef3c7; border-radius:2px; }
-    .pick-team-correct { background:#dbeafe; color:#1e40af; border-radius:2px; }
-    .pick-team-incorrect { background:#fee2e2; color:#991b1b; border-radius:2px; }
-    .weekly-heading { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
-    .weekly-toggle { display:inline-flex; border:1px solid #cbd5e1; border-radius:6px; overflow:hidden; }
-    .weekly-toggle button { border:0; background:#fff; color:#475569; padding:4px 9px; cursor:pointer; font:inherit; font-size:13px; }
-    .weekly-toggle button + button { border-left:1px solid #cbd5e1; }
-    .weekly-toggle button[aria-pressed="true"] { background:#e2e8f0; color:#1e293b; font-weight:600; }
-    .weekly-detailed-table { min-width:1280px; white-space:nowrap; }
-    .weekly-detailed-table th { background:#f8fafc; }
-    .weekly-detailed-table .player-start { border-left:2px solid #cbd5e1; }
-    .weekly-detailed-table .weekly-total { background:#f1f5f9; font-weight:650; }
-    .weekly-detailed-table .week-edge { border-right:2px solid #cbd5e1; }
-    .weekly-detailed-table .status-edge { border-left:2px solid #cbd5e1; }
-    .navright { margin-left:auto; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 12px 0; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
-    .row { display: flex; gap: 16px; flex-wrap: wrap; }
-    .col { flex: 1; min-width: 320px; }
-    .btn { padding: 8px 12px; border: 1px solid #ccc; background: #f8f8f8; border-radius: 8px; cursor: pointer; }
-    .btn.primary { background: var(--blue); color: white; border-color: #0284c7; }
-    .muted { color: #666; }
-    .badge { display: inline-block; padding: 2px 8px; background: #eef; border: 1px solid #aac; border-radius: 999px; font-size: 12px; }
-    select, input { padding: 6px; border: 1px solid #ccc; border-radius: 6px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
-    .centered-table th, .centered-table td { text-align: center; }
-    .season-summary-table { width:min(100%, 520px); margin:0 auto; }
-    .season-summary-table th, .season-summary-table td { padding:6px 10px; }
-    .detailed-season-table th.for-header { background:#2563eb; color:#fff; }
-    .detailed-season-table th.against-header { background:#dbeafe; color:#0f2852; }
-    .detailed-season-table .against-start { border-left:3px solid #1d4ed8; }
-    .detailed-season-table th.total-net-header { background:#f59e0b; color:#3b2600; border-left:3px solid #b45309; }
-    .detailed-season-table td.total-net-cell { background:#fef3c7; font-weight:700; border-left:3px solid #b45309; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
-    .chip { border: 1px solid #ddd; border-radius: 999px; padding: 6px 10px; display: flex; justify-content: space-between; align-items: center; }
-    .status { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ccc; font-size:12px; }
-    .status.drafting { background:#eef; border-color:#99c; }
-    .status.provisional { background:#ffe; border-color:#cc9; }
-    .status.finalized { background:#efe; border-color:#9c9; }
-    .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-    .modal-backdrop { display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.58); padding:20px; align-items:center; justify-content:center; }
-    .modal-backdrop.open { display:flex; }
-    .modal-card { width:min(420px, 100%); background:#fff; border-radius:16px; padding:22px; box-shadow:0 20px 60px rgba(0,0,0,.28); }
-    .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
-    .confirm-team { font-size:24px; font-weight:700; margin:8px 0 2px; }
-    .leader-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
-    .leader-stat { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px; }
-    .leader-label { color:#64748b; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
-    .leader-value { font-size:16px; font-weight:700; margin-top:3px; }
-    .leader-detail { color:#64748b; font-size:12px; margin-top:2px; }
-    .arsenal-banter { position:fixed; inset:0; z-index:2000; overflow:hidden; background:#111827; opacity:0; visibility:hidden; pointer-events:none; transition:opacity .18s ease, visibility .18s ease; }
-    .arsenal-banter.open { opacity:1; visibility:visible; pointer-events:auto; }
-    .arsenal-banter-image { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
-    .arsenal-banter-scrim { position:absolute; inset:0; background:linear-gradient(180deg, rgba(0,0,0,.12) 20%, rgba(0,0,0,.88) 100%); }
-    .arsenal-banter-copy { position:absolute; left:0; right:0; bottom:0; color:#fff; padding:clamp(28px, 7vw, 72px); text-align:center; text-shadow:0 2px 16px rgba(0,0,0,.7); }
-    .arsenal-banter-kicker { color:#fca5a5; font-size:13px; font-weight:800; letter-spacing:.18em; text-transform:uppercase; }
-    .arsenal-banter-message { max-width:760px; margin:10px auto 0; font-size:clamp(30px, 7vw, 64px); font-weight:850; line-height:1.02; }
-    .arsenal-banter-hint { margin-top:16px; font-size:13px; opacity:.78; }
-    body.banter-open { overflow:hidden; }
-    @media (max-width:640px) {
-      body { margin:12px; }
-      nav { align-items:flex-start; }
-      .tabs { flex-wrap:wrap; }
-      .navright { width:100%; margin-left:0; }
-      .col { min-width:100%; }
-      .arsenal-banter-copy { padding:28px 20px 36px; }
-    }
-  </style>
-</head>
-<body>
-  <nav>
-    {% include 'tabs.html' %}
-    <div class="navright muted">Logged in as: {{ you.name if you else 'Guest' }}</div>
-  </nav>
-  <div id="main">
-    {{ body|safe }}
-  </div>
-
-  <div id="pick-confirm-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="pick-confirm-title">
-    <div class="modal-card">
-      <h3 id="pick-confirm-title">Confirm pick</h3>
-      <div id="confirm-team" class="confirm-team"></div>
-      <div id="confirm-fixture" class="muted"></div>
-      <div class="modal-actions">
-        <button class="btn" type="button" onclick="closePickConfirm()">Go Back</button>
-        <button class="btn primary" type="button" onclick="submitConfirmedPick()">Confirm Pick</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="arsenal-banter" class="arsenal-banter" role="dialog" aria-modal="true" aria-hidden="true"
-       aria-label="Arsenal pick celebration" onclick="closeArsenalBanter()">
-    <img id="arsenal-banter-image" class="arsenal-banter-image" alt="Arsenal banter" decoding="async">
-    <div class="arsenal-banter-scrim"></div>
-    <div class="arsenal-banter-copy" aria-live="polite">
-      <div class="arsenal-banter-kicker">Excellent judgment</div>
-      <div class="arsenal-banter-message">You’ve picked the 2026 Champions. Nice pick!</div>
-      <div class="arsenal-banter-hint">Tap anywhere to dismiss</div>
-    </div>
-  </div>
-
-  <footer class="muted" style="margin-top:24px; font-size:12px; text-align:center;">
-    Football data provided by the
-    <a href="https://www.football-data.org/" target="_blank" rel="noopener noreferrer">Football-Data.org API</a>.
-  </footer>
-
-  <script>
-    let pendingPickForm = null;
-    let arsenalBanterTimer = null;
-    let lastArsenalBanterIndex = -1;
-    const arsenalBanterImages = {{ arsenal_banter_images|tojson }};
-
-    function setWeeklyView(button) {
-      const rollup = button.closest('#weekly-rollup');
-      const detailed = button.dataset.view === 'detailed';
-      rollup.querySelector('#weekly-summary').hidden = detailed;
-      rollup.querySelector('#weekly-detailed').hidden = !detailed;
-      rollup.querySelectorAll('.weekly-toggle button').forEach((choice) => {
-        choice.setAttribute('aria-pressed', String(choice === button));
-      });
-    }
-
-    function syncTeamOptions(gameSelect) {
-      const form = gameSelect.closest('form');
-      const teamSelect = form.querySelector('select[name="team"]');
-      const option = gameSelect.options[gameSelect.selectedIndex];
-      const previous = teamSelect.value;
-      teamSelect.innerHTML = '';
-      [option.dataset.home, option.dataset.away].forEach((team) => {
-        const teamOption = document.createElement('option');
-        teamOption.value = team;
-        teamOption.textContent = team;
-        teamSelect.appendChild(teamOption);
-      });
-      if ([option.dataset.home, option.dataset.away].includes(previous)) {
-        teamSelect.value = previous;
-      }
-    }
-
-    function openPickConfirm(form) {
-      pendingPickForm = form;
-      const gameSelect = form.querySelector('select[name="fixture_id"]');
-      const teamSelect = form.querySelector('select[name="team"]');
-      document.getElementById('confirm-team').textContent = teamSelect.value;
-      document.getElementById('confirm-fixture').textContent = gameSelect.options[gameSelect.selectedIndex].textContent;
-      document.getElementById('pick-confirm-modal').classList.add('open');
-    }
-
-    function closePickConfirm() {
-      document.getElementById('pick-confirm-modal').classList.remove('open');
-      pendingPickForm = null;
-    }
-
-    function submitConfirmedPick() {
-      if (!pendingPickForm) return;
-      const form = pendingPickForm;
-      closePickConfirm();
-      htmx.trigger(form, 'confirmedPick');
-    }
-
-    function randomArsenalBanterImage() {
-      let imageIndex = Math.floor(Math.random() * arsenalBanterImages.length);
-      if (arsenalBanterImages.length > 1 && imageIndex === lastArsenalBanterIndex) {
-        imageIndex = (imageIndex + 1) % arsenalBanterImages.length;
-      }
-      lastArsenalBanterIndex = imageIndex;
-      return arsenalBanterImages[imageIndex];
-    }
-
-    function showArsenalBanter() {
-      if (!arsenalBanterImages.length) return;
-      const overlay = document.getElementById('arsenal-banter');
-      const image = document.getElementById('arsenal-banter-image');
-      image.src = randomArsenalBanterImage();
-      overlay.classList.add('open');
-      overlay.setAttribute('aria-hidden', 'false');
-      document.body.classList.add('banter-open');
-      window.clearTimeout(arsenalBanterTimer);
-      arsenalBanterTimer = window.setTimeout(closeArsenalBanter, 4000);
-    }
-
-    function closeArsenalBanter() {
-      const overlay = document.getElementById('arsenal-banter');
-      window.clearTimeout(arsenalBanterTimer);
-      overlay.classList.remove('open');
-      overlay.setAttribute('aria-hidden', 'true');
-      document.body.classList.remove('banter-open');
-    }
-
-    document.body.addEventListener('arsenalBanter', showArsenalBanter);
-
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        closePickConfirm();
-        closeArsenalBanter();
-      }
-    });
-  </script>
-</body>
-</html>
-"""
-
 # --- Admin template ---
 ADMIN_HTML = """
 <!doctype html>
@@ -1244,7 +1000,7 @@ def render_tab_navigation(response):
     """Keep navigation in the same successful response as its tab content."""
     tab = {
         "tab_current": "current", "tab_open": "open",
-        "tab_season": "season", "tab_stats": "stats",
+        "tab_season": "season", "tab_stats": "stats", "tab_league": "league",
     }.get(request.endpoint)
     if tab is None or response.status_code != 200:
         return response
@@ -1253,10 +1009,10 @@ def render_tab_navigation(response):
     body = response.get_data(as_text=True)
     if (request.headers.get("HX-Request") == "true"
             and request.headers.get("HX-History-Restore-Request") != "true"):
-        body += render_template_string(TABS_HTML, active_tab=tab, tabs_oob=True)
+        body += render_template("v3/partials/navigation.html", active_tab=tab, tabs_oob=True)
     else:
-        body = render_template_string(
-            BASE_HTML, body=body, active_tab=tab,
+        body = render_template(
+            "v3/base.html", body=body, active_tab=tab,
             you=current_player(SessionLocal()),
             arsenal_banter_images=[url_for("static", filename=f) for f in ARSENAL_BANTER_FILENAMES],
         )
@@ -1280,9 +1036,6 @@ def render_recap_markdown(value: Optional[str]) -> Markup:
 
 
 app.jinja_env.filters["recap_markdown"] = render_recap_markdown
-
-# For possible template inheritance later
-app.jinja_loader = DictLoader({'base.html': BASE_HTML, 'tabs.html': TABS_HTML})
 
 engine = create_engine(DB_PATH, connect_args={"check_same_thread": False})
 SessionLocal = scoped_session(sessionmaker(bind=engine))
@@ -6165,6 +5918,11 @@ def tab_stats():
         you=you,
     )
 
+@app.get("/tab/league")
+def tab_league():
+    return render_template("v3/pages/league.html")
+
+
 # -------------------- Page shell --------------------
 @app.route("/")
 def shell():
@@ -6175,8 +5933,8 @@ def shell():
         url_for("static", filename=filename)
         for filename in ARSENAL_BANTER_FILENAMES
     ]
-    return render_template_string(
-        BASE_HTML,
+    return render_template(
+        "v3/base.html",
         you=you,
         active_tab='current',
         body=initial,

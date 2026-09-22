@@ -1,0 +1,15 @@
+<nav id="navigation-tabs" class="v3-navigation" aria-label="Primary"{% if tabs_oob %} hx-swap-oob="outerHTML"{% endif %}>
+  {% for key, label, endpoint in [
+    ('current', 'Matchweek', 'tab_current'),
+    ('open', 'Fixtures', 'tab_open'),
+    ('season', 'Table & Results', 'tab_season'),
+    ('stats', 'Training Ground', 'tab_stats'),
+    ('league', 'Around the League', 'tab_league')
+  ] %}
+  <a data-tab="{{ key }}" class="tab {% if active_tab == key %}active{% endif %}"
+     {% if active_tab == key %}aria-current="page"{% endif %}
+     href="{{ url_for(endpoint, season=request.args.get('season')) }}"
+     hx-get="{{ url_for(endpoint, season=request.args.get('season')) }}"
+     hx-target="#main" hx-swap="innerHTML" hx-push-url="true">{{ label }}</a>
+  {% endfor %}
+</nav>
