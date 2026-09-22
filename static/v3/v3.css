@@ -15,9 +15,11 @@ body { margin:0; background:var(--v3-background); color:var(--v3-text); font-fam
 a { color:var(--v3-blue); }
 a:hover { text-decoration:underline; }
 :focus-visible { outline:3px solid #6c9ff2; outline-offset:3px; }
-.v3-header { background:var(--v3-navy); color:white; }
-.v3-header-inner { max-width:var(--v3-max-width); margin:auto; padding:var(--v3-space-4) var(--v3-space-6); display:flex; align-items:center; gap:var(--v3-space-6); flex-wrap:wrap; }
-.v3-brand { color:white; font-size:1.25rem; font-weight:800; letter-spacing:-.035em; }
+.v3-header { background:linear-gradient(110deg,#19314c,var(--v3-navy)); color:white; }
+.v3-header-inner { max-width:var(--v3-max-width); margin:auto; padding:12px var(--v3-space-6); display:flex; align-items:center; gap:var(--v3-space-8); flex-wrap:wrap; }
+.v3-brand { display:inline-flex; align-items:center; gap:9px; flex-shrink:0; color:#f5f8fc; font-size:1.125rem; font-weight:700; letter-spacing:-.02em; line-height:1.2; white-space:nowrap; }
+.v3-brand:hover { text-decoration:none; }
+.v3-brand-mark { display:block; width:28px; height:28px; flex-shrink:0; }
 .v3-navigation { display:flex; gap:var(--v3-space-1); margin:0; flex:1; }
 .v3-navigation .tab { border:0; border-radius:6px; background:transparent; color:#d9e3f1; padding:10px; font-size:var(--v3-text-small); font-weight:600; text-align:center; }
 .v3-navigation .tab:hover { background:#243b59; text-decoration:none; }

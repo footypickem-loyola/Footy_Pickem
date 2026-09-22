@@ -13,7 +13,20 @@
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="v3-header">
     <div class="v3-header-inner">
-      <a class="v3-brand" href="{{ url_for('shell') }}">Footy Pick ’Em</a>
+      <a class="v3-brand" href="{{ url_for('shell') }}">
+        <svg class="v3-brand-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+          <circle cx="16" cy="16" r="14.5" fill="#f5f8fc"/>
+          <g fill="#19314c">
+            <path d="M16 10 22 14 20 21H12L10 14Z"/>
+            <path d="m11 2 5 4 5-4-5-1Zm17 6-6 1 2 6 7 1Zm0 17-1-7-6 4 2 7ZM9 29l2-7-6-4-1 7ZM1 16l7-1 2-6-6-1Z"/>
+          </g>
+          <g fill="none" stroke="#19314c" stroke-width=".8" opacity=".6">
+            <path d="m16 6 0 4m6 4 2 1m-4 6 1 1m-9-1-1 1m-1-8-2 1"/>
+            <circle cx="16" cy="16" r="14.5"/>
+          </g>
+        </svg>
+        <span>Footy Pick ’Em</span>
+      </a>
       {% include 'v3/partials/navigation.html' %}
       <div class="v3-account">
         <span>{{ you.name if you else 'Guest' }}</span>
