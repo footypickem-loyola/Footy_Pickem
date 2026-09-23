@@ -18,6 +18,7 @@ os.environ["DB_PATH"] = f"sqlite:///{Path(TEST_DIR.name) / 'test.db'}"
 os.environ["INIT_ON_START"] = "0"
 
 import pickem_flask_htmx_tabs as app_module  # noqa: E402
+from flask import template_rendered
 from scripts.copy_week1_correspondent_sources import (  # noqa: E402
     MaintenanceSafetyError,
     WINDOW_END,
@@ -837,7 +838,7 @@ class PickemAppTests(unittest.TestCase):
             response = client.get("/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Week 1", response.data)
+        self.assertIn(b"Matchweek 1", response.data)
         self.assertIn(b'id="matchups"', response.data)
         self.assertIn(b"Football-Data.org API", response.data)
         self.assertIn(b"You\xe2\x80\x99ve picked the 2026 Champions. Nice pick!", response.data)
@@ -1043,7 +1044,7 @@ class PickemAppTests(unittest.TestCase):
         self.assertTrue(all(row["net"] == 1 for row in club_records))
         self.assertTrue(all(row["accuracy_display"] == "100.0%" for row in club_records))
 
-    def test_stats_tab_and_current_week_leader_card_render(self):
+    def test_stats_tab_keeps_leaders_while_matchweek_prioritizes_matchup(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
         player_a_id = player_a.id
         player_a_name = player_a.name
@@ -1061,16 +1062,178 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b"Against Draws", stats_response.data)
         self.assertIn(b"+$50", stats_response.data)
         self.assertEqual(current_response.status_code, 200)
-        self.assertIn(b"Season Leaders", current_response.data)
-        self.assertIn(b"Most incorrect picks", current_response.data)
-        self.assertIn(b"Longest losing streak", current_response.data)
+        self.assertIn(b"Most incorrect picks", stats_response.data)
+        self.assertIn(b"Longest losing streak", stats_response.data)
+        self.assertNotIn(b"Season Leaders", current_response.data)
         self.assertIn(b"View all stats", current_response.data)
         self.assertIn(player_a_name.encode(), current_response.data)
         current_html = current_response.get_data(as_text=True)
         self.assertLess(
-            current_html.index("Season Leaders"),
             current_html.index('id="matchups"'),
+            current_html.index("Other Matchups"),
         )
+
+    def matchweek_response(self, player_name=None, headers=None, query=""):
+        views = []
+        def capture(sender, template, context, **extra):
+            if template.name == "v3/pages/matchweek.html":
+                views.append(context["mw"])
+        with app_module.app.test_client() as client:
+            if player_name:
+                with client.session_transaction() as user_session:
+                    user_session["player_name"] = player_name
+            with template_rendered.connected_to(capture, app_module.app):
+                response = client.get("/tab/current" + query, headers=headers or {})
+        return response, views[0]
+
+    def test_matchweek_draft_prioritizes_viewer_and_equal_club_actions(self):
+        db = app_module.SessionLocal()
+        matchup = db.query(app_module.Matchup).order_by(app_module.Matchup.id.desc()).first()
+        player = db.get(app_module.Player, matchup.first_picker_id)
+        response, mw = self.matchweek_response(player.name)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mw["primary"]["id"], matchup.id)
+        self.assertTrue(mw["primary"]["your_turn"])
+        self.assertEqual(len(mw["primary"]["available"]), 10)
+        self.assertEqual(response.data.count(b'class="mw-pick"'), 20)
+        self.assertIn(b"YOUR TURN", response.data)
+        self.assertIn(b"Draft So Far", response.data)
+        self.assertNotIn(b"<table", response.data)
+        self.assertNotIn(b"<select", response.data)
+        self.assertNotIn(b"LOCALTEST", response.data)
+        other_id = matchup.player_b_id if player.id == matchup.player_a_id else matchup.player_a_id
+        _, other_view = self.matchweek_response(db.get(app_module.Player, other_id).name)
+        self.assertFalse(other_view["primary"]["can_pick"])
+
+    def test_matchweek_tenth_pick_transitions_to_five_owned_fixtures_each(self):
+        db = app_module.SessionLocal()
+        matchup = db.query(app_module.Matchup).first()
+        fixtures = db.query(app_module.Fixture).order_by(app_module.Fixture.match_number).all()
+        matchup_id = matchup.id
+        for index, fixture in enumerate(fixtures):
+            turn = db.get(app_module.Player, app_module.compute_next_turn(db, matchup))
+            with app_module.app.test_client() as client:
+                with client.session_transaction() as user_session:
+                    user_session["player_name"] = turn.name
+                response = client.post("/pick", headers={"HX-Request": "true"}, data={
+                    "week": 1, "season": "year-2", "matchup_id": matchup_id,
+                    "fixture_id": fixture.id, "team": fixture.home, "presentation": "v3",
+                })
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data.count(b'id="matchweek-view"'), 1)
+            if index < 9:
+                self.assertIn(b'data-state="draft"', response.data)
+            else:
+                self.assertIn(b'data-state="ready"', response.data)
+                self.assertNotIn(b'class="mw-pick"', response.data)
+                self.assertNotIn(b"YOUR TURN", response.data)
+                self.assertIn(b"Draft History", response.data)
+        _, mw = self.matchweek_response(turn.name)
+        self.assertTrue(mw["primary"]["draft_complete"])
+        owned = [player["owned"] for player in mw["primary"]["players"]]
+        self.assertEqual([len(rows) for rows in owned], [5, 5])
+        self.assertEqual(len({row["fixture_id"] for rows in owned for row in rows}), 10)
+        self.assertIsNone(mw["primary"]["payout"])
+
+    def test_matchweek_owned_fixtures_sort_kickoffs_missing_last(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        picks = db.query(app_module.Pick).filter_by(matchup_id=matchup.id, player_id=player_a.id).order_by(app_module.Pick.id).all()
+        for index, pick in enumerate(picks):
+            pick.fixture.kickoff_utc = datetime(2026, 9, 20, 12) + timedelta(hours=5-index)
+        picks[0].fixture.kickoff_utc = None
+        expected = [pick.fixture_id for pick in reversed(picks[1:])] + [picks[0].fixture_id]
+        db.commit()
+        _, mw = self.matchweek_response(player_a.name)
+        owned = next(player["owned"] for player in mw["primary"]["players"] if player["id"] == player_a.id)
+        self.assertEqual([row["fixture_id"] for row in owned], expected)
+
+    def test_matchweek_final_uses_official_points_outcomes_and_payout(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        picks = db.query(app_module.Pick).filter_by(matchup_id=matchup.id, player_id=player_a.id).order_by(app_module.Pick.id).all()
+        first_result = db.query(app_module.Result).filter_by(fixture_id=picks[0].fixture_id).one()
+        first_result.outcome = "Draw"
+        first_result.home_score = first_result.away_score = 1
+        second_result = db.query(app_module.Result).filter_by(fixture_id=picks[1].fixture_id).one()
+        second_result.outcome = "Away" if picks[1].team == picks[1].fixture.home else "Home"
+        db.commit()
+        points = app_module.weekly_points_map(db, week)
+        payout = next(row for row in app_module.payouts_for_week(db, week) if row["to"] == player_a.name)
+        response, mw = self.matchweek_response(player_a.name)
+        primary = mw["primary"]
+        self.assertEqual(primary["state"], "final")
+        self.assertEqual(primary["payout"], payout)
+        self.assertEqual(primary["winner"], player_a.name)
+        for player in primary["players"]:
+            self.assertEqual(player["for"], points[player["id"]])
+        rows = {row["id"]: row for row in primary["history"]}
+        self.assertEqual((rows[picks[0].id]["outcome"], rows[picks[0].id]["contribution"]), ("draw", 0))
+        self.assertEqual((rows[picks[1].id]["outcome"], rows[picks[1].id]["contribution"]), ("incorrect", -1))
+        self.assertEqual((rows[picks[2].id]["outcome"], rows[picks[2].id]["contribution"]), ("correct", 1))
+        self.assertIn("1–1".encode(), response.data)
+        for label in (b"Correct", b"Incorrect", b"Draw", b"Net margin", b"Payout"):
+            self.assertIn(label, response.data)
+        self.assertNotIn(b'class="mw-pick"', response.data)
+
+    def test_matchweek_partial_results_are_not_live_or_final_payout(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        db.query(app_module.Result).filter_by(fixture_id=db.query(app_module.Fixture).first().id).delete()
+        app_module.update_week_status(db, week)
+        response, mw = self.matchweek_response(player_a.name)
+        self.assertEqual(mw["primary"]["state"], "ready")
+        self.assertIsNone(mw["primary"]["payout"])
+        self.assertNotIn(b"Payout $", response.data)
+        self.assertNotIn(b">Live<", response.data)
+        self.assertIn(b"Awaiting result", response.data)
+
+    def test_matchweek_guest_unmatched_archived_and_missing_matchups(self):
+        db = app_module.SessionLocal()
+        db.add(app_module.Player(name="Unassigned"))
+        db.commit()
+        for viewer in (None, "Unassigned"):
+            response, mw = self.matchweek_response(viewer)
+            self.assertFalse(mw["has_matchup"])
+            self.assertFalse(mw["primary"]["can_pick"])
+            self.assertIn(b"viewing a league matchup", response.data)
+            self.assertNotIn(b"YOUR TURN", response.data)
+        season = db.query(app_module.Season).filter_by(code="year-2").one()
+        season.is_archived = 1
+        db.commit()
+        response, mw = self.matchweek_response("Steve", query="?season=year-2")
+        self.assertFalse(mw["primary"]["can_pick"])
+        self.assertIn("Archived — read only".encode(), response.data)
+        db.query(app_module.Matchup).delete()
+        db.commit()
+        response, mw = self.matchweek_response("Steve", query="?season=year-2")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(mw["primary"])
+        self.assertIn(b"No matchups scheduled", response.data)
+
+    def test_matchweek_refresh_full_htmx_and_history_share_model(self):
+        for headers in ({}, {"HX-Request": "true"}, {"HX-Request": "true", "HX-History-Restore-Request": "true"}):
+            response, mw = self.matchweek_response("Steve", headers=headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(mw["primary"]["is_yours"])
+            self.assertEqual(response.data.count(b'id="matchweek-view"'), 1)
+            self.assertIn(b'hx-target="#matchweek-view"', response.data)
+            self.assertIn(b'data-tab="current" class="tab active"', response.data)
+        with app_module.app.test_client() as client:
+            response = client.get("/partials/matchweek/1?season=year-2")
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn(b"<html>", response.data)
+            self.assertEqual(client.get("/partials/matchweek/999").status_code, 404)
+
+    def test_matchweek_untrusted_names_and_teams_are_escaped(self):
+        db = app_module.SessionLocal()
+        matchup = db.query(app_module.Matchup).first()
+        player = db.get(app_module.Player, matchup.first_picker_id)
+        player.name = '<img src=x onerror="alert(1)">'
+        fixture = db.query(app_module.Fixture).first()
+        fixture.home = '<script>alert(2)</script>'
+        db.commit()
+        response, _ = self.matchweek_response(player.name)
+        self.assertNotIn(b'<img src=x', response.data)
+        self.assertNotIn(b'<script>alert(2)', response.data)
+        self.assertIn(b'&lt;script&gt;alert(2)&lt;/script&gt;', response.data)
 
     def test_recap_context_contains_only_deterministic_week_facts(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()

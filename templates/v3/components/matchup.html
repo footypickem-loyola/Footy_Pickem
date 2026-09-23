@@ -1,0 +1,71 @@
+<section id="matchups" class="mw-matchup" data-matchup-id="{{ m.id }}" data-state="{{ m.state }}" aria-label="{{ m.players[0].name }} versus {{ m.players[1].name }}">
+  <div class="card mw-summary">
+    <div class="mw-summary-top"><span class="mw-eyebrow">{{ 'Your matchup' if m.is_yours else 'League matchup' }}</span><span class="mw-state mw-state--{{ m.state }}">{{ m.state_label }}</span></div>
+    <div class="mw-versus">
+      {% for player in m.players %}
+      <div class="mw-player">
+        <span class="mw-avatar" aria-hidden="true">{{ player.name[:1] }}</span>
+        <div><h2>{{ player.name }}{% if player.is_you %} <span class="mw-you">You</span>{% endif %}</h2><span class="muted">{{ player.owned|length }} fixtures owned</span></div>
+        {% if m.state == 'final' %}<strong class="mw-score" aria-label="{{ player.name }} For {{ player['for'] }}">{{ player['for'] }}</strong>{% endif %}
+      </div>
+      {% if not loop.last %}<span class="mw-vs">vs</span>{% endif %}
+      {% endfor %}
+    </div>
+    {% if m.state == 'final' %}
+      <div class="mw-final-summary">
+        <strong>{% if m.winner %}{{ m.winner }} wins{% else %}Matchup drawn{% endif %}</strong>
+        <span>Net margin {{ m.payout.points }} · Payout ${{ m.payout.payout }}</span>
+        {% if m.winner %}<span class="muted">{{ m.payout['from'] }} pays {{ m.payout.to }}</span>{% endif %}
+      </div>
+    {% elif m.state == 'draft' %}
+      <div class="mw-turn{% if m.your_turn %} mw-turn--yours{% endif %}">
+        <strong>{{ 'YOUR TURN' if m.your_turn else m.turn.name ~ '’s turn' }}</strong>
+        <span>{{ m.total_picks }}/10 picked · First picker: {{ m.first_picker }}</span>
+      </div>
+    {% else %}
+      <p class="mw-ready-note">Your slate is set. Five fixtures each, ordered by kickoff. Final results appear as they are recorded.</p>
+    {% endif %}
+  </div>
+  {% if m.state == 'draft' %}
+  <div class="mw-draft-layout">
+    <section class="card mw-available" aria-labelledby="available-title">
+      <div class="mw-section-heading"><h2 id="available-title">Available fixtures</h2><span class="muted">{{ m.available|length }} remaining</span></div>
+      <p class="muted">Choose either club. Each fixture can be picked once in your matchup.</p>
+      {% for fixture in m.available %}
+      <article class="mw-fixture" data-fixture-id="{{ fixture.id }}">
+        <p class="mw-kickoff">{{ fixture.kickoff_utc|kickoff_eastern }}</p>
+        <div class="mw-club-options">
+          {% for team in [fixture.home, fixture.away] %}
+          <form method="post" action="{{ url_for('make_pick') }}" hx-post="{{ url_for('make_pick') }}" hx-trigger="confirmedPick" hx-target="#matchweek-view" hx-swap="outerHTML" hx-disabled-elt="find button"
+                data-fixture-label="{{ fixture.home }} vs {{ fixture.away }}" onsubmit="openPickConfirm(this); return false;"
+                hx-on::response-error="this.querySelector('[role=alert]').hidden = false">
+            <input type="hidden" name="presentation" value="v3">
+            <input type="hidden" name="week" value="{{ mw.week }}">
+            <input type="hidden" name="season" value="{{ mw.season_code }}">
+            <input type="hidden" name="matchup_id" value="{{ m.id }}">
+            <input type="hidden" name="fixture_id" value="{{ fixture.id }}">
+            <input type="hidden" name="team" value="{{ team }}">
+            <button type="submit" class="mw-pick"{% if not m.can_pick %} disabled{% endif %} aria-label="Pick {{ team }} against {{ fixture.away if loop.first else fixture.home }}"><span>{{ team }}</span><span class="mw-pick-label">{{ 'Pick' if m.can_pick else ('Home' if loop.first else 'Away') }}</span></button>
+            <p class="mw-error" role="alert" hidden>Pick not saved. Refresh matchweek to check whose turn it is and try again.</p>
+          </form>
+          {% if loop.first %}<span class="mw-vs">vs</span>{% endif %}
+          {% endfor %}
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+    {% include 'v3/components/draft_history.html' %}
+  </div>
+  {% else %}
+    <div class="mw-owned-grid">
+      {% for player in m.players %}
+      <section class="card mw-owned" data-owner-id="{{ player.id }}" aria-label="{{ player.name }}’s fixtures">
+        <div class="mw-section-heading"><h2>{{ player.name }}’s slate</h2><span class="muted">{{ player.owned|length }} fixtures</span></div>
+        {% if m.state == 'final' %}<p class="mw-totals">For {{ player['for'] }} · Against {{ player.against }} · Net {{ '%+d'|format(player.net) }}</p>{% endif %}
+        {% for pick in player.owned %}{% include 'v3/components/owned_fixture.html' %}{% else %}<p class="muted">No fixtures drafted.</p>{% endfor %}
+      </section>
+      {% endfor %}
+    </div>
+    {% include 'v3/components/draft_history.html' %}
+  {% endif %}
+</section>

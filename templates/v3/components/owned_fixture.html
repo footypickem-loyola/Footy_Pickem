@@ -1,0 +1,11 @@
+<article class="mw-fixture mw-owned-fixture mw-result--{{ pick.outcome }}" data-fixture-id="{{ pick.fixture_id }}">
+  <p class="mw-kickoff">{{ pick.kickoff_utc|kickoff_eastern }}</p>
+  <div class="mw-fixture-identity">
+    <span{% if pick.team == pick.home %} class="mw-selected"{% endif %}>{{ pick.home }}</span>
+    <span class="mw-vs">{{ pick.score if pick.score else 'vs' }}</span>
+    <span{% if pick.team == pick.away %} class="mw-selected"{% endif %}>{{ pick.away }}</span>
+  </div>
+  <div class="mw-fixture-foot"><span>Pick: <strong>{{ pick.team }}</strong></span>
+    {% if pick.contribution is not none %}<span class="mw-result">{{ pick.outcome|capitalize }} <strong>{{ '%+d'|format(pick.contribution) if pick.contribution else '0' }}</strong></span>{% else %}<span class="muted">Awaiting result</span>{% endif %}
+  </div>
+</article>

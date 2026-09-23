@@ -34,8 +34,8 @@
       pendingPickForm = form;
       const gameSelect = form.querySelector('select[name="fixture_id"]');
       const teamSelect = form.querySelector('select[name="team"]');
-      document.getElementById('confirm-team').textContent = teamSelect.value;
-      document.getElementById('confirm-fixture').textContent = gameSelect.options[gameSelect.selectedIndex].textContent;
+      document.getElementById('confirm-team').textContent = teamSelect ? teamSelect.value : form.elements.team.value;
+      document.getElementById('confirm-fixture').textContent = gameSelect ? gameSelect.options[gameSelect.selectedIndex].textContent : form.dataset.fixtureLabel;
       document.getElementById('pick-confirm-modal').classList.add('open');
     }
 
