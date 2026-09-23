@@ -1,0 +1,5 @@
+{% from 'v3/components/ui.html' import page_header, card, empty_state %}
+{{ page_header('Around the League', 'The league desk') }}
+{% call card() %}
+  {{ empty_state('More from around the league is on the way', 'League coverage will arrive in a later V3 update. Existing weekly recaps remain available with matchweek scores.') }}
+{% endcall %}

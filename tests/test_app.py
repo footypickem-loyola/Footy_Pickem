@@ -267,7 +267,7 @@ class PickemAppTests(unittest.TestCase):
 
     def test_navigation_has_one_active_tab_for_full_htmx_and_history_requests(self):
         with app_module.app.test_client() as client:
-            for tab in ("current", "open", "season", "stats"):
+            for tab in ("current", "open", "season", "stats", "league"):
                 for headers in ({}, {"HX-Request": "true"}, {
                     "HX-Request": "true", "HX-History-Restore-Request": "true",
                 }):
@@ -286,6 +286,35 @@ class PickemAppTests(unittest.TestCase):
             error = client.get('/tab/current?force_week=999', headers={"HX-Request": "true"})
             self.assertEqual(error.status_code, 404)
             self.assertNotIn(b'navigation-tabs', error.data)
+
+    def test_v3_navigation_links_assets_and_join_flow(self):
+        with app_module.app.test_client() as client:
+            self.assertEqual(client.get("/join").status_code, 200)
+            self.assertEqual(client.post("/join", data={
+                "name": "Steve", "room_code": "wrong",
+            }).status_code, 403)
+            joined = client.post("/join", data={
+                "name": "Steve", "room_code": "LOCALTEST",
+            }, follow_redirects=True)
+            self.assertEqual(joined.status_code, 200)
+            self.assertIn(b"Steve", joined.data)
+            html = client.get("/tab/season?season=year-2").get_data(as_text=True)
+            nav = re.search(r'<nav id="navigation-tabs".*?</nav>', html, re.S).group()
+            self.assertEqual(nav.count('hx-target="#main"'), 5)
+            for path, label in [("current", "Matchweek"), ("open", "Fixtures"),
+                                ("season", "Table &amp; Results"), ("stats", "Training Ground"),
+                                ("league", "Around the League")]:
+                self.assertIn(f'href="/tab/{path}?season=year-2"', nav)
+                self.assertIn(label, nav)
+            self.assertNotIn("Admin", nav)
+            self.assertIn('href="/admin"', html)
+            self.assertEqual(client.get("/admin").status_code, 200)
+            for asset in ("legacy.css", "legacy.js", "v3.css"):
+                self.assertEqual(client.get(f"/static/v3/{asset}").status_code, 200)
+            with client.session_transaction() as user_session:
+                user_session["player_name"] = "<script>alert(1)</script>"
+            escaped = client.get("/").get_data(as_text=True)
+            self.assertNotIn("<script>alert(1)</script>", escaped)
 
     def test_weekly_details_match_existing_weekly_calculations(self):
         db, week, matchup, a, b = self.finalize_one_sided_matchup()
@@ -812,7 +841,8 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b'id="matchups"', response.data)
         self.assertIn(b"Football-Data.org API", response.data)
         self.assertIn(b"You\xe2\x80\x99ve picked the 2026 Champions. Nice pick!", response.data)
-        self.assertIn(b"setTimeout(closeArsenalBanter, 4000)", response.data)
+        self.assertIn(b"/static/v3/legacy.js", response.data)
+        self.assertIn("setTimeout(closeArsenalBanter, 4000)", (Path(app_module.app.static_folder) / "v3/legacy.js").read_text())
         for image_number in range(1, 11):
             self.assertIn(
                 f"/static/arsenal_banter/banter_{image_number:02d}.jpg".encode(),

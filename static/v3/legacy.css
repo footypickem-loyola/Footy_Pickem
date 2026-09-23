@@ -1,0 +1,76 @@
+
+    :root { --blue:#0ea5e9; }
+    body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin: 24px; color: #111; }
+    a { color: var(--blue); text-decoration: none; }
+    nav { display:flex; gap:12px; align-items:center; margin-bottom:16px; }
+    .tabs { display:flex; gap:8px; align-items:center; }
+    .tab { padding:8px 12px; border:1px solid #ddd; border-radius:999px; cursor:pointer; background:#f8f8f8; }
+    .tab.active { background:var(--blue); color:#fff; border-color:#0284c7; }
+    .pick-log-row { padding:0; margin:0; }
+    .pick-player-own { background:#fef3c7; border-radius:2px; }
+    .pick-team-correct { background:#dbeafe; color:#1e40af; border-radius:2px; }
+    .pick-team-incorrect { background:#fee2e2; color:#991b1b; border-radius:2px; }
+    .weekly-heading { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+    .weekly-toggle { display:inline-flex; border:1px solid #cbd5e1; border-radius:6px; overflow:hidden; }
+    .weekly-toggle button { border:0; background:#fff; color:#475569; padding:4px 9px; cursor:pointer; font:inherit; font-size:13px; }
+    .weekly-toggle button + button { border-left:1px solid #cbd5e1; }
+    .weekly-toggle button[aria-pressed="true"] { background:#e2e8f0; color:#1e293b; font-weight:600; }
+    .weekly-detailed-table { min-width:1280px; white-space:nowrap; }
+    .weekly-detailed-table th { background:#f8fafc; }
+    .weekly-detailed-table .player-start { border-left:2px solid #cbd5e1; }
+    .weekly-detailed-table .weekly-total { background:#f1f5f9; font-weight:650; }
+    .weekly-detailed-table .week-edge { border-right:2px solid #cbd5e1; }
+    .weekly-detailed-table .status-edge { border-left:2px solid #cbd5e1; }
+    .navright { margin-left:auto; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 12px 0; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; }
+    .col { flex: 1; min-width: 320px; }
+    .btn { padding: 8px 12px; border: 1px solid #ccc; background: #f8f8f8; border-radius: 8px; cursor: pointer; }
+    .btn.primary { background: var(--blue); color: white; border-color: #0284c7; }
+    .muted { color: #666; }
+    .badge { display: inline-block; padding: 2px 8px; background: #eef; border: 1px solid #aac; border-radius: 999px; font-size: 12px; }
+    select, input { padding: 6px; border: 1px solid #ccc; border-radius: 6px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
+    .centered-table th, .centered-table td { text-align: center; }
+    .season-summary-table { width:min(100%, 520px); margin:0 auto; }
+    .season-summary-table th, .season-summary-table td { padding:6px 10px; }
+    .detailed-season-table th.for-header { background:#2563eb; color:#fff; }
+    .detailed-season-table th.against-header { background:#dbeafe; color:#0f2852; }
+    .detailed-season-table .against-start { border-left:3px solid #1d4ed8; }
+    .detailed-season-table th.total-net-header { background:#f59e0b; color:#3b2600; border-left:3px solid #b45309; }
+    .detailed-season-table td.total-net-cell { background:#fef3c7; font-weight:700; border-left:3px solid #b45309; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+    .chip { border: 1px solid #ddd; border-radius: 999px; padding: 6px 10px; display: flex; justify-content: space-between; align-items: center; }
+    .status { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ccc; font-size:12px; }
+    .status.drafting { background:#eef; border-color:#99c; }
+    .status.provisional { background:#ffe; border-color:#cc9; }
+    .status.finalized { background:#efe; border-color:#9c9; }
+    .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .modal-backdrop { display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.58); padding:20px; align-items:center; justify-content:center; }
+    .modal-backdrop.open { display:flex; }
+    .modal-card { width:min(420px, 100%); background:#fff; border-radius:16px; padding:22px; box-shadow:0 20px 60px rgba(0,0,0,.28); }
+    .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
+    .confirm-team { font-size:24px; font-weight:700; margin:8px 0 2px; }
+    .leader-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+    .leader-stat { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px; }
+    .leader-label { color:#64748b; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+    .leader-value { font-size:16px; font-weight:700; margin-top:3px; }
+    .leader-detail { color:#64748b; font-size:12px; margin-top:2px; }
+    .arsenal-banter { position:fixed; inset:0; z-index:2000; overflow:hidden; background:#111827; opacity:0; visibility:hidden; pointer-events:none; transition:opacity .18s ease, visibility .18s ease; }
+    .arsenal-banter.open { opacity:1; visibility:visible; pointer-events:auto; }
+    .arsenal-banter-image { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+    .arsenal-banter-scrim { position:absolute; inset:0; background:linear-gradient(180deg, rgba(0,0,0,.12) 20%, rgba(0,0,0,.88) 100%); }
+    .arsenal-banter-copy { position:absolute; left:0; right:0; bottom:0; color:#fff; padding:clamp(28px, 7vw, 72px); text-align:center; text-shadow:0 2px 16px rgba(0,0,0,.7); }
+    .arsenal-banter-kicker { color:#fca5a5; font-size:13px; font-weight:800; letter-spacing:.18em; text-transform:uppercase; }
+    .arsenal-banter-message { max-width:760px; margin:10px auto 0; font-size:clamp(30px, 7vw, 64px); font-weight:850; line-height:1.02; }
+    .arsenal-banter-hint { margin-top:16px; font-size:13px; opacity:.78; }
+    body.banter-open { overflow:hidden; }
+    @media (max-width:640px) {
+      body { margin:12px; }
+      nav { align-items:flex-start; }
+      .tabs { flex-wrap:wrap; }
+      .navright { width:100%; margin-left:0; }
+      .col { min-width:100%; }
+      .arsenal-banter-copy { padding:28px 20px 36px; }
+    }
