@@ -1,14 +1,18 @@
-<table class="desk-table">
+{% set columns = [('rank', 'Rank'), ('name', 'Player'), ('for', 'For'), ('against', 'Against'), ('net', 'Net')] %}
+{% if detailed %}{% set columns = columns + [('correct', 'Correct'), ('incorrect', 'Incorrect'), ('draws', 'Draws'), ('for', 'Net'), ('against_correct', 'Correct'), ('against_incorrect', 'Incorrect'), ('against_draws', 'Draws'), ('against', 'Net')] %}{% endif %}
+<table class="desk-table desk-sortable">
   <caption class="desk-sr-only">{{ selected_season.name }} official league standings — {{ 'Detailed' if detailed else 'Summary' }}</caption>
   <thead>
-    {% if detailed %}<tr class="desk-column-groups"><th colspan="5" scope="colgroup">Standings</th><th colspan="3" scope="colgroup">Your Picks</th><th colspan="3" scope="colgroup">Opponent Picks / Against</th></tr>{% endif %}
-    <tr><th scope="col">Rank</th><th scope="col">Player</th><th scope="col">For</th><th scope="col">Against</th><th scope="col">Net</th>
-    {% if detailed %}<th scope="col" class="desk-group-start">Correct</th><th scope="col">Incorrect</th><th scope="col">Draws</th><th scope="col" class="desk-group-start">Correct</th><th scope="col">Incorrect</th><th scope="col">Draws</th>{% endif %}</tr>
+    {% if detailed %}<tr class="desk-column-groups"><th colspan="5" scope="colgroup">Standings</th><th colspan="4" scope="colgroup">Your Picks</th><th colspan="4" scope="colgroup">Opponents Picks</th></tr>{% endif %}
+    <tr>{% for key, label in columns %}
+      <th scope="col"{% if loop.index0 in [5, 9] %} class="desk-group-start"{% endif %}{% if key == 'rank' %} aria-sort="ascending"{% endif %}><button type="button" data-sort-column="{{ loop.index0 }}" data-sort-type="{{ 'text' if key == 'name' else 'number' }}">{{ label }}<span class="desk-sort-icon" aria-hidden="true">↕</span></button></th>
+    {% endfor %}</tr>
   </thead>
   <tbody>
-    {% for row in results.rows %}<tr data-player-id="{{ row.id }}"{% if row.is_you %} class="desk-your-row"{% endif %}>
-      <td>{{ row.rank }}</td><th scope="row">{{ row.name }}</th><td>{{ row['for'] }}</td><td>{{ row.against }}</td><td class="desk-net {{ 'desk-positive' if row.net > 0 else 'desk-negative' if row.net < 0 else '' }}">{{ row.net }}</td>
-      {% if detailed %}<td class="desk-group-start">{{ row.correct }}</td><td>{{ row.incorrect }}</td><td>{{ row.draws }}</td><td class="desk-group-start">{{ row.against_correct }}</td><td>{{ row.against_incorrect }}</td><td>{{ row.against_draws }}</td>{% endif %}
+    {% for row in results.rows %}<tr data-player-id="{{ row.id }}" data-official-order="{{ loop.index0 }}"{% if row.is_you %} class="desk-your-row"{% endif %}>
+      {% for key, label in columns %}
+        {% if key == 'name' %}<th scope="row">{{ row.name }}</th>{% else %}<td{% if loop.index0 in [5, 9] %} class="desk-group-start"{% elif label == 'Net' %} class="desk-net {{ 'desk-positive' if row[key] > 0 else 'desk-negative' if row[key] < 0 else '' }}"{% endif %}>{{ row[key] }}</td>{% endif %}
+      {% endfor %}
     </tr>{% endfor %}
   </tbody>
 </table>

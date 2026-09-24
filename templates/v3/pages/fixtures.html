@@ -1,6 +1,6 @@
 <section class="desk-page" id="fixtures-view">
   <header class="desk-heading">
-    <div><h1>Fixtures</h1><p class="muted">Upcoming Pick ’Em matchups for {{ selected_season.name if selected_season else 'your league' }}.</p></div>
+    <div><h1>Fixtures</h1><p class="muted">Upcoming Pick ’Em matchups for the rest of the season</p></div>
     {% include 'v3/components/season_picker.html' %}
   </header>
   {% if not schedule %}<div class="card">No seasons initialized yet.</div>

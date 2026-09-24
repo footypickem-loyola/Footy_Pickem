@@ -20,6 +20,10 @@ def build_table_results(*, standings, details, completed_matchweeks, viewer_id, 
     for mw in sorted(completed_matchweeks, key=lambda item: item["week"], reverse=True):
         matchups = ([mw["primary"]] if mw["primary"] else []) + mw["others"]
         matchups.sort(key=lambda item: item["id"])
+        matchups = [dict(matchup, players=[
+            dict(player, against_draws=matchup["players"][1 - index]["pick_record"]["draw"])
+            for index, player in enumerate(matchup["players"])
+        ]) for matchup in matchups]
         weeks.append({"number": mw["week"], "matchups": matchups,
                       "dates": schedule_dates((fixtures_by_week or {}).get(mw["week"], []))})
     return {"rows": rows, "weeks": weeks}

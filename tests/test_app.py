@@ -330,13 +330,16 @@ class PickemAppTests(unittest.TestCase):
             self.assertEqual(values['for'], weekly_points[player.id])
             expected[player.id] = (values['for'], values['against'], values['for'] - values['against'])
         expected_payouts = app_module.payouts_for_week(db, week)
+        expected_records = app_module.weekly_pick_records(db, week)
         response, context = self.desk_response('/tab/season')
         self.assertEqual(response.status_code, 200)
         games = context['results']['weeks'][0]['matchups']
         self.assertEqual(len(games), 3)
         for game in games:
-            for player in game['players']:
+            for index, player in enumerate(game['players']):
                 self.assertEqual((player['for'], player['against'], player['net']), expected[player['id']])
+                opponent_id = game['players'][1 - index]['id']
+                self.assertEqual(player['against_draws'], expected_records[opponent_id]['draws'])
             if game['payout']['points']:
                 self.assertIn(game['payout'], expected_payouts)
         self.assertIn(b'official matchup breakdown', response.data)
@@ -974,9 +977,9 @@ class PickemAppTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         detail = re.search(r'<div id="standings-detailed" class="desk-scroll".*?</div>', html, re.S).group()
         self.assertIn('colspan="5" scope="colgroup">Standings', detail)
-        self.assertIn('colspan="3" scope="colgroup">Your Picks', detail)
-        self.assertIn('colspan="3" scope="colgroup">Opponent Picks / Against', detail)
-        self.assertEqual(detail.count('scope="col"'), 11)
+        self.assertIn('colspan="4" scope="colgroup">Your Picks', detail)
+        self.assertIn('colspan="4" scope="colgroup">Opponents Picks', detail)
+        self.assertEqual(detail.count('scope="col"'), 13)
         summary = re.search(r'<div id="standings-summary".*?</div>', html, re.S).group()
         self.assertEqual(summary.count('scope="col"'), 5)
         self.assertIn('data-table-view="auto"', html)
