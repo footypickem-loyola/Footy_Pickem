@@ -1,0 +1,9 @@
+{% if seasons %}
+<form class="desk-season" method="get" action="{{ url_for(request.endpoint) }}" hx-get="{{ url_for(request.endpoint) }}" hx-target="#main" hx-push-url="true">
+  <label for="desk-season">Season</label>
+  <select id="desk-season" name="season">
+    {% for season in seasons %}<option value="{{ season.code }}"{% if selected_season and season.id == selected_season.id %} selected{% endif %}>{{ season.name }}{% if season.is_archived %} (Archived){% endif %}</option>{% endfor %}
+  </select>
+  <button type="submit">View season</button>
+</form>
+{% endif %}

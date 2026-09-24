@@ -324,29 +324,22 @@ class PickemAppTests(unittest.TestCase):
         players = app_module.season_players(db, week.season)
         points = app_module.weekly_for_against(db, week)
         weekly_points = app_module.weekly_points_map(db, week)
-        expected = []
+        expected = {}
         for player in players:
             values = points[player.id]
             self.assertEqual(values['for'], weekly_points[player.id])
-            expected.extend([str(values['for']), str(values['against']),
-                             str(values['for'] - values['against'])])
-        names = [p.name for p in players]
-        with app_module.app.test_client() as client:
-            html = client.get('/tab/season').get_data(as_text=True)
-            self.assertIn('id="weekly-summary" class="table-scroll">', html)
-            self.assertIn('id="weekly-detailed" class="table-scroll" hidden>', html)
-            self.assertIn('data-view="summary" aria-pressed="true"', html)
-            self.assertIn('data-view="detailed" aria-pressed="false"', html)
-            detail = html.split('id="weekly-detailed"', 1)[1]
-            self.assertEqual(re.findall(r'<th colspan="3" scope="colgroup" class="player-start">(.*?)</th>', detail), names)
-            self.assertEqual(detail.count('>For Net</th>'), len(names))
-            self.assertEqual(detail.count('>Against Net</th>'), len(names))
-            self.assertEqual(detail.count('>Total Net</th>'), len(names))
-            row = re.search(r'<tr data-week="1">(.*?)</tr>', detail, re.S).group(1)
-            cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.S)
-            self.assertEqual(cells[1:-1], expected)
-            self.assertEqual(len(cells), 2 + 3 * len(names))
-            self.assertNotIn('Show detailed weekly breakdown', html)
+            expected[player.id] = (values['for'], values['against'], values['for'] - values['against'])
+        expected_payouts = app_module.payouts_for_week(db, week)
+        response, context = self.desk_response('/tab/season')
+        self.assertEqual(response.status_code, 200)
+        games = context['results']['weeks'][0]['matchups']
+        self.assertEqual(len(games), 3)
+        for game in games:
+            for player in game['players']:
+                self.assertEqual((player['for'], player['against'], player['net']), expected[player['id']])
+            if game['payout']['points']:
+                self.assertIn(game['payout'], expected_payouts)
+        self.assertIn(b'official matchup breakdown', response.data)
 
     def test_rendering_never_updates_week_status_or_core_rows(self):
         db, week, matchup, a, b = self.finalize_one_sided_matchup()
@@ -966,7 +959,7 @@ class PickemAppTests(unittest.TestCase):
             completed.stderr,
         )
 
-    def test_season_page_has_centered_net_breakdown(self):
+    def test_season_page_has_grouped_standings_and_bounded_detail(self):
         db = app_module.SessionLocal()
         week = db.query(app_module.Week).filter_by(number=1).one()
         week.status = "finalized"
@@ -978,25 +971,16 @@ class PickemAppTests(unittest.TestCase):
             response = client.get("/tab/season")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b'class="centered-table"', response.data)
-        self.assertIn(b'class="centered-table season-summary-table"', response.data)
-        self.assertIn(b"For Net", response.data)
-        self.assertIn(b"Against Net", response.data)
-        self.assertIn(b"Total Net", response.data)
         html = response.get_data(as_text=True)
-        html = html.split('<h4>Weekly rollup</h4>', 1)[0]
-        ordered_headers = [
-            "Correct", "Incorrect", "Draws", "For Net",
-            "Against Correct", "Against Incorrect", "Against Draws", "Against Net",
-            "Total Net",
-        ]
-        header_positions = [html.index(f">{header}</th>") for header in ordered_headers]
-        self.assertEqual(header_positions, sorted(header_positions))
-        self.assertEqual(html.count('class="for-header"'), 4)
-        self.assertIn('class="against-header against-start"', html)
-        self.assertEqual(html.count('class="against-header"'), 3)
-        self.assertIn('class="total-net-header"', html)
-        self.assertIn('class="total-net-cell"', html)
+        detail = re.search(r'<div id="standings-detailed" class="desk-scroll".*?</div>', html, re.S).group()
+        self.assertIn('colspan="5" scope="colgroup">Standings', detail)
+        self.assertIn('colspan="3" scope="colgroup">Your Picks', detail)
+        self.assertIn('colspan="3" scope="colgroup">Opponent Picks / Against', detail)
+        self.assertEqual(detail.count('scope="col"'), 11)
+        summary = re.search(r'<div id="standings-summary".*?</div>', html, re.S).group()
+        self.assertEqual(summary.count('scope="col"'), 5)
+        self.assertIn('data-table-view="auto"', html)
+        self.assertIn('class="desk-your-row"', detail)
 
     def test_season_leaders_identify_perfect_week_and_biggest_win(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
@@ -1085,6 +1069,141 @@ class PickemAppTests(unittest.TestCase):
             with template_rendered.connected_to(capture, app_module.app):
                 response = client.get("/tab/current" + query, headers=headers or {})
         return response, views[0]
+
+    def desk_response(self, path, player_name=None, headers=None):
+        contexts = []
+        def capture(sender, template, context, **extra):
+            if template.name in ('v3/pages/fixtures.html', 'v3/pages/table_results.html'):
+                contexts.append(context)
+        with app_module.app.test_client() as client:
+            if player_name:
+                with client.session_transaction() as user_session:
+                    user_session['player_name'] = player_name
+            with template_rendered.connected_to(capture, app_module.app):
+                response = client.get(path, headers=headers or {})
+        return response, contexts[0]
+
+    def test_fixtures_filters_finalized_and_preserves_incomplete_weeks(self):
+        db = app_module.SessionLocal()
+        original = db.query(app_module.Week).one()
+        games = db.query(app_module.Matchup).all()
+        for number in (2, 3):
+            week = app_module.Week(season_id=original.season_id, number=number, room_code='LOCALTEST')
+            db.add(week)
+            db.flush()
+            for game in games:
+                db.add(app_module.Matchup(week_id=week.id, player_a_id=game.player_a_id,
+                    player_b_id=game.player_b_id, first_picker_id=game.first_picker_id))
+        db.query(app_module.Week).filter_by(number=2).one().status = 'finalized'
+        db.query(app_module.Week).filter_by(number=1).one().status = 'provisional'
+        db.commit()
+        response, context = self.desk_response('/tab/open')
+        schedule = context['schedule']
+        self.assertEqual([w['number'] for w in schedule['weeks']], [1, 3])
+        self.assertEqual(schedule['default_week'], 1)
+        self.assertTrue(all(len(w['matchups']) == 3 for w in schedule['weeks']))
+        self.assertIn(b'data-week="1" open', response.data)
+        self.assertNotIn(b'data-week="2"', response.data)
+
+    def test_fixtures_player_schedule_guest_and_unmatched(self):
+        db = app_module.SessionLocal()
+        matchup = db.query(app_module.Matchup).first()
+        viewer, opponent = matchup.player_a.name, matchup.player_b.name
+        response, context = self.desk_response('/tab/open?view=player', viewer)
+        self.assertEqual(context['schedule_view'], 'player')
+        self.assertEqual([row['opponent'] for row in context['schedule']['schedule']], [opponent])
+        self.assertIn(opponent, response.get_data(as_text=True))
+        self.assertNotIn(b'desk-league-matchups', response.data)
+        response, context = self.desk_response('/tab/open?view=player')
+        self.assertEqual(context['schedule_view'], 'league')
+        self.assertIn(b'read-only', response.data)
+        db = app_module.SessionLocal()
+        db.add(app_module.Player(name='Unmatched'))
+        db.commit()
+        response, context = self.desk_response('/tab/open?view=player', 'Unmatched')
+        self.assertEqual(context['schedule']['schedule'], [])
+        self.assertIn(b'No upcoming matchups for Unmatched', response.data)
+
+    def test_table_official_standings_details_and_exact_ties(self):
+        db, week, matchup, a, b = self.finalize_one_sided_matchup()
+        db.query(app_module.Result).first().outcome = 'Draw'
+        db.commit()
+        official = app_module.standings_through_week(db, week.season, 1)
+        details = app_module.season_detailed_totals_finalized(db, week.season)
+        response, context = self.desk_response('/tab/season')
+        rows = context['results']['rows']
+        self.assertEqual(len(rows), 6)
+        for row, expected in zip(rows, official):
+            self.assertEqual((row['id'], row['rank'], row['for'], row['against'], row['net']),
+                             (expected['player_id'], expected['rank'], expected['points_for'],
+                              expected['points_against'], expected['net_points']))
+            for key in ('correct', 'incorrect', 'draws', 'against_correct', 'against_incorrect', 'against_draws'):
+                self.assertEqual(row[key], details[row['id']][key])
+        zero_rows = [row for row in rows if row['for'] == row['against'] == 0]
+        self.assertEqual(len(zero_rows), 4)
+        self.assertEqual(len({row['rank'] for row in zero_rows}), 1)
+
+    def test_table_completed_results_exclude_nonfinal_and_handle_empty(self):
+        response, context = self.desk_response('/tab/season')
+        self.assertEqual(context['results']['weeks'], [])
+        self.assertIn(b'No finalized matchweeks yet', response.data)
+        db, week, *_ = self.finalize_one_sided_matchup()
+        db.add(app_module.Week(season_id=week.season_id, number=2, room_code='LOCALTEST'))
+        db.commit()
+        response, context = self.desk_response('/tab/season')
+        self.assertEqual([w['number'] for w in context['results']['weeks']], [1])
+        self.assertNotIn(b'data-week="2"', response.data)
+        self.assertEqual(len(context['results']['weeks'][0]['matchups']), 3)
+
+    def test_desk_archived_season_and_htmx_preserve_context(self):
+        db = app_module.SessionLocal()
+        season = db.query(app_module.Season).filter_by(code='year-2').one()
+        season.is_archived = True
+        db.commit()
+        for endpoint in ('open', 'season'):
+            for headers in ({}, {'HX-Request': 'true'}):
+                with self.subTest(endpoint=endpoint, headers=headers):
+                    response, context = self.desk_response(f'/tab/{endpoint}?season=year-2', headers=headers)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(context['selected_season'].code, 'year-2')
+                    self.assertIn('Archived season — read only', response.get_data(as_text=True))
+                    self.assertIn(b'value="year-2" selected', response.data)
+                    self.assertIn(b'season=year-2', response.data)
+                    self.assertEqual(b'<html>' in response.data, not bool(headers))
+
+    def test_desk_no_seasons_and_escaped_player_names(self):
+        db = app_module.SessionLocal()
+        player = db.query(app_module.Player).first()
+        player.name = '<script>bad()</script>'
+        db.commit()
+        for path in ('/tab/open', '/tab/season'):
+            response, context = self.desk_response(path)
+            self.assertNotIn(b'<script>bad()</script>', response.data)
+            self.assertIn(b'&lt;script&gt;bad()&lt;/script&gt;', response.data)
+        app_module.SessionLocal.remove()
+        app_module.Base.metadata.drop_all(app_module.engine)
+        app_module.Base.metadata.create_all(app_module.engine)
+        for path in ('/tab/open', '/tab/season'):
+            response, context = self.desk_response(path)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b'No seasons initialized yet', response.data)
+
+    def test_schedule_dates_use_eastern_and_allow_missing_dates(self):
+        from v3_fixtures import schedule_dates
+        self.assertEqual(schedule_dates([]), 'Dates TBD')
+        fixtures = [SimpleNamespace(kickoff_utc=datetime(2026, 9, 20, 1)),
+                    SimpleNamespace(kickoff_utc=datetime(2026, 9, 22, 16, tzinfo=timezone.utc)),
+                    SimpleNamespace(kickoff_utc=None)]
+        self.assertEqual(schedule_dates(fixtures), 'Sep 19, 2026 – Sep 22, 2026')
+
+    def test_shell_scripts_stay_out_of_htmx_history_body_snapshots(self):
+        response, _ = self.desk_response('/tab/season')
+        html = response.get_data(as_text=True)
+        head, body = html.split('</head>', 1)
+        for script in ('legacy.js', 'schedule_results.js'):
+            self.assertIn(f'/static/v3/{script}', head)
+            self.assertNotIn(f'/static/v3/{script}', body)
+        self.assertIn('id="arsenal-banter-images"', body)
 
     def test_matchweek_draft_prioritizes_viewer_and_equal_club_actions(self):
         db = app_module.SessionLocal()
@@ -5061,7 +5180,7 @@ class PickemAppTests(unittest.TestCase):
             season_response = client.get("/tab/season?season=year-1")
             week_response = client.get("/tab/current?season=year-1&force_week=1")
 
-        self.assertIn(b"Year 1 Summary", season_response.data)
+        self.assertIn(b"Year 1 official league standings", season_response.data)
         self.assertIn(b"Year 1 (Archived)", season_response.data)
         self.assertIn(b"Year 2", season_response.data)
         self.assertIn("Archived — read only".encode(), week_response.data)

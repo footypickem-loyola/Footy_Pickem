@@ -1,0 +1,44 @@
+<section class="desk-page" id="table-results-view">
+  <header class="desk-heading"><div><h1>Table &amp; Results</h1><p class="muted">League table and completed matchweeks for {{ selected_season.name if selected_season else 'your league' }}.</p></div>{% include 'v3/components/season_picker.html' %}</header>
+  {% if not results %}<div class="card">No seasons initialized yet.</div>
+  {% else %}
+    {% if selected_season.is_archived %}<p class="desk-notice">Archived season — read only</p>{% endif %}
+    <section class="card desk-standings">
+      <div class="desk-section-heading"><h2>League Table</h2></div>
+      <p class="muted">Cumulative points from finalized weeks. Net = For − Against.</p>
+      {% if results.rows %}
+      <div class="desk-table-views" data-table-view="auto">
+        <div class="desk-toggle" role="group" aria-label="Standings view">
+          <button type="button" data-standings-view="summary" aria-controls="standings-summary">Summary</button>
+          <button type="button" data-standings-view="detailed" aria-controls="standings-detailed">Detailed</button>
+        </div>
+        <div id="standings-summary" class="desk-scroll" tabindex="0" role="region" aria-label="Summary standings">{% with detailed=false %}{% include 'v3/components/standings_table.html' %}{% endwith %}</div>
+        <div id="standings-detailed" class="desk-scroll" tabindex="0" role="region" aria-label="Detailed standings">{% with detailed=true %}{% include 'v3/components/standings_table.html' %}{% endwith %}</div>
+      </div>
+      <p class="desk-rank-note">Ranked by net points, then correct picks; exact ties share rank.</p>
+      {% else %}<p class="muted">No players scheduled in this season yet.</p>{% endif %}
+    </section>
+    <section class="card desk-completed" aria-labelledby="completed-title"><div class="desk-section-heading"><h2 id="completed-title">Completed Matchweeks</h2><span class="muted">{{ results.weeks|length }} finalized</span></div><p class="muted desk-help">Open a week to see matchup results and detailed stats.</p>
+      <div class="desk-weeks">
+      {% for week in results.weeks %}
+        <details class="card desk-week" data-week="{{ week.number }}">
+          <summary><strong>Matchweek {{ week.number }}<small>{{ week.dates }}</small></strong>
+            <span class="desk-results-overview">{% for matchup in week.matchups %}<span><strong>{{ matchup.players[0].name }} <b>{{ matchup.players[0]['for'] }} – {{ matchup.players[1]['for'] }}</b> {{ matchup.players[1].name }}</strong><small>{% if matchup.winner %}{{ matchup.winner }} wins{% else %}Draw{% endif %} · Net {{ matchup.payout.points }} · ${{ matchup.payout.payout }}</small></span>{% endfor %}</span>
+          </summary>
+          <div class="desk-matchups desk-result-matchups">
+          {% for matchup in week.matchups %}<article class="desk-matchup" data-matchup-id="{{ matchup.id }}"><h3>{{ matchup.players[0].name }} vs {{ matchup.players[1].name }}</h3>
+            <p>{% if matchup.winner %}{{ matchup.winner }} wins{% else %}Matchup drawn{% endif %} · Net {{ matchup.payout.points }} · ${{ matchup.payout.payout }}</p>
+            <div class="desk-scroll" tabindex="0" role="region" aria-label="{{ matchup.players[0].name }} versus {{ matchup.players[1].name }} final stats">
+              <table class="desk-table desk-breakdown"><caption class="desk-sr-only">Matchweek {{ week.number }} official matchup breakdown</caption><thead><tr><th scope="col">Player</th><th scope="col">Correct</th><th scope="col">Incorrect</th><th scope="col">Draws</th><th scope="col">For</th><th scope="col">Against</th><th scope="col">Net</th></tr></thead><tbody>
+              {% for player in matchup.players %}<tr><th scope="row">{{ player.name }}</th><td>{{ player.pick_record.correct }}</td><td>{{ player.pick_record.incorrect }}</td><td>{{ player.pick_record.draw }}</td><td>{{ player['for'] }}</td><td>{{ player.against }}</td><td class="desk-net {{ 'desk-positive' if player.net > 0 else 'desk-negative' if player.net < 0 else '' }}">{{ player.net }}</td></tr>{% endfor %}
+              </tbody></table>
+            </div>
+          </article>{% else %}<p class="muted">No matchup results available.</p>{% endfor %}
+          </div>
+          <a class="desk-week-link" href="{{ url_for('tab_current', season=selected_season.code, force_week=week.number) }}" hx-get="{{ url_for('tab_current', season=selected_season.code, force_week=week.number) }}" hx-target="#main" hx-push-url="true">View Matchweek {{ week.number }} →</a>
+        </details>
+      {% else %}<div class="card"><h3>No finalized matchweeks yet</h3><p class="muted">Results appear here when a week is finalized. Upcoming weeks are in <a href="{{ url_for('tab_open', season=selected_season.code) }}" hx-get="{{ url_for('tab_open', season=selected_season.code) }}" hx-target="#main" hx-push-url="true">Fixtures</a>.</p></div>{% endfor %}
+      </div>
+    </section>
+  {% endif %}
+</section>
