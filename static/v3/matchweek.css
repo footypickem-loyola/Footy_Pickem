@@ -169,13 +169,13 @@
 .mw-page--draft .mw-page-heading h1 {font-size:clamp(1.75rem,2.8vw,2.3rem)}
 .mw-hero-copy {position:relative;z-index:1}
 .mw-first-kickoff {margin:6px 0 0;font-size:.875rem;color:#405775}
-.mw-league-mark {width:116px;height:48px;opacity:.32;margin-left:auto;filter:grayscale(1)}
+.mw-league-mark {width:116px;height:48px;opacity:.8;margin-left:auto}
 .mw-page--draft .mw-page-actions {position:relative;z-index:1}
 .mw-matchup[data-state="draft"] > .mw-summary {position:relative;isolation:isolate;background:#f2f6f7}
 .mw-matchup[data-state="draft"] > .mw-summary::before {content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,#f6f8fab8,#edf3f46b,#ffffffd9),url('stadium.svg') center 55% / cover no-repeat;opacity:.32;pointer-events:none}
 .mw-season-record {display:grid;gap:2px;font-size:.85rem;color:#304b69}
 .mw-season-record small {font-size:.6rem;color:var(--v3-muted);white-space:nowrap}
-.mw-season-record .muted {font-size:.7rem!important;line-height:1.4}
+.mw-season-record .muted {font-size:.8rem!important;line-height:1.4}
 .mw-fixture-columns > :nth-child(3),.mw-fixture-columns > :last-child {text-align:center}
 .mw-available .mw-home {justify-content:flex-end;text-align:right}
 .mw-available .mw-away {justify-content:flex-start;text-align:left}

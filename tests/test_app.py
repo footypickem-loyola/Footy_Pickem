@@ -1097,6 +1097,9 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(len(mw["primary"]["available"]), 10)
         self.assertEqual(response.data.count(b'class="mw-pick"'), 20)
         self.assertIn(b"YOUR TURN", response.data)
+        self.assertIn(b"1st place", response.data)
+        self.assertNotIn(b'class="mw-you"', response.data)
+        self.assertIn(b'alt="Premier League"', response.data)
         self.assertIn(b"Draft So Far", response.data)
         self.assertEqual([slot["sequence"] for slot in mw["primary"]["draft_slots"]], list(range(1, 11)))
         self.assertEqual(response.data.count(b'class="mw-pending"'), 10)
@@ -1119,8 +1122,8 @@ class PickemAppTests(unittest.TestCase):
                   {1: {"for": 0, "against": 0}}]
         context = app_module.build_player_context(standings, scores)[1]
         self.assertEqual(context, {"wins": 1, "losses": 1, "ties": 1,
-                                   "rank": 2, "net_points": -1})
-        self.assertIsNone(app_module.build_player_context(standings, [])[1]["rank"])
+                                   "rank": 2, "place": "2nd", "net_points": -1})
+        self.assertEqual(app_module.build_player_context(standings, [])[1]["rank"], 2)
 
     def test_matchweek_context_excludes_selected_and_future_weeks(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
@@ -1128,7 +1131,8 @@ class PickemAppTests(unittest.TestCase):
         for player in mw["primary"]["players"]:
             self.assertEqual(player["season_record"]["wins"], 0)
             self.assertEqual(player["season_record"]["losses"], 0)
-            self.assertIsNone(player["season_record"]["rank"])
+            self.assertEqual(player["season_record"]["rank"], 1)
+            self.assertEqual(player["season_record"]["place"], "1st")
         self.assertNotIn(b"Deadline", response.data)
 
     def test_matchweek_tenth_pick_transitions_to_five_owned_fixtures_each(self):

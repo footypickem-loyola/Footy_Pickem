@@ -5,10 +5,10 @@
       {% for player in m.players %}
       <div class="mw-player">
         <span class="mw-avatar" aria-hidden="true">{{ player.name[:1] }}</span>
-        <div><h2>{{ player.name }}{% if player.is_you %} <span class="mw-you">You</span>{% endif %}</h2>{% if m.state == 'draft' and player.season_record %}
+        <div><h2>{{ player.name }}</h2>{% if m.state == 'draft' and player.season_record %}
           <div class="mw-season-record" aria-label="Record before Matchweek {{ mw.week }}">
             <span>{{ player.season_record.wins }}–{{ player.season_record.losses }}–{{ player.season_record.ties }} <small>W–L–T</small></span>
-            <span class="muted">{% if player.season_record.rank %}Place {{ player.season_record.rank }} · {{ player.season_record.net_points }} net pts{% else %}No final results yet{% endif %}</span>
+            <span class="muted">{{ player.season_record.place }} place · {{ player.season_record.net_points }} net pts</span>
           </div>
           {% else %}<span class="muted">{{ player.owned|length }} fixtures owned</span>{% endif %}</div>
         {% if m.state == 'final' %}<strong class="mw-score" aria-label="{{ player.name }} For {{ player['for'] }}">{{ player['for'] }}</strong>{% endif %}

@@ -86,3 +86,12 @@ existing finalized H2H scores before the selected week; places and net points
 use the existing standings helper over the same cutoff. Before any final results,
 players see 0–0–0 and No final results yet instead of a misleading shared first place.
 Fixture opponents and vs are visually centered; Pick spans both equal actions.
+
+## Deadline and initial standings clarification
+
+Per product clarification, the first fixture kickoff is displayed as the draft
+ deadline. This changes the presentation label only, not pick eligibility or
+ locking rules. Before any finalized weeks, records are 0–0–0 and all players
+ share 1st place, consistent with the existing standings tie behavior. Names
+ no longer carry a You suffix. The local Premier League logo uses higher opacity
+ for visibility. Refresh or restart older preview processes to load new templates.

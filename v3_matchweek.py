@@ -21,7 +21,9 @@ def build_player_context(standings, weekly_scores):
             if score is not None:
                 result = "wins" if score["for"] > score["against"] else "losses" if score["for"] < score["against"] else "ties"
                 record[result] += 1
-        context[row["player_id"]] = dict(record, rank=row["rank"] if weekly_scores else None,
+        rank = row["rank"]
+        suffix = "th" if 10 <= rank % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(rank % 10, "th")
+        context[row["player_id"]] = dict(record, rank=rank, place=f"{rank}{suffix}",
                                           net_points=row["net_points"])
     return context
 
