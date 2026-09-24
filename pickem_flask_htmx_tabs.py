@@ -29,7 +29,7 @@ import pandas as pd
 import bleach
 import markdown
 from markupsafe import Markup
-from v3_matchweek import build_matchweek
+from v3_matchweek import build_matchweek, build_player_context
 
 from correspondent import (
     CLASSIFIER_PROMPT_VERSION,
@@ -4765,6 +4765,12 @@ def render_matchweek(db, season, week):
         points=weekly_points_map(db, week), payouts=payouts_for_week(db, week),
         outcome_for_pick=pick_display_outcome, contribution_for_pick=pick_contribution,
         draft_turn_at=draft_turn_at,
+        player_context=build_player_context(
+            standings_through_week(db, season, week.number - 1),
+            [weekly_for_against(db, prior) for prior in db.query(Week).filter(
+                Week.season_id == season.id, Week.status == "finalized",
+                Week.number < week.number).order_by(Week.number).all()],
+        ),
     )
     return render_template("v3/pages/matchweek.html", mw=mw)
 

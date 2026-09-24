@@ -5,7 +5,12 @@
       {% for player in m.players %}
       <div class="mw-player">
         <span class="mw-avatar" aria-hidden="true">{{ player.name[:1] }}</span>
-        <div><h2>{{ player.name }}{% if player.is_you %} <span class="mw-you">You</span>{% endif %}</h2><span class="muted">{{ player.owned|length }} fixtures owned</span></div>
+        <div><h2>{{ player.name }}{% if player.is_you %} <span class="mw-you">You</span>{% endif %}</h2>{% if m.state == 'draft' and player.season_record %}
+          <div class="mw-season-record" aria-label="Record before Matchweek {{ mw.week }}">
+            <span>{{ player.season_record.wins }}–{{ player.season_record.losses }}–{{ player.season_record.ties }} <small>W–L–T</small></span>
+            <span class="muted">{% if player.season_record.rank %}Place {{ player.season_record.rank }} · {{ player.season_record.net_points }} net pts{% else %}No final results yet{% endif %}</span>
+          </div>
+          {% else %}<span class="muted">{{ player.owned|length }} fixtures owned</span>{% endif %}</div>
         {% if m.state == 'final' %}<strong class="mw-score" aria-label="{{ player.name }} For {{ player['for'] }}">{{ player['for'] }}</strong>{% endif %}
       </div>
       {% if not loop.last %}<span class="mw-vs">vs</span>{% endif %}
@@ -38,7 +43,7 @@
     <section class="card mw-available" aria-labelledby="available-title">
       <div class="mw-section-heading"><h2 id="available-title">Available fixtures</h2><span class="muted">{{ m.available|length }} remaining</span></div>
       <p class="muted">Choose a team from any remaining fixture.</p>
-      <div class="mw-fixture-columns" aria-hidden="true"><span>Date &amp; time</span><span>Home</span><span></span><span>Away</span><span>Pick</span></div>
+      <div class="mw-fixture-columns" aria-hidden="true"><span>Date &amp; time</span><span>Home</span><span>vs</span><span>Away</span><span>Pick</span></div>
       {% for fixture in m.available %}
       <article class="mw-fixture" data-fixture-id="{{ fixture.id }}">
         <p class="mw-kickoff">{{ fixture.kickoff_utc|kickoff_eastern }}</p>

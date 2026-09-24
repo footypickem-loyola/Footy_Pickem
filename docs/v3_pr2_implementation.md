@@ -69,3 +69,20 @@ fixture ownership instead of unsupported player records/ranks, no invented
 venues/deadline, no stadium/lion artwork or club crests. Team identity elements
 can accept a crest later without changing row structure. Existing global shell,
 manual refresh and stats links remain. Auto-Draft has no action or submission.
+
+## Hero and context polish
+
+Draft now uses a slightly smaller heading, a subtle navy-to-light page wash,
+and an original, faint SVG stadium illustration. The Premier League logo is a
+local copy of the official asset from
+https://www.premierleague.com/resources/v1.37.4/i/svg-files/elements/pl-logo-light.svg
+(accessed 2026-09-24); it identifies the competition and does not imply endorsement.
+No external requests or new dependencies are required at render time.
+
+The hero shows the earliest known fixture kickoff, labeled First kickoff: the app
+has no enforceable draft deadline, so this is not presented as one. Venues remain
+omitted because fixture data has no venue field. Player W–L–T records aggregate
+existing finalized H2H scores before the selected week; places and net points
+use the existing standings helper over the same cutoff. Before any final results,
+players see 0–0–0 and No final results yet instead of a misleading shared first place.
+Fixture opponents and vs are visually centered; Pick spans both equal actions.

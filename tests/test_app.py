@@ -1112,6 +1112,25 @@ class PickemAppTests(unittest.TestCase):
         _, other_view = self.matchweek_response(db.get(app_module.Player, other_id).name)
         self.assertFalse(other_view["primary"]["can_pick"])
 
+    def test_matchweek_season_record_uses_official_prior_results(self):
+        standings = [{"player_id": 1, "rank": 2, "net_points": -1}]
+        scores = [{1: {"for": 3, "against": 1}},
+                  {1: {"for": -1, "against": 2}},
+                  {1: {"for": 0, "against": 0}}]
+        context = app_module.build_player_context(standings, scores)[1]
+        self.assertEqual(context, {"wins": 1, "losses": 1, "ties": 1,
+                                   "rank": 2, "net_points": -1})
+        self.assertIsNone(app_module.build_player_context(standings, [])[1]["rank"])
+
+    def test_matchweek_context_excludes_selected_and_future_weeks(self):
+        db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
+        response, mw = self.matchweek_response(player_a.name)
+        for player in mw["primary"]["players"]:
+            self.assertEqual(player["season_record"]["wins"], 0)
+            self.assertEqual(player["season_record"]["losses"], 0)
+            self.assertIsNone(player["season_record"]["rank"])
+        self.assertNotIn(b"Deadline", response.data)
+
     def test_matchweek_tenth_pick_transitions_to_five_owned_fixtures_each(self):
         db = app_module.SessionLocal()
         matchup = db.query(app_module.Matchup).first()

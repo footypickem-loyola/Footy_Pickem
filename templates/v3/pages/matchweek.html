@@ -1,11 +1,13 @@
 {% from 'v3/components/ui.html' import empty_state %}
 <div id="matchweek-view" class="mw-page{% if mw and mw.primary.state == 'draft' %} mw-page--draft{% endif %}">
   <header class="mw-page-heading">
-    <div>
+    <div class="mw-hero-copy">
       <p class="mw-eyebrow">{{ mw.season if mw else 'Your league' }}</p>
       <h1>Matchweek{% if mw %} {{ mw.week }}{% endif %}{% if mw and mw.primary.state == 'draft' %}<span class="mw-hero-state"> · Draft</span>{% endif %}</h1>
+      {% if mw and mw.primary.state == 'draft' and mw.first_kickoff %}<p class="mw-first-kickoff">First kickoff · {{ mw.first_kickoff|kickoff_eastern }}</p>{% endif %}
       {% if mw and mw.archived %}<p class="muted">Archived — read only</p>{% endif %}
     </div>
+    {% if mw and mw.primary.state == 'draft' %}<img class="mw-league-mark" src="{{ url_for('static', filename='v3/premier-league.svg') }}" alt="Premier League" width="116" height="48">{% endif %}
     {% if mw %}
     <div class="mw-page-actions">
       <a href="{{ url_for('tab_stats', season=mw.season_code) }}" hx-get="{{ url_for('tab_stats', season=mw.season_code) }}" hx-target="#main" hx-push-url="true">View all stats</a>

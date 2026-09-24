@@ -11,8 +11,23 @@ def kickoff_order(fixture):
     return (kickoff is None, kickoff.timestamp() if kickoff else 0, fixture.match_number)
 
 
+def build_player_context(standings, weekly_scores):
+    """Present official prior-week standings and finalized H2H records."""
+    context = {}
+    for row in standings:
+        record = {"wins": 0, "losses": 0, "ties": 0}
+        for scores in weekly_scores:
+            score = scores.get(row["player_id"])
+            if score is not None:
+                result = "wins" if score["for"] > score["against"] else "losses" if score["for"] < score["against"] else "ties"
+                record[result] += 1
+        context[row["player_id"]] = dict(record, rank=row["rank"] if weekly_scores else None,
+                                          net_points=row["net_points"])
+    return context
+
+
 def build_matchweek(*, week, season, you, matchups, fixtures, picks, results,
-                    turns, points, payouts, outcome_for_pick, contribution_for_pick, draft_turn_at):
+                    turns, points, payouts, outcome_for_pick, contribution_for_pick, draft_turn_at, player_context=None):
     """Shape domain objects and official helper outputs for all Matchweek states.
 
     A complete draft is not live. Partial official results may annotate owned
@@ -56,6 +71,7 @@ def build_matchweek(*, week, season, you, matchups, fixtures, picks, results,
             players.append({
                 "id": player.id, "name": player.name, "is_you": player.id == viewer_id,
                 "owned": owned, "for": points.get(player.id, 0),
+                "season_record": (player_context or {}).get(player.id),
                 "against": points.get(opponent.id, 0),
                 "net": points.get(player.id, 0) - points.get(opponent.id, 0),
             })
@@ -94,6 +110,8 @@ def build_matchweek(*, week, season, you, matchups, fixtures, picks, results,
     return {
         "week": week.number, "season": season.name, "season_code": season.code,
         "archived": bool(season.is_archived), "viewer": you.name if you else None,
+        "first_kickoff": next((f.kickoff_utc for f in sorted(fixtures, key=kickoff_order)
+                               if f.kickoff_utc is not None), None),
         "has_matchup": has_matchup, "primary": primary,
         "others": [view for view in views if view is not primary],
     }
