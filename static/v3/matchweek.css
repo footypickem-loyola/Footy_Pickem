@@ -216,9 +216,11 @@
 .mw-final-player-stats {margin-top:14px;padding-top:12px;border-top:1px solid var(--mw-line);font-size:.8125rem}
 .mw-final-player-stats > strong {display:block;margin-bottom:8px}
 .mw-final-player-stats dl {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:0}
-.mw-final-player-stats dl > div {padding:0;border:0;min-width:0}
+.mw-final-player-stats dl > div {padding:0;border:0;min-width:0;text-align:center}
 .mw-final-player-stats dt {margin:0;font-size:.625rem;color:var(--v3-muted)}
 .mw-final-player-stats dd {margin:3px 0 0;font-weight:700;font-size:1rem;color:var(--v3-text)}
+.mw-owned-fixture .mw-fixture-identity > .mw-selected:first-child {justify-self:end}
+.mw-owned-fixture .mw-fixture-identity > .mw-selected:last-child {justify-self:start}
 .mw-summary-context > p {margin:8px 0}
 .mw-score-pair {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:8px 0}
 .mw-score-pair small,.mw-score-pair strong {display:block;overflow-wrap:anywhere}
