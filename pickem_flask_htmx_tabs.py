@@ -30,6 +30,8 @@ import bleach
 import markdown
 from markupsafe import Markup
 from v3_matchweek import build_matchweek, build_player_context
+from v3_fixtures import build_fixtures
+from v3_table_results import build_table_results
 
 from correspondent import (
     CLASSIFIER_PROMPT_VERSION,
@@ -511,153 +513,6 @@ JOIN_HTML = """
   <p class="muted">Allowed players: {{ allowed_names|join(', ') }}</p>
 </div>
 </body></html>
-"""
-
-OPEN_PARTIAL = """
-<div class="card">
-  <h3>{{ season.name }} — Open Weeks</h3>
-  <p class="muted">Any week not yet finalized shows up here. Auto-finalizes when all fixtures have results.</p>
-  <table>
-    <thead><tr><th>Week</th><th>Status</th><th>Completed Fixtures</th><th>Total Fixtures</th></tr></thead>
-    <tbody>
-      {% for row in open_rows %}
-        <tr>
-          <td><a href="#" hx-get="{{ url_for('tab_current', force_week=row['week'], season=season.code) }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">Week {{ row['week'] }}</a></td>
-          <td><span class="status {{ row['status'] }}">{{ row['status']|capitalize }}</span></td>
-          <td>{{ row['done'] }}</td>
-          <td>{{ row['total'] }}</td>
-        </tr>
-      {% endfor %}
-      {% if not open_rows %}
-        <tr><td colspan="4" class="muted">All weeks are finalized ✅</td></tr>
-      {% endif %}
-    </tbody>
-  </table>
-</div>
-"""
-
-SEASON_PARTIAL = """
-<div class="card">
-  <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
-    <h3 style="margin:0;">{{ selected_season.name }} Summary</h3>
-    <form hx-get="{{ url_for('tab_season') }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">
-      <label>Season
-        <select name="season" onchange="this.form.requestSubmit()">
-          {% for season in seasons %}
-            <option value="{{ season.code }}" {% if season.id == selected_season.id %}selected{% endif %}>{{ season.name }}{% if season.is_archived %} (Archived){% endif %}</option>
-          {% endfor %}
-        </select>
-      </label>
-    </form>
-  </div>
-  <p class="muted">Cumulative points from finalized weeks. Net = For – Against.</p>
-  <div class="table-scroll">
-    <table class="centered-table season-summary-table">
-      <thead><tr><th>Rank</th><th>Player</th><th>For</th><th>Against</th><th>Net</th></tr></thead>
-      <tbody>
-        {% for row in season_rows %}
-          <tr><td>{{ row['rank'] }}</td><td>{{ row['name'] }}</td><td>{{ row['for'] }}</td><td>{{ row['against'] }}</td><td>{{ row['net'] }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <details style="margin-top:14px;">
-    <summary class="btn" style="display:inline-block;">Show detailed breakdown</summary>
-    <div class="table-scroll" style="margin-top:10px;">
-      <table class="centered-table detailed-season-table">
-        <thead>
-          <tr>
-            <th>Player</th>
-            <th class="for-header">Correct</th><th class="for-header">Incorrect</th>
-            <th class="for-header">Draws</th><th class="for-header">For Net</th>
-            <th class="against-header against-start">Against Correct</th>
-            <th class="against-header">Against Incorrect</th><th class="against-header">Against Draws</th>
-            <th class="against-header">Against Net</th>
-            <th class="total-net-header">Total Net</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in season_rows %}
-            <tr>
-              <td>{{ row['name'] }}</td>
-              <td>{{ row['correct'] }}</td><td>{{ row['incorrect'] }}</td><td>{{ row['draws'] }}</td>
-              <td>{{ row['for_net'] }}</td>
-              <td class="against-start">{{ row['against_correct'] }}</td>
-              <td>{{ row['against_incorrect'] }}</td><td>{{ row['against_draws'] }}</td>
-              <td>{{ row['against_net'] }}</td>
-              <td class="total-net-cell">{{ row['total_net'] }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </details>
-</div>
-
-<div class="card" id="weekly-rollup">
-  <div class="weekly-heading">
-    <h4>Weekly rollup</h4>
-    <div class="weekly-toggle" role="group" aria-label="Weekly rollup view">
-      <button type="button" data-view="summary" aria-pressed="true" aria-controls="weekly-summary" onclick="setWeeklyView(this)">Summary</button>
-      <button type="button" data-view="detailed" aria-pressed="false" aria-controls="weekly-detailed" onclick="setWeeklyView(this)">Detailed</button>
-    </div>
-  </div>
-  <div id="weekly-summary" class="table-scroll">
-  <table class="centered-table">
-    <thead>
-      <tr>
-        <th>Week</th>
-        {% for p in players %}<th>{{ p.name }}</th>{% endfor %}
-        <th>Status</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for wk in weeks %}
-      <tr>
-        <td><a href="#" hx-get="{{ url_for('tab_current', force_week=wk.number, season=selected_season.code) }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">Week {{ wk.number }}</a></td>
-        {% for p in players %}
-          <td>{{ weekly_points[wk.number].get(p.id, 0) }}</td>
-        {% endfor %}
-        <td><span class="status {{ wk.status }}">{{ wk.status|capitalize }}</span></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  <div id="weekly-detailed" class="table-scroll" hidden>
-    <table class="centered-table weekly-detailed-table">
-      <thead>
-        <tr>
-          <th rowspan="2" scope="col" class="week-edge">Week</th>
-          {% for p in players %}<th colspan="3" scope="colgroup" class="player-start">{{ p.name }}</th>{% endfor %}
-          <th rowspan="2" scope="col" class="status-edge">Status</th>
-        </tr>
-        <tr>
-          {% for p in players %}
-            <th scope="col" class="player-start">For Net</th>
-            <th scope="col">Against Net</th>
-            <th scope="col" class="weekly-total">Total Net</th>
-          {% endfor %}
-        </tr>
-      </thead>
-      <tbody>
-        {% for wk in weeks %}
-          <tr data-week="{{ wk.number }}">
-            <td class="week-edge"><a href="#" hx-get="{{ url_for('tab_current', force_week=wk.number, season=selected_season.code) }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">Week {{ wk.number }}</a></td>
-            {% for p in players %}
-              {% set values = weekly_details[wk.number].get(p.id, {'for': 0, 'against': 0}) %}
-              <td class="player-start">{{ values['for'] }}</td>
-              <td>{{ values['against'] }}</td>
-              <td class="weekly-total">{{ values['for'] - values['against'] }}</td>
-            {% endfor %}
-            <td class="status-edge"><span class="status {{ wk.status }}">{{ wk.status|capitalize }}</span></td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
 """
 
 STATS_PARTIAL = """
@@ -4753,10 +4608,10 @@ def tab_current():
     return render_matchweek(db, season, wk)
 
 
-def render_matchweek(db, season, week):
+def load_matchweek_model(db, season, week, include_context=True):
     """Load existing domain data; presentation shaping lives in v3_matchweek."""
     matchups = db.query(Matchup).filter_by(week_id=week.id).order_by(Matchup.id).all()
-    mw = build_matchweek(
+    return build_matchweek(
         week=week, season=season, you=current_player(db), matchups=matchups,
         fixtures=db.query(Fixture).filter_by(week_id=week.id).all(),
         picks=db.query(Pick).join(Matchup).filter(Matchup.week_id == week.id).all(),
@@ -4770,9 +4625,12 @@ def render_matchweek(db, season, week):
             [weekly_for_against(db, prior) for prior in db.query(Week).filter(
                 Week.season_id == season.id, Week.status == "finalized",
                 Week.number < week.number).order_by(Week.number).all()],
-        ),
+        ) if include_context else None,
     )
-    return render_template("v3/pages/matchweek.html", mw=mw)
+
+
+def render_matchweek(db, season, week):
+    return render_template("v3/pages/matchweek.html", mw=load_matchweek_model(db, season, week))
 
 
 @app.get("/partials/matchweek/<int:week_number>")
@@ -4789,15 +4647,20 @@ def tab_open():
     db = SessionLocal()
     you = current_player(db)
     season = requested_season(db)
-    if season is None:
-        return "<div class='card'>No seasons initialized yet.</div>"
-    rows = []
-    for wk in db.query(Week).filter_by(season_id=season.id).order_by(Week.number.asc()).all():
-        if wk.status == "finalized":
-            continue
-        done, total = count_results_for_week(db, wk)
-        rows.append({"week": wk.number, "status": wk.status, "done": done, "total": total})
-    return render_template_string(OPEN_PARTIAL, open_rows=rows, season=season, you=you)
+    schedule = None
+    if season is not None:
+        weeks = db.query(Week).filter(Week.season_id == season.id, Week.status != "finalized").all()
+        week_ids = [week.id for week in weeks]
+        schedule = build_fixtures(
+            weeks=weeks, matchups=db.query(Matchup).filter(Matchup.week_id.in_(week_ids)).all(),
+            picks=db.query(Pick).join(Matchup).filter(Matchup.week_id.in_(week_ids)).all(),
+            fixtures=db.query(Fixture).filter(Fixture.week_id.in_(week_ids)).all(),
+            results=db.query(Result).join(Fixture).filter(Fixture.week_id.in_(week_ids)).all(),
+            viewer_id=you.id if you else None,
+        )
+    return render_template("v3/pages/fixtures.html", schedule=schedule, selected_season=season,
+                           seasons=db.query(Season).order_by(Season.id.desc()).all(), you=you,
+                           schedule_view="player" if you and request.args.get("view") == "player" else "league")
 
 @app.get("/admin")
 def admin():
@@ -5807,43 +5670,19 @@ def tab_season():
     db = SessionLocal()
     you = current_player(db)
     selected_season = requested_season(db)
-    if selected_season is None:
-        return "<div class='card'>No seasons initialized yet.</div>"
     seasons = db.query(Season).order_by(Season.id.desc()).all()
-    weeks = db.query(Week).filter_by(season_id=selected_season.id).order_by(Week.number.asc()).all()
-    players = season_players(db, selected_season)
-    totals = season_totals_finalized(db, selected_season)
-    details = season_detailed_totals_finalized(db, selected_season)
-    season_rows = []
-    for p in players:
-        row = {
-            "name": p.name,
-            "for": totals.get(p.id, {}).get("for", 0),
-            "against": totals.get(p.id, {}).get("against", 0),
-            "net": totals.get(p.id, {}).get("net", 0),
-        }
-        row.update(details.get(p.id, {}))
-        row["for_net"] = row["correct"] - row["incorrect"]
-        row["against_net"] = row["against_correct"] - row["against_incorrect"]
-        row["total_net"] = row["for_net"] - row["against_net"]
-        season_rows.append(row)
-
-    # Standings: net points first, then correct picks. Exact ties share a rank.
-    season_rows.sort(key=lambda row: (-row["net"], -row["correct"], row["name"].lower()))
-    previous_key = None
-    for position, row in enumerate(season_rows, start=1):
-        rank_key = (row["net"], row["correct"])
-        if rank_key != previous_key:
-            current_rank = position
-            previous_key = rank_key
-        row["rank"] = current_rank
-    weekly_details = {wk.number: weekly_for_against(db, wk) for wk in weeks}
-    weekly_points: Dict[int, Dict[int,int]] = {}
-    for wk in weeks:
-        weekly_points[wk.number] = weekly_points_map(db, wk)
-    return render_template_string(SEASON_PARTIAL, season_rows=season_rows, players=players,
-                                  weeks=weeks, weekly_points=weekly_points, weekly_details=weekly_details, you=you,
-                                  seasons=seasons, selected_season=selected_season)
+    results_view = None
+    if selected_season is not None:
+        weeks = db.query(Week).filter_by(season_id=selected_season.id, status="finalized").all()
+        results_view = build_table_results(
+            standings=standings_through_week(db, selected_season, max((w.number for w in weeks), default=0)),
+            details=season_detailed_totals_finalized(db, selected_season),
+            completed_matchweeks=[load_matchweek_model(db, selected_season, w, include_context=False) for w in weeks],
+            viewer_id=you.id if you else None,
+            fixtures_by_week={w.number: db.query(Fixture).filter_by(week_id=w.id).all() for w in weeks},
+        )
+    return render_template("v3/pages/table_results.html", results=results_view,
+                           selected_season=selected_season, seasons=seasons, you=you)
 
 
 @app.get("/tab/stats")
