@@ -106,3 +106,10 @@ snapshot rail; Final uses official score, net margin and payout. Draft History
 remains a secondary disclosure in both states. Only Draft shows the deadline,
 upcoming draft order and disabled Auto-Draft placeholder. No gameplay, data-model,
 result, scoring or Live behavior changes accompany this presentation revision.
+
+Final Matchup and every finalized Other Matchup now share a per-player summary
+of official points plus correct, incorrect and drawn picks. Counts aggregate
+the existing evaluated pick outcomes in the view model, with tests comparing
+them against the official weekly record helper. Selected clubs use a muted
+green filled label instead of a blue underline in both completed-slate states;
+the explicit Pick label and result badges remain for clarity.

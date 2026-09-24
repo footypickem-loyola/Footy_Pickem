@@ -73,6 +73,8 @@ def build_matchweek(*, week, season, you, matchups, fixtures, picks, results,
             players.append({
                 "id": player.id, "name": player.name, "is_you": player.id == viewer_id,
                 "owned": owned, "for": points.get(player.id, 0),
+                "pick_record": {outcome: sum(row["outcome"] == outcome for row in owned)
+                                for outcome in ("correct", "incorrect", "draw")},
                 "season_record": (player_context or {}).get(player.id),
                 "against": points.get(opponent.id, 0),
                 "net": points.get(player.id, 0) - points.get(opponent.id, 0),

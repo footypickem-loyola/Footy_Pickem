@@ -17,7 +17,7 @@
     </div>
     {% if m.state == 'final' %}
       <aside class="mw-summary-context mw-official-score" aria-label="Official matchup score">
-        <span>Official Pick ’Em score</span>
+        <span>Official Pick ’Em Score</span>
         <div class="mw-score-pair">{% for player in m.players %}<div><small>{{ player.name }}</small><strong aria-label="{{ player.name }} For {{ player['for'] }}">{{ '%+d'|format(player['for']) if player['for'] else '0' }}</strong></div>{% endfor %}</div>
         <strong>{% if m.winner %}{{ m.winner }} wins{% else %}Matchup drawn{% endif %}</strong>
       </aside>
@@ -97,10 +97,12 @@
     </div>
     <aside class="mw-side-rail">
       <section class="card mw-snapshot">
-        <div class="mw-section-heading"><h2>{{ 'Final matchup' if m.state == 'final' else 'Week ' ~ mw.week ~ ' snapshot' }}</h2></div>
+        <div class="mw-section-heading"><h2>{{ 'Final Matchup' if m.state == 'final' else 'Week ' ~ mw.week ~ ' snapshot' }}</h2></div>
+        {% if m.state == 'final' %}
+          {% for player in m.players %}{% include 'v3/components/final_player_stats.html' %}{% endfor %}
+        {% endif %}
         <dl>
           {% if m.state == 'final' %}
-          <div><dt>Official Pick ’Em score</dt><dd>{{ m.players[0].name }} {{ '%+d'|format(m.players[0]['for']) }} · {{ m.players[1].name }} {{ '%+d'|format(m.players[1]['for']) }}</dd></div>
           <div><dt>Net margin</dt><dd>{{ m.payout.points }}</dd></div>
           <div><dt>Final payout</dt><dd>${{ m.payout.payout }}{% if m.winner %} · {{ m.payout['from'] }} pays {{ m.payout.to }}{% endif %}</dd></div>
           {% else %}

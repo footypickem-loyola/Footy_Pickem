@@ -38,7 +38,7 @@
           <span class="mw-state">{{ other.state_label }}</span>
           <h3>{{ other.players[0].name }} <span class="muted">vs</span> {{ other.players[1].name }}</h3>
           {% if other.state == 'final' %}
-            <p class="mw-other-score">{{ other.players[0]['for'] }} – {{ other.players[1]['for'] }}</p>
+            {% for player in other.players %}{% include 'v3/components/final_player_stats.html' %}{% endfor %}
             <p class="muted">{% if other.winner %}{{ other.winner }} wins · ${{ other.payout.payout }}{% else %}Draw · $0{% endif %}</p>
           {% elif other.state == 'draft' %}
             <p class="muted">{{ other.total_picks }}/10 picked · {{ other.turn.name }}’s turn</p>

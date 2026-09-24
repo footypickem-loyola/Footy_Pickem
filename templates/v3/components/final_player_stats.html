@@ -1,0 +1,9 @@
+<div class="mw-final-player-stats" data-player-id="{{ player.id }}">
+  <strong>{{ player.name }}</strong>
+  <dl>
+    <div><dt>Points</dt><dd>{{ '%+d'|format(player['for']) if player['for'] else '0' }}</dd></div>
+    <div><dt>Correct</dt><dd>{{ player.pick_record.correct }}</dd></div>
+    <div><dt>Incorrect</dt><dd>{{ player.pick_record.incorrect }}</dd></div>
+    <div><dt>Draws</dt><dd>{{ player.pick_record.draw }}</dd></div>
+  </dl>
+</div>

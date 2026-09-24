@@ -1203,6 +1203,19 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(primary["state"], "final")
         self.assertEqual(primary["payout"], payout)
         self.assertEqual(primary["winner"], player_a.name)
+        official_records = app_module.weekly_pick_records(db, week)
+        for matchup_view in [primary] + mw["others"]:
+            for player in matchup_view["players"]:
+                expected = official_records[player["id"]]
+                self.assertEqual(player["pick_record"], {
+                    "correct": expected["correct"], "incorrect": expected["incorrect"],
+                    "draw": expected["draws"],
+                })
+        self.assertEqual(response.data.count(b'class="mw-final-player-stats"'),
+                         2 * (1 + len(mw["others"])))
+        self.assertIn(b'Final Matchup', response.data)
+        self.assertIn(b'Points</dt>', response.data)
+        self.assertIn(b'Draws</dt>', response.data)
         for player in primary["players"]:
             self.assertEqual(player["for"], points[player["id"]])
         rows = {row["id"]: row for row in primary["history"]}
