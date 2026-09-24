@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 240" fill="none">
+  <!-- Original decorative stadium illustration; not a depiction of a named venue. -->
+  <defs>
+    <linearGradient id="stands" x2="0" y2="1">
+      <stop stop-color="#7a91a5"/><stop offset="1" stop-color="#ced9dd"/>
+    </linearGradient>
+    <pattern id="seats" width="12" height="8" patternUnits="userSpaceOnUse">
+      <path d="M2 4h6" stroke="#435e76" stroke-opacity=".32" stroke-width="2"/>
+    </pattern>
+  </defs>
+  <path d="M0 30Q500 175 1000 30V159Q500 240 0 159Z" fill="url(#stands)"/>
+  <path d="M0 30Q500 175 1000 30V159Q500 240 0 159Z" fill="url(#seats)"/>
+  <g stroke="#eaf0f2" stroke-width="4">
+    <path d="M0 65Q500 187 1000 65M0 99Q500 206 1000 99M0 131Q500 222 1000 131"/>
+    <path d="m70 53 36 126M235 92l20 105M407 116l6 92M593 116l-6 92M765 92l-20 105M930 53l-36 126"/>
+  </g>
+  <path d="M0 178Q500 230 1000 178V240H0Z" fill="#a1b7ad"/>
+  <g stroke="#f4f8f5" stroke-width="2">
+    <path d="m155 240 88-44q257 30 514 0l88 44M500 211v29"/>
+    <ellipse cx="500" cy="235" rx="85" ry="15"/>
+  </g>
+  <path d="M0 23Q500 169 1000 23" stroke="#d4dfe5" stroke-width="12"/>
+  <path d="M0 14Q500 160 1000 14" stroke="#688399" stroke-width="3"/>
+</svg>

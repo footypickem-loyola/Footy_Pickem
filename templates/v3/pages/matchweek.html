@@ -1,0 +1,51 @@
+{% from 'v3/components/ui.html' import empty_state %}
+<div id="matchweek-view" class="mw-page{% if mw and mw.primary %} mw-page--matchweek{% endif %}">
+  <header class="mw-page-heading">
+    <div class="mw-hero-copy">
+      <p class="mw-eyebrow">{{ mw.season if mw else 'Your league' }}</p>
+      <h1><span class="mw-title-week">Matchweek{% if mw %} {{ mw.week }}{% endif %}</span>{% if mw and mw.primary %}<span class="mw-hero-state"> · {{ mw.primary.state_label }}</span>{% endif %}</h1>
+      {% if mw and mw.primary %}
+        {% if mw.primary.state == 'final' %}<p class="mw-first-kickoff">Final result official · All fixture results finalized</p>
+        {% elif mw.first_kickoff %}<p class="mw-first-kickoff">{{ 'Draft deadline' if mw.primary.state == 'draft' else 'First kickoff' }} · {{ mw.first_kickoff|kickoff_eastern }}</p>{% endif %}
+      {% endif %}
+      {% if mw and mw.archived %}<p class="muted">Archived — read only</p>{% endif %}
+    </div>
+    {% if mw and mw.primary %}<img class="mw-league-mark" src="{{ url_for('static', filename='v3/premier-league.svg') }}" alt="Premier League" width="116" height="48">{% endif %}
+    {% if mw %}
+    <div class="mw-page-actions">
+      <a href="{{ url_for('tab_stats', season=mw.season_code) }}" hx-get="{{ url_for('tab_stats', season=mw.season_code) }}" hx-target="#main" hx-push-url="true">View all stats</a>
+      <button class="btn" type="button" hx-get="{{ url_for('matchweek_partial', week_number=mw.week, season=mw.season_code) }}" hx-target="#matchweek-view" hx-swap="outerHTML">Refresh matchweek</button>
+    </div>
+    {% endif %}
+  </header>
+  {% if not mw %}
+    <section class="card">{{ empty_state('No matchweek yet', message) }}</section>
+  {% elif not mw.primary %}
+    <section class="card">{{ empty_state('No matchups scheduled', 'There are no head-to-head matchups for this week.') }}</section>
+  {% else %}
+    {% if not mw.viewer %}
+      <p class="mw-notice"><a href="{{ url_for('join') }}">Join your league</a> to see your matchup and make picks. You’re viewing a league matchup.</p>
+    {% elif not mw.has_matchup %}
+      <p class="mw-notice">No matchup is assigned to you this week. You’re viewing a league matchup.</p>
+    {% endif %}
+    {% with m=mw.primary %}{% include 'v3/components/matchup.html' %}{% endwith %}
+    {% if mw.others %}
+    <section class="mw-other-section" aria-labelledby="other-matchups-title">
+      <div class="mw-section-heading"><h2 id="other-matchups-title">Other Matchups</h2><span class="muted">Around your league</span></div>
+      <div class="mw-other-grid">
+        {% for other in mw.others %}
+        <article class="card mw-other" data-matchup-id="{{ other.id }}">
+          <span class="mw-state">{{ other.state_label }}</span>
+          <h3>{{ other.players[0].name }} <span class="muted">vs</span> {{ other.players[1].name }}{% if other.state == 'final' %}: {% if other.winner %}{{ other.winner }} Wins ${{ other.payout.payout }}{% else %}Draw $0{% endif %}{% endif %}</h3>
+          {% if other.state == 'final' %}
+            {% for player in other.players %}{% include 'v3/components/final_player_stats.html' %}{% endfor %}
+          {% elif other.state == 'draft' %}
+            <p class="muted">{{ other.total_picks }}/10 picked · {{ other.turn.name }}’s turn</p>
+          {% else %}<p class="muted">5 fixtures each · Draft complete</p>{% endif %}
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+  {% endif %}
+</div>

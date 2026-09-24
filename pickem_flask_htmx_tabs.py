@@ -29,6 +29,7 @@ import pandas as pd
 import bleach
 import markdown
 from markupsafe import Markup
+from v3_matchweek import build_matchweek, build_player_context
 
 from correspondent import (
     CLASSIFIER_PROMPT_VERSION,
@@ -510,51 +511,6 @@ JOIN_HTML = """
   <p class="muted">Allowed players: {{ allowed_names|join(', ') }}</p>
 </div>
 </body></html>
-"""
-
-CURRENT_PARTIAL = """
-{% set wk = current_week %}
-<div class="row">
-  <div class="col">
-    <div class="card">
-      <h3>{{ season.name }} — Week {{ wk.number }} — Hello, {{ you.name }}</h3>
-      <div class="muted">Room: {{ wk.room_code }}</div>
-      <div>Status: <span class="status {{ wk.status }}">{{ wk.status|capitalize }}</span></div>
-      {% if season.is_archived %}<div class="badge" style="margin-top:8px;">Archived — read only</div>{% endif %}
-    </div>
-
-    <div class="card" id="fixtures" hx-get="{{ url_for('fixtures_partial', week_number=wk.number, season=season.code) }}" hx-trigger="load">
-      Loading fixtures...
-    </div>
-
-    <div class="card" id="scores" hx-get="{{ url_for('scores_partial', week_number=wk.number, season=season.code) }}" hx-trigger="load" hx-swap="outerHTML">
-      Loading scores...
-    </div>
-
-  </div>
-
-  <div class="col">
-    <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-        <h4 style="margin:0;">Season Leaders</h4>
-        <a href="#" hx-get="{{ url_for('tab_stats', season=season.code) }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true">View all stats</a>
-      </div>
-      <div class="leader-grid" style="margin-top:10px;">
-        {% for stat in leader_stats %}
-          <div class="leader-stat">
-            <div class="leader-label">{{ stat['label'] }}</div>
-            <div class="leader-value">{{ stat['value'] }}</div>
-            <div class="leader-detail">{{ stat['detail'] }}</div>
-          </div>
-        {% endfor %}
-      </div>
-    </div>
-
-    <div id="matchups" class="card" hx-get="{{ url_for('matchups_partial', week_number=wk.number, season=season.code) }}" hx-trigger="load" hx-swap="outerHTML">
-      Loading matchups...
-    </div>
-  </div>
-</div>
 """
 
 OPEN_PARTIAL = """
@@ -2108,6 +2064,10 @@ def compute_next_turn(db, m: Matchup) -> int:
     picks = db.query(Pick).filter_by(matchup_id=m.id).order_by(Pick.created_at.asc(), Pick.id.asc()).all()
     count = len(picks)
     first, second = matchup_order(m)
+    return draft_turn_at(first, second, count)
+
+def draft_turn_at(first, second, count):
+    """Existing snake order, shared by eligibility and presentation context."""
     chunk = count // 2
     order = [first, second] if chunk % 2 == 0 else [second, first]
     return order[count % 2]
@@ -2125,14 +2085,18 @@ def weekly_points_map(db, week: Week) -> Dict[int, int]:
         outcome = results.get(fx.id)
         if outcome is None:
             continue
-        if outcome == "Draw":
-            delta = 0
-        elif outcome == "Home":
-            delta = 1 if p.team == fx.home else -1
-        else:
-            delta = 1 if p.team == fx.away else -1
+        delta = pick_contribution(p, outcome)
         players[p.player_id] = players.get(p.player_id, 0) + delta
     return players
+
+
+def pick_contribution(pick: Pick, outcome: Optional[str]) -> int:
+    """Existing weekly point rule, shared with the Matchweek presentation."""
+    if outcome is None or outcome == "Draw":
+        return 0
+    if outcome == "Home":
+        return 1 if pick.team == pick.fixture.home else -1
+    return 1 if pick.team == pick.fixture.away else -1
 
 def weekly_for_against(db, week: Week) -> Dict[int, Dict[str,int]]:
     points = weekly_points_map(db, week)
@@ -4772,10 +4736,9 @@ def current_drafting_week(db, season: Season) -> Optional[Week]:
 @app.get("/tab/current")
 def tab_current():
     db = SessionLocal()
-    you = current_player(db)
     season = requested_season(db)
     if season is None:
-        return "<div class='card'>No seasons initialized yet.</div>"
+        return render_template("v3/pages/matchweek.html", mw=None, message="No seasons initialized yet.")
     # Optionally force a specific week via query param (?force_week=5)
     force = request.args.get("force_week", type=int)
     if force:
@@ -4785,14 +4748,41 @@ def tab_current():
     else:
         wk = current_drafting_week(db, season)
     if wk is None:
-        return f"<div class='card'>No weeks initialized for {season.name} yet.</div>"
-    return render_template_string(
-        CURRENT_PARTIAL,
-        current_week=wk,
-        season=season,
-        leader_stats=season_leader_stats(db, season),
-        you=you,
+        return render_template("v3/pages/matchweek.html", mw=None,
+                               message=f"No weeks initialized for {season.name} yet.")
+    return render_matchweek(db, season, wk)
+
+
+def render_matchweek(db, season, week):
+    """Load existing domain data; presentation shaping lives in v3_matchweek."""
+    matchups = db.query(Matchup).filter_by(week_id=week.id).order_by(Matchup.id).all()
+    mw = build_matchweek(
+        week=week, season=season, you=current_player(db), matchups=matchups,
+        fixtures=db.query(Fixture).filter_by(week_id=week.id).all(),
+        picks=db.query(Pick).join(Matchup).filter(Matchup.week_id == week.id).all(),
+        results=db.query(Result).join(Fixture).filter(Fixture.week_id == week.id).all(),
+        turns={matchup.id: compute_next_turn(db, matchup) for matchup in matchups},
+        points=weekly_points_map(db, week), payouts=payouts_for_week(db, week),
+        outcome_for_pick=pick_display_outcome, contribution_for_pick=pick_contribution,
+        draft_turn_at=draft_turn_at,
+        player_context=build_player_context(
+            standings_through_week(db, season, week.number - 1),
+            [weekly_for_against(db, prior) for prior in db.query(Week).filter(
+                Week.season_id == season.id, Week.status == "finalized",
+                Week.number < week.number).order_by(Week.number).all()],
+        ),
     )
+    return render_template("v3/pages/matchweek.html", mw=mw)
+
+
+@app.get("/partials/matchweek/<int:week_number>")
+def matchweek_partial(week_number):
+    db = SessionLocal()
+    season = requested_season(db)
+    week = season_week(db, season, week_number) if season else None
+    if week is None:
+        abort(404, "Week not found")
+    return render_matchweek(db, season, week)
 
 @app.get("/tab/open")
 def tab_open():
@@ -6126,7 +6116,12 @@ def make_pick():
 
     # Re-render the matchups panel after pick. Arsenal gets a one-time client
     # event in this successful POST response, so refreshes never replay it.
-    response = make_response(matchups_partial(wk.number))
+    if request.form.get("presentation") == "v3":
+        if request.headers.get("HX-Request") != "true":
+            return redirect(url_for("tab_current", force_week=wk.number, season=season.code))
+        response = make_response(render_matchweek(db, season, wk))
+    else:
+        response = make_response(matchups_partial(wk.number))
     if team_name.casefold() in ARSENAL_TEAM_ALIASES:
         response.headers["HX-Trigger"] = json.dumps({"arsenalBanter": {}})
     return response
