@@ -95,3 +95,14 @@ Per product clarification, the first fixture kickoff is displayed as the draft
  share 1st place, consistent with the existing standings tie behavior. Names
  no longer carry a You suffix. The local Premier League logo uses higher opacity
  for visibility. Refresh or restart older preview processes to load new templates.
+
+## Shared presentation across lifecycle states
+
+Draft, Matchup Set and Final share the same hero, competition mark, page fade,
+stadium-backed head-to-head summary, prior-week records/places, status banner,
+main-column/rail proportions and responsive rules. Completed slates replace
+the fixture picker with two compact ownership cards. Matchup Set uses a week
+snapshot rail; Final uses official score, net margin and payout. Draft History
+remains a secondary disclosure in both states. Only Draft shows the deadline,
+upcoming draft order and disabled Auto-Draft placeholder. No gameplay, data-model,
+result, scoring or Live behavior changes accompany this presentation revision.

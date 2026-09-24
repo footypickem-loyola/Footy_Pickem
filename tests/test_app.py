@@ -1151,6 +1151,9 @@ class PickemAppTests(unittest.TestCase):
                 })
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.data.count(b'id="matchweek-view"'), 1)
+            self.assertIn(b'mw-page--matchweek', response.data)
+            self.assertIn(b'alt="Premier League"', response.data)
+            self.assertIn(b'mw-season-record', response.data)
             if index < 9:
                 self.assertIn(b'data-state="draft"', response.data)
                 self.assertEqual(response.data.count(b'class="mw-pending"'), 9 - index)
@@ -1207,8 +1210,13 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual((rows[picks[1].id]["outcome"], rows[picks[1].id]["contribution"]), ("incorrect", -1))
         self.assertEqual((rows[picks[2].id]["outcome"], rows[picks[2].id]["contribution"]), ("correct", 1))
         self.assertIn("1–1".encode(), response.data)
-        for label in (b"Correct", b"Incorrect", b"Draw", b"Net margin", b"Payout"):
+        for label in (b"Correct", b"Incorrect", b"Draw", b"Net margin", b"Final payout"):
             self.assertIn(label, response.data)
+        for shared_part in (b'mw-page--matchweek', b'mw-side-rail', b'mw-season-record',
+                            b'alt="Premier League"', b'Head to head'):
+            self.assertIn(shared_part, response.data)
+        self.assertNotIn(b'Upcoming draft order', response.data)
+        self.assertNotIn(b'Draft deadline', response.data)
         self.assertNotIn(b'class="mw-pick"', response.data)
 
     def test_matchweek_partial_results_are_not_live_or_final_payout(self):

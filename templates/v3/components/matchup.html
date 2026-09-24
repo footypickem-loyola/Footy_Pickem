@@ -1,36 +1,39 @@
 <section id="matchups" class="mw-matchup" data-matchup-id="{{ m.id }}" data-state="{{ m.state }}" aria-label="{{ m.players[0].name }} versus {{ m.players[1].name }}">
   <div class="card mw-summary">
-    <div class="mw-summary-top"><span class="mw-eyebrow">{% if m.state == 'draft' %}Head to head · Week {{ m.week }}{% else %}{{ 'Your matchup' if m.is_yours else 'League matchup' }}{% endif %}</span><span class="mw-state mw-state--{{ m.state }}">{{ m.state_label }}</span></div>
+    <div class="mw-summary-top"><span class="mw-eyebrow">Head to head · Week {{ m.week }}</span></div>
     <div class="mw-versus">
       {% for player in m.players %}
       <div class="mw-player">
         <span class="mw-avatar" aria-hidden="true">{{ player.name[:1] }}</span>
-        <div><h2>{{ player.name }}</h2>{% if m.state == 'draft' and player.season_record %}
+        <div><h2>{{ player.name }}</h2>{% if player.season_record %}
           <div class="mw-season-record" aria-label="Record before Matchweek {{ mw.week }}">
             <span>{{ player.season_record.wins }}–{{ player.season_record.losses }}–{{ player.season_record.ties }} <small>W–L–T</small></span>
             <span class="muted">{{ player.season_record.place }} place · {{ player.season_record.net_points }} net pts</span>
           </div>
           {% else %}<span class="muted">{{ player.owned|length }} fixtures owned</span>{% endif %}</div>
-        {% if m.state == 'final' %}<strong class="mw-score" aria-label="{{ player.name }} For {{ player['for'] }}">{{ player['for'] }}</strong>{% endif %}
       </div>
       {% if not loop.last %}<span class="mw-vs">vs</span>{% endif %}
       {% endfor %}
     </div>
     {% if m.state == 'final' %}
-      <div class="mw-final-summary">
+      <aside class="mw-summary-context mw-official-score" aria-label="Official matchup score">
+        <span>Official Pick ’Em score</span>
+        <div class="mw-score-pair">{% for player in m.players %}<div><small>{{ player.name }}</small><strong aria-label="{{ player.name }} For {{ player['for'] }}">{{ '%+d'|format(player['for']) if player['for'] else '0' }}</strong></div>{% endfor %}</div>
         <strong>{% if m.winner %}{{ m.winner }} wins{% else %}Matchup drawn{% endif %}</strong>
-        <span>Net margin {{ m.payout.points }} · Payout ${{ m.payout.payout }}</span>
-        {% if m.winner %}<span class="muted">{{ m.payout['from'] }} pays {{ m.payout.to }}</span>{% endif %}
-      </div>
+      </aside>
     {% elif m.state == 'draft' %}
-      <aside class="mw-draft-order" aria-label="Upcoming draft order">
+      <aside class="mw-summary-context mw-draft-order" aria-label="Upcoming draft order">
         <span>Draft Order (Next {{ m.upcoming_turns|length }})</span>
         <ol>{% for player in m.upcoming_turns %}<li{% if loop.first %} class="mw-order-current"{% endif %} aria-label="Pick {{ m.total_picks + loop.index }}: {{ player.name }}" title="Pick {{ m.total_picks + loop.index }}: {{ player.name }}">{{ player.name[:1] }}</li>{% endfor %}</ol>
         <span>Pick {{ m.total_picks + 1 }} of 10 · {{ m.turn.name }}</span>
         <small>First picker: {{ m.first_picker }}</small>
       </aside>
     {% else %}
-      <p class="mw-ready-note">Your slate is set. Five fixtures each, ordered by kickoff. Final results appear as they are recorded.</p>
+      <aside class="mw-summary-context" aria-label="Fixture ownership">
+        <strong>{{ m.total_picks }} fixtures assigned</strong>
+        {% for player in m.players %}<p>{{ player.name }} owns <strong>{{ player.owned|length }}</strong></p>{% endfor %}
+        <span>Draft complete</span>
+      </aside>
     {% endif %}
   </div>
   {% if m.state == 'draft' %}
@@ -67,7 +70,7 @@
       </article>
       {% endfor %}
     </section>
-    <aside class="mw-draft-rail">
+    <aside class="mw-side-rail">
       {% include 'v3/components/draft_history.html' %}
       <section class="card mw-auto-draft" aria-labelledby="auto-draft-title">
         <div class="mw-section-heading"><h2 id="auto-draft-title">Auto-Draft</h2><span class="mw-state">Coming in Wave 2</span></div>
@@ -77,15 +80,37 @@
     </aside>
   </div>
   {% else %}
+    <div class="mw-turn-banner mw-slate-banner" role="status">
+      <span class="mw-turn-dot" aria-hidden="true"></span>
+      <div><h2>{{ 'Final' if m.state == 'final' else 'Matchup set' }}</h2>
+        <p>{% if m.state == 'final' %}All fixture results are finalized. Here is the official matchup result.{% else %}The draft is complete. Five fixtures each, ordered by kickoff.{% endif %}</p>
+      </div>
+    </div>
     <div class="mw-owned-grid">
       {% for player in m.players %}
       <section class="card mw-owned" data-owner-id="{{ player.id }}" aria-label="{{ player.name }}’s fixtures">
-        <div class="mw-section-heading"><h2>{{ player.name }}’s slate</h2><span class="muted">{{ player.owned|length }} fixtures</span></div>
+        <div class="mw-owned-heading"><span class="mw-avatar" aria-hidden="true">{{ player.name[:1] }}</span><div><h2>{{ player.name }}’s picks</h2><span class="muted">{{ player.owned|length }} fixtures · Ordered by kickoff</span></div></div>
         {% if m.state == 'final' %}<p class="mw-totals">For {{ player['for'] }} · Against {{ player.against }} · Net {{ '%+d'|format(player.net) }}</p>{% endif %}
         {% for pick in player.owned %}{% include 'v3/components/owned_fixture.html' %}{% else %}<p class="muted">No fixtures drafted.</p>{% endfor %}
       </section>
       {% endfor %}
     </div>
-    {% include 'v3/components/draft_history.html' %}
+    <aside class="mw-side-rail">
+      <section class="card mw-snapshot">
+        <div class="mw-section-heading"><h2>{{ 'Final matchup' if m.state == 'final' else 'Week ' ~ mw.week ~ ' snapshot' }}</h2></div>
+        <dl>
+          {% if m.state == 'final' %}
+          <div><dt>Official Pick ’Em score</dt><dd>{{ m.players[0].name }} {{ '%+d'|format(m.players[0]['for']) }} · {{ m.players[1].name }} {{ '%+d'|format(m.players[1]['for']) }}</dd></div>
+          <div><dt>Net margin</dt><dd>{{ m.payout.points }}</dd></div>
+          <div><dt>Final payout</dt><dd>${{ m.payout.payout }}{% if m.winner %} · {{ m.payout['from'] }} pays {{ m.payout.to }}{% endif %}</dd></div>
+          {% else %}
+          {% if mw.first_kickoff %}<div><dt>First kickoff</dt><dd>{{ mw.first_kickoff|kickoff_eastern }}</dd></div>{% endif %}
+          <div><dt>Fixture ownership</dt><dd>{% for player in m.players %}{{ player.name }}: {{ player.owned|length }}{% if not loop.last %} · {% endif %}{% endfor %}</dd></div>
+          {% endif %}
+          <div><dt>{{ 'Finalized fixtures' if m.state == 'final' else 'Fixtures assigned' }}</dt><dd>{{ m.total_picks }}{% if m.state == 'final' %} complete{% endif %}</dd></div>
+        </dl>
+      </section>
+      {% include 'v3/components/draft_history.html' %}
+    </aside>
   {% endif %}
 </section>
