@@ -80,6 +80,9 @@
 .desk-standings:has(.desk-table-views[data-table-view="summary"]) {max-width:800px}
 #standings-summary th[scope="row"] {text-align:left}
 #standings-summary thead th {text-align:center}
+#standings-summary .desk-table {table-layout:fixed}
+#standings-summary thead th:first-child {width:64px}
+#standings-summary thead th:nth-child(2) {width:28%;text-align:left}
 .desk-sortable th button {padding:0;border:0;background:none;color:inherit;font:inherit;cursor:pointer;white-space:nowrap}
 .desk-sort-icon {font-size:.65rem;margin-left:4px;color:var(--v3-muted)}
 .desk-sortable th[aria-sort] button {color:var(--v3-blue)}
