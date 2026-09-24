@@ -1,5 +1,5 @@
 <section class="desk-page" id="table-results-view">
-  <header class="desk-heading"><div><h1>Table &amp; Results</h1><p class="muted">League table and completed matchweeks for {{ selected_season.name if selected_season else 'your league' }}.</p></div>{% include 'v3/components/season_picker.html' %}</header>
+  <header class="desk-heading"><div><h1>Table &amp; Results</h1><p class="muted">League table and completed matchweeks for the season.</p></div>{% include 'v3/components/season_picker.html' %}</header>
   {% if not results %}<div class="card">No seasons initialized yet.</div>
   {% else %}
     {% if selected_season.is_archived %}<p class="desk-notice">Archived season — read only</p>{% endif %}
@@ -30,8 +30,8 @@
           {% for matchup in week.matchups %}<article class="desk-matchup" data-matchup-id="{{ matchup.id }}"><h3>{{ matchup.players[0].name }} vs {{ matchup.players[1].name }}</h3>
             <p>{% if matchup.winner %}{{ matchup.winner }} wins by {{ matchup.payout.points }}{% else %}Matchup drawn{% endif %} · ${{ matchup.payout.payout }}</p>
             <div class="desk-scroll" tabindex="0" role="region" aria-label="{{ matchup.players[0].name }} versus {{ matchup.players[1].name }} final stats">
-              <table class="desk-table desk-breakdown"><caption class="desk-sr-only">Matchweek {{ week.number }} official matchup breakdown</caption><thead><tr><th scope="col">Player</th><th scope="col">Correct</th><th scope="col">Incorrect</th><th scope="col">Draws</th><th scope="col">Draws against</th><th scope="col">Net</th></tr></thead><tbody>
-              {% for player in matchup.players %}<tr><th scope="row">{{ player.name }}</th><td>{{ player.pick_record.correct }}</td><td>{{ player.pick_record.incorrect }}</td><td>{{ player.pick_record.draw }}</td><td>{{ player.against_draws }}</td><td class="desk-net {{ 'desk-positive' if player.net > 0 else 'desk-negative' if player.net < 0 else '' }}">{{ player.net }}</td></tr>{% endfor %}
+              <table class="desk-table desk-breakdown"><caption class="desk-sr-only">Matchweek {{ week.number }} official matchup breakdown</caption><thead><tr><th scope="col">Player</th><th scope="col">Correct</th><th scope="col">Incorrect</th><th scope="col">Draws</th><th scope="col">Net</th></tr></thead><tbody>
+              {% for player in matchup.players %}<tr><th scope="row">{{ player.name }}</th><td>{{ player.pick_record.correct }}</td><td>{{ player.pick_record.incorrect }}</td><td>{{ player.pick_record.draw }}</td><td class="desk-net {{ 'desk-positive' if player.net > 0 else 'desk-negative' if player.net < 0 else '' }}">{{ player.net }}</td></tr>{% endfor %}
               </tbody></table>
             </div>
           </article>{% else %}<p class="muted">No matchup results available.</p>{% endfor %}

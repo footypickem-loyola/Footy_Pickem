@@ -330,19 +330,17 @@ class PickemAppTests(unittest.TestCase):
             self.assertEqual(values['for'], weekly_points[player.id])
             expected[player.id] = (values['for'], values['against'], values['for'] - values['against'])
         expected_payouts = app_module.payouts_for_week(db, week)
-        expected_records = app_module.weekly_pick_records(db, week)
         response, context = self.desk_response('/tab/season')
         self.assertEqual(response.status_code, 200)
         games = context['results']['weeks'][0]['matchups']
         self.assertEqual(len(games), 3)
         for game in games:
-            for index, player in enumerate(game['players']):
+            for player in game['players']:
                 self.assertEqual((player['for'], player['against'], player['net']), expected[player['id']])
-                opponent_id = game['players'][1 - index]['id']
-                self.assertEqual(player['against_draws'], expected_records[opponent_id]['draws'])
             if game['payout']['points']:
                 self.assertIn(game['payout'], expected_payouts)
         self.assertIn(b'official matchup breakdown', response.data)
+        self.assertNotIn(b'Draws against', response.data)
 
     def test_rendering_never_updates_week_status_or_core_rows(self):
         db, week, matchup, a, b = self.finalize_one_sided_matchup()
