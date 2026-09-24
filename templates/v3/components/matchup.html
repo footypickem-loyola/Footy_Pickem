@@ -1,6 +1,6 @@
 <section id="matchups" class="mw-matchup" data-matchup-id="{{ m.id }}" data-state="{{ m.state }}" aria-label="{{ m.players[0].name }} versus {{ m.players[1].name }}">
   <div class="card mw-summary">
-    <div class="mw-summary-top"><span class="mw-eyebrow">{{ 'Your matchup' if m.is_yours else 'League matchup' }}</span><span class="mw-state mw-state--{{ m.state }}">{{ m.state_label }}</span></div>
+    <div class="mw-summary-top"><span class="mw-eyebrow">{% if m.state == 'draft' %}Head to head · Week {{ m.week }}{% else %}{{ 'Your matchup' if m.is_yours else 'League matchup' }}{% endif %}</span><span class="mw-state mw-state--{{ m.state }}">{{ m.state_label }}</span></div>
     <div class="mw-versus">
       {% for player in m.players %}
       <div class="mw-player">
@@ -18,22 +18,31 @@
         {% if m.winner %}<span class="muted">{{ m.payout['from'] }} pays {{ m.payout.to }}</span>{% endif %}
       </div>
     {% elif m.state == 'draft' %}
-      <div class="mw-turn{% if m.your_turn %} mw-turn--yours{% endif %}">
-        <strong>{{ 'YOUR TURN' if m.your_turn else m.turn.name ~ '’s turn' }}</strong>
-        <span>{{ m.total_picks }}/10 picked · First picker: {{ m.first_picker }}</span>
-      </div>
+      <aside class="mw-draft-order" aria-label="Upcoming draft order">
+        <span>Draft Order (Next {{ m.upcoming_turns|length }})</span>
+        <ol>{% for player in m.upcoming_turns %}<li{% if loop.first %} class="mw-order-current"{% endif %} aria-label="Pick {{ m.total_picks + loop.index }}: {{ player.name }}" title="Pick {{ m.total_picks + loop.index }}: {{ player.name }}">{{ player.name[:1] }}</li>{% endfor %}</ol>
+        <span>Pick {{ m.total_picks + 1 }} of 10 · {{ m.turn.name }}</span>
+        <small>First picker: {{ m.first_picker }}</small>
+      </aside>
     {% else %}
       <p class="mw-ready-note">Your slate is set. Five fixtures each, ordered by kickoff. Final results appear as they are recorded.</p>
     {% endif %}
   </div>
   {% if m.state == 'draft' %}
+  <div class="mw-turn-banner{% if m.your_turn %} mw-turn-banner--yours{% endif %}" role="status">
+    <span class="mw-turn-dot" aria-hidden="true"></span>
+    <div><h2>{{ 'YOUR TURN' if m.your_turn else m.turn.name ~ '’s turn' }}</h2>
+    <p>Pick {{ m.total_picks + 1 }} of 10. {% if m.can_pick %}Choose a team from any remaining fixture.{% elif mw.archived %}Archived season — read only.{% else %}Waiting for {{ m.turn.name }} to choose a team.{% endif %}</p></div>
+  </div>
   <div class="mw-draft-layout">
     <section class="card mw-available" aria-labelledby="available-title">
       <div class="mw-section-heading"><h2 id="available-title">Available fixtures</h2><span class="muted">{{ m.available|length }} remaining</span></div>
-      <p class="muted">Choose either club. Each fixture can be picked once in your matchup.</p>
+      <p class="muted">Choose a team from any remaining fixture.</p>
+      <div class="mw-fixture-columns" aria-hidden="true"><span>Date &amp; time</span><span>Home</span><span></span><span>Away</span><span>Pick</span></div>
       {% for fixture in m.available %}
       <article class="mw-fixture" data-fixture-id="{{ fixture.id }}">
         <p class="mw-kickoff">{{ fixture.kickoff_utc|kickoff_eastern }}</p>
+        <span class="mw-club-identity mw-home">{{ fixture.home }}</span><span class="mw-fixture-vs">vs</span><span class="mw-club-identity mw-away">{{ fixture.away }}</span>
         <div class="mw-club-options">
           {% for team in [fixture.home, fixture.away] %}
           <form method="post" action="{{ url_for('make_pick') }}" hx-post="{{ url_for('make_pick') }}" hx-trigger="confirmedPick" hx-target="#matchweek-view" hx-swap="outerHTML" hx-disabled-elt="find button"
@@ -45,16 +54,22 @@
             <input type="hidden" name="matchup_id" value="{{ m.id }}">
             <input type="hidden" name="fixture_id" value="{{ fixture.id }}">
             <input type="hidden" name="team" value="{{ team }}">
-            <button type="submit" class="mw-pick"{% if not m.can_pick %} disabled{% endif %} aria-label="Pick {{ team }} against {{ fixture.away if loop.first else fixture.home }}"><span>{{ team }}</span><span class="mw-pick-label">{{ 'Pick' if m.can_pick else ('Home' if loop.first else 'Away') }}</span></button>
+            <button type="submit" class="mw-pick"{% if not m.can_pick %} disabled{% endif %} aria-label="Pick {{ team }} against {{ fixture.away if loop.first else fixture.home }}"><span>Pick {{ team }}</span></button>
             <p class="mw-error" role="alert" hidden>Pick not saved. Refresh matchweek to check whose turn it is and try again.</p>
           </form>
-          {% if loop.first %}<span class="mw-vs">vs</span>{% endif %}
           {% endfor %}
         </div>
       </article>
       {% endfor %}
     </section>
-    {% include 'v3/components/draft_history.html' %}
+    <aside class="mw-draft-rail">
+      {% include 'v3/components/draft_history.html' %}
+      <section class="card mw-auto-draft" aria-labelledby="auto-draft-title">
+        <div class="mw-section-heading"><h2 id="auto-draft-title">Auto-Draft</h2><span class="mw-state">Coming in Wave 2</span></div>
+        <p>Priority picks when it’s your turn. Coming in a future update.</p>
+        <button type="button" disabled>Configure Auto-Draft</button>
+      </section>
+    </aside>
   </div>
   {% else %}
     <div class="mw-owned-grid">

@@ -1,9 +1,9 @@
 {% from 'v3/components/ui.html' import empty_state %}
-<div id="matchweek-view" class="mw-page">
+<div id="matchweek-view" class="mw-page{% if mw and mw.primary.state == 'draft' %} mw-page--draft{% endif %}">
   <header class="mw-page-heading">
     <div>
       <p class="mw-eyebrow">{{ mw.season if mw else 'Your league' }}</p>
-      <h1>Matchweek{% if mw %} {{ mw.week }}{% endif %}</h1>
+      <h1>Matchweek{% if mw %} {{ mw.week }}{% endif %}{% if mw and mw.primary.state == 'draft' %}<span class="mw-hero-state"> · Draft</span>{% endif %}</h1>
       {% if mw and mw.archived %}<p class="muted">Archived — read only</p>{% endif %}
     </div>
     {% if mw %}

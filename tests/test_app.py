@@ -1098,6 +1098,13 @@ class PickemAppTests(unittest.TestCase):
         self.assertEqual(response.data.count(b'class="mw-pick"'), 20)
         self.assertIn(b"YOUR TURN", response.data)
         self.assertIn(b"Draft So Far", response.data)
+        self.assertEqual([slot["sequence"] for slot in mw["primary"]["draft_slots"]], list(range(1, 11)))
+        self.assertEqual(response.data.count(b'class="mw-pending"'), 10)
+        self.assertIn(b'button type="button" disabled>Configure Auto-Draft', response.data)
+        first = matchup.first_picker_id
+        second = matchup.player_b_id if first == matchup.player_a_id else matchup.player_a_id
+        self.assertEqual([p["id"] for p in mw["primary"]["upcoming_turns"]],
+                         [first, second, second, first, first, second])
         self.assertNotIn(b"<table", response.data)
         self.assertNotIn(b"<select", response.data)
         self.assertNotIn(b"LOCALTEST", response.data)
@@ -1123,11 +1130,18 @@ class PickemAppTests(unittest.TestCase):
             self.assertEqual(response.data.count(b'id="matchweek-view"'), 1)
             if index < 9:
                 self.assertIn(b'data-state="draft"', response.data)
+                self.assertEqual(response.data.count(b'class="mw-pending"'), 9 - index)
+                _, refreshed = self.matchweek_response(turn.name)
+                self.assertEqual(refreshed["primary"]["upcoming_turns"][0]["id"],
+                                 app_module.compute_next_turn(db, matchup))
             else:
                 self.assertIn(b'data-state="ready"', response.data)
                 self.assertNotIn(b'class="mw-pick"', response.data)
                 self.assertNotIn(b"YOUR TURN", response.data)
                 self.assertIn(b"Draft History", response.data)
+                self.assertNotIn(b"Configure Auto-Draft", response.data)
+                self.assertNotIn(b"Upcoming draft order", response.data)
+                self.assertNotIn(b'class="mw-pending"', response.data)
         _, mw = self.matchweek_response(turn.name)
         self.assertTrue(mw["primary"]["draft_complete"])
         owned = [player["owned"] for player in mw["primary"]["players"]]

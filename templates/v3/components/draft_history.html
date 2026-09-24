@@ -1,11 +1,12 @@
 <details class="card mw-history"{% if m.state == 'draft' %} open{% endif %}>
   <summary>{{ 'Draft So Far' if m.state == 'draft' else 'Draft History' }} <span class="muted">{{ m.total_picks }}/10</span></summary>
   <ol class="mw-pick-log">
-    {% for pick in m.history %}
-    <li data-pick-id="{{ pick.id }}">
+    {% for pick in (m.draft_slots if m.state == 'draft' else m.history) %}
+    <li {% if pick.pending %}class="mw-pending"{% else %}data-pick-id="{{ pick.id }}"{% endif %}>
       <span class="mw-pick-sequence">{{ pick.sequence }}</span>
-      <div><strong>{{ pick.team }}</strong> <span class="muted">vs {{ pick.opposition }}</span><small>{{ pick.player }}{% if pick.is_yours %} · You{% endif %}</small></div>
+      {% if pick.pending %}<span class="mw-log-player">—</span><span class="muted">Pending…</span>
+      {% else %}<span class="mw-log-player">{{ pick.player }}</span><span class="mw-log-club"><strong>{{ pick.team }}</strong> <span class="muted">(vs {{ pick.opposition }})</span></span>{% endif %}
     </li>
-    {% else %}<li class="muted">No picks yet. {{ m.first_picker }} picks first.</li>{% endfor %}
+    {% endfor %}
   </ol>
 </details>

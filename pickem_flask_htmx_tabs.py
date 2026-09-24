@@ -2064,6 +2064,10 @@ def compute_next_turn(db, m: Matchup) -> int:
     picks = db.query(Pick).filter_by(matchup_id=m.id).order_by(Pick.created_at.asc(), Pick.id.asc()).all()
     count = len(picks)
     first, second = matchup_order(m)
+    return draft_turn_at(first, second, count)
+
+def draft_turn_at(first, second, count):
+    """Existing snake order, shared by eligibility and presentation context."""
     chunk = count // 2
     order = [first, second] if chunk % 2 == 0 else [second, first]
     return order[count % 2]
@@ -4760,6 +4764,7 @@ def render_matchweek(db, season, week):
         turns={matchup.id: compute_next_turn(db, matchup) for matchup in matchups},
         points=weekly_points_map(db, week), payouts=payouts_for_week(db, week),
         outcome_for_pick=pick_display_outcome, contribution_for_pick=pick_contribution,
+        draft_turn_at=draft_turn_at,
     )
     return render_template("v3/pages/matchweek.html", mw=mw)
 

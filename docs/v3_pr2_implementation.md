@@ -12,7 +12,8 @@ owned-fixture, turn, and official-result data without database access.
   ownership slate. Mobile stacks the players, available fixtures, draft history,
   and league context. No stadium artwork or club crests were added.
 - Other Matchups ships as compact summaries. The optional modal/sheet is deferred;
-  there are no controls that imply an unimplemented modal or Auto-Draft action.
+  there are no controls that imply an unimplemented modal. Draft includes a
+  disabled Auto-Draft placeholder, explicitly labeled Coming in Wave 2.
 - Fixture data has no venue field. No venues, deadlines, countdowns, standings
   impacts, research, or Live projections are invented from the mockups. Existing
   kickoff timestamps use the established Eastern-time formatter; missing times
@@ -52,3 +53,19 @@ Final and the ninth-to-tenth pick transition at 1440, 390, and 360 pixel widths.
 
 No schema, draft rules, kickoff locks, score sync, Correspondent, provider polling,
 or Live functionality changes are included.
+
+## Draft visual revision
+
+The approved Draft reference now drives a compact matchup card with next-pick
+order, a separate current-turn banner, aligned kickoff/home/away/pick columns,
+and a narrower Draft So Far rail containing all ten slots, including pending
+slots. Mobile stacks these regions and retains a native history disclosure.
+The existing snake-order expression is shared by eligibility and presentation;
+no ordering behavior changed. Focused tests check every remaining slot and
+that the next-order chip agrees with eligibility after each successful pick.
+
+Intentional differences from the reference: real season/player/fixture names,
+fixture ownership instead of unsupported player records/ranks, no invented
+venues/deadline, no stadium/lion artwork or club crests. Team identity elements
+can accept a crest later without changing row structure. Existing global shell,
+manual refresh and stats links remain. Auto-Draft has no action or submission.

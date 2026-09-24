@@ -12,7 +12,7 @@ def kickoff_order(fixture):
 
 
 def build_matchweek(*, week, season, you, matchups, fixtures, picks, results,
-                    turns, points, payouts, outcome_for_pick, contribution_for_pick):
+                    turns, points, payouts, outcome_for_pick, contribution_for_pick, draft_turn_at):
     """Shape domain objects and official helper outputs for all Matchweek states.
 
     A complete draft is not live. Partial official results may annotate owned
@@ -66,11 +66,19 @@ def build_matchweek(*, week, season, you, matchups, fixtures, picks, results,
         payout = next((row for row in payouts
                        if {row["from"], row["to"]} == {player["name"] for player in players}),
                       {"from": "-", "to": "-", "points": 0, "payout": 0})
+        first_id = matchup.first_picker_id
+        second_id = next(player["id"] for player in players if player["id"] != first_id)
+        upcoming = [next(player for player in players
+                         if player["id"] == draft_turn_at(first_id, second_id, index))
+                    for index in range(len(history), min(10, len(history) + 6))]
         views.append({
             "id": matchup.id, "week": week.number, "state": state,
             "state_label": {"draft": "Draft", "ready": "Matchup set", "final": "Final"}[state],
             "players": players, "is_yours": viewer_id in player_ids,
             "first_picker": matchup.first_picker.name, "turn": turn,
+            "upcoming_turns": upcoming if state == "draft" else [],
+            "draft_slots": history + [{"sequence": n, "pending": True}
+                                      for n in range(len(history) + 1, 11)],
             "your_turn": bool(turn and turn["is_you"] and not season.is_archived),
             "can_pick": bool(turn and turn["is_you"] and not season.is_archived),
             "total_picks": len(history), "draft_complete": complete, "history": history,
