@@ -1,0 +1,12 @@
+<div class="insight-performance"><h3>Performance Trend</h3>
+{% if performance.points %}<div class="desk-scroll" role="region" aria-label="Performance trend" tabindex="0">
+<svg class="insight-performance-chart" viewBox="0 0 {{ performance.width }} 220" style="min-width:{{ performance.width }}px" role="img" aria-labelledby="performance-title"><title id="performance-title">Cumulative official net points by finalized matchweek</title>
+{% for tick in performance.ticks %}<line x1="40" x2="{{ performance.width - 20 }}" y1="{{ tick.y }}" y2="{{ tick.y }}" class="insight-chart-grid"/><text x="30" y="{{ tick.y + 4 }}" text-anchor="end">{{ tick.value }}</text>{% endfor %}
+<text transform="translate(12 115) rotate(-90)" text-anchor="middle">Net Points</text>
+<polyline points="{{ performance.path }}" fill="none" stroke="#2474ee" stroke-width="2.5"/>
+{% for point in performance.points %}<circle cx="{{ point.x }}" cy="{{ point.y }}" r="3.5" fill="#1461e8"><title>Matchweek {{ point.week }}: {{ point.net }} net points</title></circle><text x="{{ point.x }}" y="190" text-anchor="middle">{{ point.week }}</text>{% endfor %}<text x="{{ performance.width / 2 }}" y="212" text-anchor="middle">Matchweek</text>
+</svg></div>{% else %}<p class="muted">Your performance trend will appear after the first finalized matchweek.</p>{% endif %}
+</div>
+<div class="insight-recent"><h3>Recent Form</h3>
+{% if summary.record.recent %}<div class="insight-recent-content"><div class="insight-form-tiles">{% for game in summary.record.recent %}<div><span class="insight-result insight-result--{{ game.outcome|lower }}">{{ game.outcome }}</span><small>MW {{ game.week }}</small></div>{% endfor %}</div><div class="insight-recent-total"><strong>{{ summary.record.recent|selectattr('outcome','equalto','W')|list|length }}W – {{ summary.record.recent|selectattr('outcome','equalto','L')|list|length }}L – {{ summary.record.recent|selectattr('outcome','equalto','D')|list|length }}D</strong><small>Last {{ summary.record.recent|length }} finalized matchup{{ 's' if summary.record.recent|length != 1 else '' }}</small></div></div>{% else %}<p class="muted">No finalized meetings yet.</p>{% endif %}
+</div>

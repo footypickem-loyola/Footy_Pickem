@@ -1,0 +1,3 @@
+<span class="insight-form" aria-label="Recent matchup outcomes, oldest to newest">
+  {% for game in recent %}<span class="insight-result insight-result--{{ game.outcome|lower }}" title="Matchweek {{ game.week }}: {{ {'W':'Win','L':'Loss','D':'Draw'}[game.outcome] }}; net {{ game.net }}">{{ game.outcome }}</span>{% else %}<span class="muted">No finalized meetings</span>{% endfor %}
+</span>

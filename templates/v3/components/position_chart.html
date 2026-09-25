@@ -1,0 +1,15 @@
+<section class="card insight-section"><h2>Season Position</h2><p class="muted">Official rank after each finalized matchweek. Shared ranks remain tied.</p>
+{% if chart.weeks %}
+  <div class="insight-chart-legend" role="group" aria-label="Chart players">{% for series in chart.series %}<span><i style="--series-color:{{ series.color }}" class="insight-key"></i> {{ series.name }}</span>{% endfor %}</div>
+  <p class="insight-note">Initials mark each line’s endpoint. Tied players share a line; scroll for longer seasons.</p>
+  <div class="desk-scroll insight-chart-scroll" tabindex="0" role="region" aria-label="Season position chart">
+    <svg class="insight-chart" viewBox="0 0 {{ chart.width }} 300" style="min-width:{{ chart.width }}px" role="img" aria-labelledby="position-title position-desc">
+      <title id="position-title">Season position by finalized matchweek</title><desc id="position-desc">Rank one is at the top. Exact ranks for every player are available in the table below.</desc>
+      {% for rank in chart.ranks %}<line x1="48" x2="{{ chart.width - 32 }}" y1="{{ rank.y }}" y2="{{ rank.y }}" class="insight-chart-grid"/><text x="28" y="{{ rank.y + 4 }}" text-anchor="middle">{{ rank.number }}</text>{% endfor %}
+      {% for week in chart.weeks %}<text x="{{ week.x }}" y="272" text-anchor="middle">{{ week.number }}</text>{% endfor %}<text x="{{ chart.width / 2 }}" y="294" text-anchor="middle">Finalized Matchweek</text>
+      {% for series in chart.series %}<g stroke="{{ series.color }}" fill="{{ series.color }}"><polyline points="{{ series.path }}" fill="none" stroke-width="2.5"/>{% for point in series.points %}<circle cx="{{ point.x }}" cy="{{ point.y }}" r="4"><title>{{ series.name }} · Matchweek {{ point.week }} · Rank {{ point.rank }}</title></circle>{% endfor %}{% if series.points %}<text x="{{ series.label_x }}" y="{{ series.label_y }}" stroke="none" style="fill:{{ series.color }}" font-weight="700"><title>{{ series.name }}</title>{{ series.initial }}</text>{% endif %}</g>{% endfor %}
+    </svg>
+  </div>
+  <details class="insight-chart-data"><summary>View exact positions</summary><div class="desk-scroll" tabindex="0" role="region" aria-label="Season position data"><table class="desk-table"><thead><tr><th scope="col">Player</th>{% for week in chart.weeks %}<th scope="col">Week {{ week.number }}</th>{% endfor %}</tr></thead><tbody>{% for series in chart.series %}<tr><th scope="row">{{ series.name }}</th>{% for point in series.points %}<td>{{ point.rank }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div></details>
+{% else %}<p class="insight-empty">The season-position graph will appear after the first finalized matchweek.</p>{% endif %}
+</section>

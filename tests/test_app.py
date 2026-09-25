@@ -353,7 +353,7 @@ class PickemAppTests(unittest.TestCase):
                         for table in ('players', 'weeks', 'fixtures', 'matchups', 'picks', 'results')}
         before = snapshot()
         with app_module.app.test_client() as client:
-            for path in ('/', '/tab/current', '/tab/open', '/tab/season', '/tab/stats',
+            for path in ('/', '/tab/current', '/tab/open', '/tab/season', '/tab/stats', '/tab/league',
                          '/partials/fixtures/1', '/partials/matchups/1', '/partials/scores/1'):
                 self.assertEqual(client.get(path).status_code, 200)
         self.assertEqual(snapshot(), before)
@@ -1029,7 +1029,7 @@ class PickemAppTests(unittest.TestCase):
         self.assertTrue(all(row["net"] == 1 for row in club_records))
         self.assertTrue(all(row["accuracy_display"] == "100.0%" for row in club_records))
 
-    def test_stats_tab_keeps_leaders_while_matchweek_prioritizes_matchup(self):
+    def test_personal_stats_preserved_and_league_leaders_move_to_league(self):
         db, week, matchup, player_a, player_b = self.finalize_one_sided_matchup()
         player_a_id = player_a.id
         player_a_name = player_a.name
@@ -1037,6 +1037,7 @@ class PickemAppTests(unittest.TestCase):
             with client.session_transaction() as user_session:
                 user_session["player_name"] = player_a_name
             stats_response = client.get(f"/tab/stats?player={player_a_id}")
+            league_response = client.get('/tab/league')
             current_response = client.get("/tab/current")
 
         self.assertEqual(stats_response.status_code, 200)
@@ -1047,8 +1048,9 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b"Against Draws", stats_response.data)
         self.assertIn(b"+$50", stats_response.data)
         self.assertEqual(current_response.status_code, 200)
-        self.assertIn(b"Most incorrect picks", stats_response.data)
-        self.assertIn(b"Longest losing streak", stats_response.data)
+        self.assertIn(b"Most incorrect picks", league_response.data)
+        self.assertIn(b"Longest losing streak", league_response.data)
+        self.assertNotIn(b"Longest losing streak", stats_response.data)
         self.assertNotIn(b"Season Leaders", current_response.data)
         self.assertIn(b"View all stats", current_response.data)
         self.assertIn(player_a_name.encode(), current_response.data)
@@ -1057,6 +1059,135 @@ class PickemAppTests(unittest.TestCase):
             current_html.index('id="matchups"'),
             current_html.index("Other Matchups"),
         )
+
+    def insights_response(self, path, player_name=None, headers=None):
+        contexts = []
+        def capture(sender, template, context, **extra):
+            if template.name in ('v3/pages/training_ground.html', 'v3/pages/league.html'):
+                contexts.append(context)
+        with app_module.app.test_client() as client:
+            if player_name:
+                with client.session_transaction() as session:
+                    session['player_name'] = player_name
+            with template_rendered.connected_to(capture, app_module.app):
+                response = client.get(path, headers=headers or {})
+        return response, contexts[0]
+
+    def test_training_defaults_and_official_personal_totals(self):
+        db, week, game, a, b = self.finalize_one_sided_matchup()
+        aid, bid, name = a.id, b.id, a.name
+        expected = next(r for r in app_module.standings_through_week(db, week.season, 1) if r['player_id'] == aid)
+        expected_h2h = app_module.head_to_head_for_player(db, week.season, a)
+        response, context = self.insights_response('/tab/stats', name)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(context['selected_player'].id, aid)
+        for key, value in expected.items():
+            self.assertEqual(context['summary'][key], value)
+        self.assertEqual(context['head_to_head'], expected_h2h)
+        self.assertEqual(context['summary']['record']['wins'], 1)
+        self.assertEqual(context['summary']['correct_percentage'], '100.0%')
+        _, other = self.insights_response(f'/tab/stats?player={bid}', name)
+        self.assertEqual(other['selected_player'].id, bid)
+        self.assertEqual(other['summary']['record']['losses'], 1)
+        guest, _ = self.insights_response('/tab/stats')
+        self.assertIn(b'Guest view', guest.data)
+
+    def test_training_current_context_and_club_filters(self):
+        db, week, game, a, b = self.finalize_one_sided_matchup()
+        aid, name, season = a.id, a.name, week.season
+        expected = app_module.club_records_for_player(db, season, a, sort_mode='worst')
+        club = expected[0]['club']
+        _, context = self.insights_response(f'/tab/stats?player={aid}&club_sort=worst')
+        self.assertEqual(context['club_records'], expected)
+        from urllib.parse import urlencode
+        _, filtered = self.insights_response('/tab/stats?' + urlencode(dict(player=aid, club=club, min_picks=3)))
+        self.assertEqual(filtered['club_records'], [])
+        _, filtered = self.insights_response('/tab/stats?' + urlencode(dict(player=aid, club=club, min_picks=1)))
+        self.assertEqual([r['club'] for r in filtered['club_records']], [club])
+        db = app_module.SessionLocal()
+        db.query(app_module.Week).one().status = 'drafting'
+        db.commit()
+        _, context = self.insights_response('/tab/stats', name)
+        self.assertEqual(context['this_week']['week'], 1)
+        self.assertEqual(context['this_week']['state'], 'Matchup set')
+        self.assertEqual(len(context['current_picks']), 5)
+        self.assertTrue(all(p['player_id'] == aid for p in context['current_picks']))
+        self.assertEqual(len(context['matchup_players']), 2)
+        self.assertEqual(context['summary']['points_for'], 0)
+        self.assertEqual(context['club_records'], [])
+
+    def test_position_chart_matches_official_snapshots_with_ties_and_excludes_provisional(self):
+        db, week, game, a, b = self.finalize_one_sided_matchup()
+        sid = week.season_id
+        db.add(app_module.Week(season_id=sid, number=2, status='provisional', room_code='LOCALTEST'))
+        db.add(app_module.Week(season_id=sid, number=3, status='finalized', room_code='LOCALTEST'))
+        db.commit()
+        expected = {n: {r['player_id']: r['rank'] for r in app_module.standings_through_week(db, week.season, n)} for n in (1, 3)}
+        response, context = self.insights_response('/tab/league')
+        chart = context['chart']
+        self.assertEqual([w['number'] for w in chart['weeks']], [1, 3])
+        for series in chart['series']:
+            self.assertEqual([(p['week'], p['rank']) for p in series['points']], [(n, expected[n][series['id']]) for n in (1, 3)])
+        self.assertEqual(sum(rank == 2 for rank in expected[1].values()), 4)
+        self.assertLess(chart['ranks'][0]['y'], chart['ranks'][-1]['y'])
+        self.assertIn(b'View exact positions', response.data)
+
+    def test_league_clubs_leaders_explorer_and_recent_form_use_official_history(self):
+        db, week, game, a, b = self.finalize_one_sided_matchup()
+        aid, bid = a.id, b.id
+        leaders = app_module.season_leader_stats(db, week.season)
+        expected_clubs = app_module.club_records_for_player(db, week.season, a, sort_mode='most')
+        response, context = self.insights_response(f'/tab/league?player={aid}&opponent={bid}')
+        self.assertEqual(context['leader_stats'], leaders)
+        self.assertEqual(context['league_totals'], {'correct': 5, 'incorrect': 5, 'draws': 0})
+        self.assertEqual(sum(r['picks'] for r in context['club_records']), 10)
+        self.assertEqual(sum(r['correct'] for r in context['club_records']), 5)
+        self.assertEqual(sum(r['incorrect'] for r in context['club_records']), 5)
+        self.assertEqual(context['exploration']['record']['wins'], 1)
+        self.assertEqual(context['exploration']['meetings'], [{'week': 1, 'for': 5, 'against': -5, 'net': 10}])
+        own_form = next(r for r in context['form'] if r['id'] == aid)
+        self.assertEqual(own_form['recent_net'], 10)
+        self.assertEqual([g['outcome'] for g in own_form['recent']], ['W'])
+        _, context = self.insights_response(f'/tab/league?club_player={aid}&club_sort=most')
+        self.assertEqual(context['club_records'], expected_clubs)
+
+    def test_insight_archives_are_isolated_and_navigable(self):
+        db, week, game, a, b = self.finalize_one_sided_matchup()
+        archive = app_module.Season(code='archive-review', name='Old season', is_archived=1)
+        db.add(archive)
+        db.flush()
+        db.add(app_module.Week(season_id=archive.id, number=1, status='drafting', room_code='LOCALTEST'))
+        db.commit()
+        for route in ('stats', 'league'):
+            for headers in ({}, {'HX-Request':'true'}, {'HX-Request':'true', 'HX-History-Restore-Request':'true'}):
+                response, context = self.insights_response(f'/tab/{route}?season=archive-review', headers=headers)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn('Archived season — read only', response.get_data(as_text=True))
+                self.assertIn(b'season=archive-review', response.data)
+                self.assertEqual(context['club_records'], [])
+                self.assertEqual(context['finalized_count'], 0)
+                self.assertEqual(b'<html>' in response.data, headers != {'HX-Request':'true'})
+                if route == 'league':
+                    self.assertEqual(context['chart']['weeks'], [])
+                else:
+                    self.assertIsNone(context['this_week'])
+
+    def test_insights_empty_and_invalid_filters_are_safe(self):
+        for path in ('/tab/stats?player=999&min_picks=-1&club_sort=bad', '/tab/league?player=999&opponent=999&club_player=999'):
+            response, context = self.insights_response(path)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(context['min_picks'], 1)
+            self.assertEqual(context['club_records'], [])
+        response, context = self.insights_response('/tab/league?player=1&opponent=1')
+        self.assertNotEqual(context['selected_player'].id, context['opponent'].id)
+        self.assertIn(b'after the first finalized matchweek', response.data)
+        app_module.SessionLocal.remove()
+        app_module.Base.metadata.drop_all(app_module.engine)
+        app_module.Base.metadata.create_all(app_module.engine)
+        for path in ('/tab/stats', '/tab/league'):
+            response, _ = self.insights_response(path)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b'No seasons initialized yet', response.data)
 
     def matchweek_response(self, player_name=None, headers=None, query=""):
         views = []

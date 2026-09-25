@@ -1,0 +1,13 @@
+<section class="card insight-section">
+  <h2>Weekly Results</h2>
+  <p class="muted">Finalized matchweeks · newest first.</p>
+  <div class="desk-scroll" role="region" aria-label="Weekly results" tabindex="0">
+    <table class="desk-table insight-weekly-results">
+      <thead>
+        <tr><th scope="col" rowspan="2">Week</th><th scope="col" rowspan="2">Opponent</th><th scope="col" rowspan="2">Total Net</th><th scope="colgroup" colspan="3">{{ selected_player.name if selected_player else 'Player' }}</th><th scope="colgroup" colspan="3" class="insight-opponent-group">Opponent Picks</th></tr>
+        <tr>{% for side in ['own','opponent'] %}<th scope="col">Correct</th><th scope="col">Incorrect</th><th scope="col">Draws</th>{% endfor %}</tr>
+      </thead>
+      <tbody>{% for row in weekly_results %}<tr><th scope="row">{{ row.week }}</th><td>{{ row.opponent }}</td><td class="{{ 'insight-positive' if row.total_net > 0 else 'insight-negative' if row.total_net < 0 else '' }}">{{ '%+d'|format(row.total_net) }}</td>{% for record in [row.own,row.opponent_record] %}<td class="insight-positive">{{ record.correct }}</td><td class="insight-negative">{{ record.incorrect }}</td><td>{{ record.draws }}</td>{% endfor %}</tr>{% else %}<tr><td colspan="9">No finalized weekly results yet.</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>

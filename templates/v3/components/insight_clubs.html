@@ -1,0 +1,14 @@
+<section class="card insight-section" aria-labelledby="club-title">
+  <h2 id="club-title">Club-Picking Record{% if not league and selected_player %} — {{ selected_player.name }}{% endif %}</h2>
+  <p class="muted">Finalized picks only. Accuracy excludes draws.</p>
+  {% if league %}<form class="insight-filters" method="get" action="{{ url_for('tab_league') }}" hx-get="{{ url_for('tab_league') }}" hx-target="#main" hx-push-url="true">
+    <input type="hidden" name="season" value="{{ selected_season.code }}">
+    <label>Club Records For<select name="club_player" onchange="this.form.requestSubmit()"><option value="">Entire league</option>{% for p in players %}<option value="{{ p.id }}"{% if club_player and club_player.id == p.id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></label>
+    <noscript><button type="submit">View records</button></noscript>
+  </form>{% endif %}
+  <div class="desk-scroll" role="region" aria-label="Club records" tabindex="0">
+    <table class="desk-table insight-clubs"><thead><tr>{% for label in ['Club','Picks','Correct','Incorrect','Draws','Net','Accuracy'] %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for row in club_records %}<tr><th scope="row">{{ row.club }}</th><td>{{ row.picks }}</td><td class="insight-positive">{{ row.correct }}</td><td class="insight-negative">{{ row.incorrect }}</td><td>{{ row.draws }}</td><td class="{{ 'insight-positive' if row.net > 0 else 'insight-negative' if row.net < 0 else '' }}">{{ '%+d'|format(row.net) }}</td><td class="{{ 'insight-positive' if row.accuracy >= 0.5 else 'insight-negative' if row.accuracy_display != '—' else '' }}">{{ row.accuracy_display }}</td></tr>{% else %}<tr><td colspan="7">No finalized club records yet.</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>
