@@ -131,8 +131,9 @@ def weekly_results(players, meetings, records_by_week, player_id):
         opponent_id = game['b'] if player_id == game['a'] else game['a']
         records = records_by_week.get(game['week'], {})
         own_record = records.get(player_id, empty)
+        matchup_net = game['net'] if player_id == game['a'] else -game['net']
         rows.append(dict(week=game['week'], opponent=names.get(opponent_id, 'Unknown player'),
-                         total_net=own_record['correct'] - own_record['incorrect'],
+                         total_net=matchup_net,
                          own=own_record, opponent_record=records.get(opponent_id, empty)))
     return rows
 

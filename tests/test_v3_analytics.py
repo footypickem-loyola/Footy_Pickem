@@ -5,18 +5,18 @@ from v3_analytics import matchup_matrix, performance_chart, position_chart, week
 
 
 class AnalyticsPresentationTests(unittest.TestCase):
-    def test_weekly_results_player_perspective_and_newest_first(self):
+    def test_weekly_results_uses_matchup_net_and_reverses_perspective(self):
         players = [SimpleNamespace(id=1, name='Steve'), SimpleNamespace(id=2, name='Scott')]
-        meetings = [dict(week=1, a=1, b=2), dict(week=3, a=2, b=1), dict(week=4, a=2, b=3)]
+        meetings = [dict(week=1, a=1, b=2, net=6), dict(week=2, a=1, b=2, net=-2),
+                    dict(week=3, a=1, b=2, net=0)]
         own = dict(correct=3, incorrect=1, draws=1)
         other = dict(correct=1, incorrect=2, draws=2)
-        records = {1: {1: own, 2: other}, 3: {1: other, 2: own}}
+        records = {1: {1: own, 2: other}, 2: {1: own, 2: other}, 3: {1: other, 2: own}}
         rows = weekly_results(players, meetings, records, 1)
-        self.assertEqual([r['week'] for r in rows], [3, 1])
-        self.assertEqual(rows[0]['opponent'], 'Scott')
-        self.assertEqual(rows[0]['own'], other)
-        self.assertEqual(rows[0]['opponent_record'], own)
-        self.assertEqual(rows[0]['total_net'], -1)
+        self.assertEqual([r['week'] for r in rows], [3, 2, 1])
+        self.assertEqual([r['total_net'] for r in rows], [0, -2, 6])
+        reversed_rows = weekly_results(players, meetings, records, 2)
+        self.assertEqual([r['total_net'] for r in reversed_rows], [0, 2, -6])
         self.assertEqual(weekly_results(players, [], {}, 1), [])
 
     def test_matrix_draws_and_reversed_player_perspective(self):
