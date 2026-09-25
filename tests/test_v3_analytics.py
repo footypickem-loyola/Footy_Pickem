@@ -16,6 +16,7 @@ class AnalyticsPresentationTests(unittest.TestCase):
         self.assertEqual(rows[0]['opponent'], 'Scott')
         self.assertEqual(rows[0]['own'], other)
         self.assertEqual(rows[0]['opponent_record'], own)
+        self.assertEqual(rows[0]['total_net'], -1)
         self.assertEqual(weekly_results(players, [], {}, 1), [])
 
     def test_matrix_draws_and_reversed_player_perspective(self):

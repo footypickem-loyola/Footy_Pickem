@@ -130,8 +130,10 @@ def weekly_results(players, meetings, records_by_week, player_id):
             continue
         opponent_id = game['b'] if player_id == game['a'] else game['a']
         records = records_by_week.get(game['week'], {})
+        own_record = records.get(player_id, empty)
         rows.append(dict(week=game['week'], opponent=names.get(opponent_id, 'Unknown player'),
-                         own=records.get(player_id, empty), opponent_record=records.get(opponent_id, empty)))
+                         total_net=own_record['correct'] - own_record['incorrect'],
+                         own=own_record, opponent_record=records.get(opponent_id, empty)))
     return rows
 
 
