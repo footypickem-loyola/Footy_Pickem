@@ -1110,6 +1110,9 @@ class PickemAppTests(unittest.TestCase):
         _, context = self.insights_response('/tab/stats', name)
         self.assertEqual(context['this_week']['week'], 1)
         self.assertEqual(context['this_week']['state'], 'Matchup set')
+        self.assertEqual(len(context['current_picks']), 5)
+        self.assertTrue(all(p['player_id'] == aid for p in context['current_picks']))
+        self.assertEqual(len(context['matchup_players']), 2)
         self.assertEqual(context['summary']['points_for'], 0)
         self.assertEqual(context['club_records'], [])
 
@@ -1136,6 +1139,7 @@ class PickemAppTests(unittest.TestCase):
         expected_clubs = app_module.club_records_for_player(db, week.season, a, sort_mode='most')
         response, context = self.insights_response(f'/tab/league?player={aid}&opponent={bid}')
         self.assertEqual(context['leader_stats'], leaders)
+        self.assertEqual(context['league_totals'], {'correct': 5, 'incorrect': 5, 'draws': 0})
         self.assertEqual(sum(r['picks'] for r in context['club_records']), 10)
         self.assertEqual(sum(r['correct'] for r in context['club_records']), 5)
         self.assertEqual(sum(r['incorrect'] for r in context['club_records']), 5)

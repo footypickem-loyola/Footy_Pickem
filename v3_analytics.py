@@ -5,7 +5,7 @@ COLORS = ('#245fc5', '#167047', '#a45116', '#7d44a4', '#b3343e', '#247986')
 
 def position_chart(players, snapshots):
     weeks = sorted(snapshots)
-    width = max(620, len(weeks) * 36 + 80)
+    width = max(320, len(weeks) * 36 + 80)
     def x(week):
         if len(weeks) == 1:
             return width / 2

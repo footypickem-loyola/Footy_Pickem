@@ -5624,7 +5624,8 @@ def insight_context(league=False):
     context.update(players=players, selected_player=selected_player, opponent=opponent,
         head_to_head=head_to_head, club_records=clubs, club_names=club_names, club_player=club_player,
         club_filter=club_filter, min_picks=min_picks, club_sort=club_sort, form=form,
-        summary=personal_summary(standings, form, pid), finalized_count=len(weeks))
+        summary=personal_summary(standings, form, pid), finalized_count=len(weeks),
+        league_totals={key: sum(row[key] for row in standings) for key in ('correct', 'incorrect', 'draws')})
     if league:
         context.update(chart=position_chart(players, {w.number: standings_through_week(db, selected_season, w.number) for w in weeks}),
                        leader_stats=season_leader_stats(db, selected_season),
@@ -5636,6 +5637,9 @@ def insight_context(league=False):
         matchup = next((g for g in games if any(p['id'] == pid for p in g['players'])), None)
         context['this_week'] = dict(week=current.number, state=matchup['state_label'],
             opponent=next(p['name'] for p in matchup['players'] if p['id'] != pid)) if matchup else None
+        context['matchup_players'] = [row for row in standings if matchup and row['player_id'] in
+                                     [p['id'] for p in matchup['players']]]
+        context['current_picks'] = next((p['owned'] for p in matchup['players'] if p['id'] == pid), []) if matchup else []
     return context
 
 

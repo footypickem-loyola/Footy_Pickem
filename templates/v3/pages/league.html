@@ -1,11 +1,13 @@
 <section class="desk-page insight-page" id="around-league">
-  <header class="desk-heading"><div><h1>Around the League</h1><p class="muted">The league’s internal Pick ’Em intelligence desk.</p></div>{% include 'v3/components/season_picker.html' %}</header>
+  <header class="desk-heading"><div><h1>Around the League</h1><p class="muted">League-wide insights, trends, and stats from across your Pick ’Em league.</p></div>{% include 'v3/components/season_picker.html' %}</header>
   {% if not selected_season %}<div class="card">No seasons initialized yet.</div>{% else %}
     {% if selected_season.is_archived %}<p class="desk-notice">Archived season — read only</p>{% endif %}
-    {% include 'v3/components/position_chart.html' %}
-    <section class="card insight-section"><h2>League Leaders</h2><p class="muted">{{ selected_season.name }} · Finalized matchweeks only.</p>
-      <div class="insight-leaders">{% for stat in leader_stats %}<article><h3>{{ stat.label }}</h3><strong>{{ stat.value }}</strong><p class="muted">{{ stat.detail }}</p></article>{% endfor %}</div>
-    </section>
+    <div class="insight-overview" aria-label="League overview">
+      {% for label,value,mark in [('Players',players|length,'●'),('Total Picks',league_totals.correct+league_totals.incorrect+league_totals.draws,'⚽'),('Correct Picks',league_totals.correct,'✓'),('Incorrect Picks',league_totals.incorrect,'×'),('Draw Picks',league_totals.draws,'−')] %}<article><span class="insight-stat-mark">{{ mark }}</span><div><strong>{{ value }}</strong><small>{{ label }}</small></div></article>{% endfor %}
+    </div>
+    <div class="insight-league-grid">
+      <div class="insight-column">{% with league=true %}{% include 'v3/components/insight_clubs.html' %}{% endwith %}</div>
+      <div class="insight-column">
     <section class="card insight-section"><h2>Head-to-Head Explorer</h2>
       <form class="insight-filters" method="get" action="{{ url_for('tab_league') }}" hx-get="{{ url_for('tab_league') }}" hx-target="#main" hx-push-url="true">
         <input type="hidden" name="season" value="{{ selected_season.code }}">
@@ -21,6 +23,11 @@
     <section class="card insight-section"><h2>Recent Form</h2><p class="muted">Last five finalized meetings per player, oldest first. W = win, D = draw, L = loss.</p>
       <div class="desk-scroll" tabindex="0" role="region" aria-label="Recent league form"><table class="desk-table"><thead><tr><th scope="col">Player</th><th scope="col">Recent meetings</th><th scope="col">Recent net</th></tr></thead><tbody>{% for row in form %}<tr><th scope="row">{{ row.name }}</th><td>{% with recent=row.recent %}{% include 'v3/components/insight_form.html' %}{% endwith %}</td><td>{{ '%+d'|format(row.recent_net) }}</td></tr>{% else %}<tr><td colspan="3">No players scheduled yet.</td></tr>{% endfor %}</tbody></table></div>
     </section>
-    {% with league=true %}{% include 'v3/components/insight_clubs.html' %}{% endwith %}
+    </div><div class="insight-column">
+    {% include 'v3/components/position_chart.html' %}
+    <section class="card insight-section"><h2>League Leaders</h2><p class="muted">{{ selected_season.name }} · Finalized matchweeks only.</p>
+      <div class="insight-leaders">{% for stat in leader_stats %}<article><h3>{{ stat.label }}</h3><strong>{{ stat.value }}</strong><p class="muted">{{ stat.detail }}</p></article>{% endfor %}</div>
+    </section>
+    </div></div>
   {% endif %}
 </section>

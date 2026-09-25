@@ -1,4 +1,42 @@
 /* Personal and league analytics share the established V3 desk components. */
+.insight-page {background:linear-gradient(130deg,#f8fcff,#fff);padding:12px;border-radius:8px}
+.insight-dossier-grid,.insight-league-grid {display:grid;grid-template-columns:1fr 1.12fr 1fr;gap:14px;align-items:start}
+.insight-column {min-width:0;display:grid;gap:14px}
+.insight-page .insight-player-name {font:600 .9rem var(--v3-font);margin:12px 0}
+.insight-page .insight-player-picker {margin:8px 0;display:flex;justify-content:flex-end}
+.insight-column .insight-placeholder {background:linear-gradient(130deg,#edf4ff,#f9fbff);min-height:160px}
+.insight-pick-list article {border-top:1px solid #e3ebf6;padding:12px 0}
+.insight-pick-list small {font-size:.65rem;color:var(--v3-muted)}
+.insight-pick-list article > div {display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:6px;font-size:.75rem}
+.insight-picked {display:inline-block;flex-shrink:0;background:#e3edff;color:#17468a;border-radius:5px;padding:6px 8px;font-weight:600;font-size:.7rem}
+.insight-page .insight-column .insight-section {margin:0;padding:16px;border:1px solid #dce7f6;box-shadow:none;border-radius:7px}
+.insight-column .desk-table {min-width:440px;font-size:.72rem}
+.insight-column [aria-label="Head-to-head meetings"] .desk-table,.insight-column [aria-label="Recent league form"] .desk-table {min-width:0}
+.insight-column [aria-label="Club records"] .desk-table {min-width:340px;font-size:.65rem}
+.insight-column .desk-table th,.insight-column .desk-table td {padding:8px 6px}
+.insight-column .insight-metrics {grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.insight-column .insight-metrics > div {padding:10px 6px;border:1px solid #e5edf8;background:#f8fbff;border-radius:7px}
+.insight-column .insight-metrics dd {font-size:1.2rem}
+.insight-column .insight-leaders {grid-template-columns:1fr 1fr;gap:8px}
+.insight-column .insight-leaders article {background:#f5f8fd;border:1px solid #e3ebf6;border-radius:6px;padding:10px}
+.insight-column .insight-leaders strong {font-size:.95rem}
+.insight-column .insight-chart {height:250px}
+.insight-column .insight-filters {gap:8px;display:grid;grid-template-columns:1fr 1fr}
+.insight-column .insight-section h2 {font-size:1.05rem}
+.insight-matchup-pair {display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+.insight-matchup-pair article {padding:14px 10px;border:1px solid #e3ebf6;border-radius:8px;background:#f8fbff;text-align:center}
+.insight-avatar {display:flex;margin:0 auto 10px;width:44px;height:44px;align-items:center;justify-content:center;border-radius:50%;background:#dcf5e9;color:#176544;font-weight:700;font-size:1.3rem}
+.insight-matchup-pair article:nth-child(2) .insight-avatar {background:#f2eadd;color:#8c5c20}
+.insight-matchup-pair strong,.insight-matchup-pair small {display:block}
+.insight-matchup-pair small {font-size:.7rem;color:var(--v3-muted);margin-top:4px}
+.insight-matchup-pair dl {display:flex;justify-content:space-around;gap:8px;margin:18px 0 0}
+.insight-matchup-pair dd {margin:0;font-weight:700}.insight-matchup-pair dt {font-size:.65rem;color:var(--v3-muted)}
+.insight-overview {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:16px 0}
+.insight-overview article {display:flex;gap:12px;align-items:center;padding:18px;border:1px solid #dce7f6;border-radius:7px;background:#fbfdff}
+.insight-overview strong {font-size:1.4rem}.insight-overview small {display:block;font-size:.75rem;color:var(--v3-muted)}
+.insight-stat-mark {display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;background:#e5efff;color:#2469d2;font-size:1.5rem}
+@media(max-width:1100px) {.insight-dossier-grid,.insight-league-grid {grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.insight-column:last-child {grid-column:1/-1}}
+@media(max-width:700px) {.insight-page {padding:0}.insight-dossier-grid,.insight-league-grid {grid-template-columns:minmax(0,1fr)}.insight-overview {grid-template-columns:repeat(2,minmax(0,1fr))}.insight-overview article {padding:12px}.insight-column:last-child {grid-column:auto}}
 .insight-page .insight-section {margin:18px 0;padding:20px}
 .insight-section h2 {margin:0;font-size:1.2rem}
 .insight-section h3 {font-size:.95rem;margin:12px 0 8px}
