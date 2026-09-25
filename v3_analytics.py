@@ -9,7 +9,7 @@ def position_chart(players, snapshots):
     def x(week):
         if len(weeks) == 1:
             return width / 2
-        return 48 + (week - weeks[0]) / max(1, weeks[-1] - weeks[0]) * (width - 80)
+        return 48 + (week - weeks[0]) / max(1, weeks[-1] - weeks[0]) * (width - 140)
     def y(rank):
         return 28 + (rank - 1) / max(1, len(players) - 1) * 220
     series = []
@@ -21,9 +21,48 @@ def position_chart(players, snapshots):
                 points.append({'week': week, 'rank': row['rank'], 'x': x(week), 'y': y(row['rank'])})
         series.append({'id': player.id, 'name': player.name, 'color': COLORS[index % len(COLORS)],
                        'points': points, 'path': ' '.join(f"{p['x']},{p['y']}" for p in points)})
+    label_counts = {}
+    for item in series:
+        if item['points']:
+            last = item['points'][-1]
+            offset = label_counts.get(last['rank'], 0)
+            item['label_x'] = last['x'] + 12 + offset * 16
+            item['label_y'] = last['y'] + 4
+            item['initial'] = item['name'][:1].upper()
+            label_counts[last['rank']] = offset + 1
     return {'width': width, 'weeks': [{'number': w, 'x': x(w)} for w in weeks],
             'ranks': [{'number': rank, 'y': y(rank)} for rank in range(1, len(players) + 1)],
             'series': series}
+
+
+def performance_chart(snapshots, player_id):
+    """Plot cumulative official net, rather than summing matchup margins."""
+    values = [(week, row['net_points']) for week, rows in sorted(snapshots.items())
+              for row in rows if row['player_id'] == player_id]
+    low = min([0] + [v for _, v in values])
+    high = max([1] + [v for _, v in values])
+    width = max(320, len(values) * 36 + 70)
+    points = [{'week': week, 'net': value,
+               'x': width / 2 if len(values) == 1 else 40 + index * (width - 60) / max(1, len(values) - 1),
+               'y': 22 + (high - value) * 150 / (high - low)}
+              for index, (week, value) in enumerate(values)]
+    ticks = sorted({low, 0, high, round((low + high) / 2)})
+    return dict(width=width, points=points, path=' '.join(f"{p['x']},{p['y']}" for p in points),
+                ticks=[dict(value=v, y=22 + (high - v) * 150 / (high - low)) for v in ticks])
+
+
+def matchup_matrix(players, meetings):
+    rows = []
+    for player in players:
+        cells = []
+        for opponent in players:
+            games = [g for g in meetings if {g['a'], g['b']} == {player.id, opponent.id}]
+            nets = [g['net'] if g['a'] == player.id else -g['net'] for g in games]
+            wins, losses, draws = (sum(n > 0 for n in nets), sum(n < 0 for n in nets), sum(n == 0 for n in nets))
+            cells.append(dict(opponent=opponent.name, played=len(games), wins=wins, losses=losses, draws=draws,
+                              self=player.id == opponent.id, tone='win' if wins > losses else 'loss' if losses > wins else 'draw'))
+        rows.append(dict(name=player.name, cells=cells))
+    return rows
 
 
 def recent_form(players, meetings):

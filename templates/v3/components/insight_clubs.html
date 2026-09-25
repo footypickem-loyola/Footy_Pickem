@@ -1,26 +1,15 @@
 <section class="card insight-section" aria-labelledby="club-title">
-  <h2 id="club-title">Club-Picking Record</h2>
-  <p class="muted">Finalized picks only. Accuracy excludes draws; small samples describe history, not future performance.</p>
-  <form class="insight-filters" method="get" action="{{ url_for(request.endpoint) }}" hx-get="{{ url_for(request.endpoint) }}" hx-target="#main" hx-push-url="true">
+  <h2 id="club-title">Club-Picking Record{% if not league and selected_player %} — {{ selected_player.name }}{% endif %}</h2>
+  <p class="muted">Finalized picks only. Accuracy excludes draws.</p>
+  {% if league %}<form class="insight-filters" method="get" action="{{ url_for('tab_league') }}" hx-get="{{ url_for('tab_league') }}" hx-target="#main" hx-push-url="true">
     <input type="hidden" name="season" value="{{ selected_season.code }}">
-    {% if league %}
-      {% if selected_player %}<input type="hidden" name="player" value="{{ selected_player.id }}">{% endif %}
-      {% if opponent %}<input type="hidden" name="opponent" value="{{ opponent.id }}">{% endif %}
-    {% endif %}
-    <label>{{ 'Club records for' if league else 'Player' }}
-      <select name="{{ 'club_player' if league else 'player' }}">
-        {% if league %}<option value="">Entire league</option>{% endif %}
-        {% for p in players %}<option value="{{ p.id }}"{% if (club_player if league else selected_player) and (club_player if league else selected_player).id == p.id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}
-      </select>
-    </label>
-    <label>Club<select name="club"><option value="">All clubs</option>{% for club in club_names %}<option{% if club == club_filter %} selected{% endif %}>{{ club }}</option>{% endfor %}</select></label>
-    <label>Minimum picks<select name="min_picks">{% for n in [1,3,5,10] %}<option{% if n == min_picks %} selected{% endif %}>{{ n }}</option>{% endfor %}</select></label>
-    <label>Club sort<select name="club_sort">{% for value, label in [('best','Best record'),('worst','Worst record'),('most','Most picked')] %}<option value="{{ value }}"{% if value == club_sort %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-    <button type="submit">Apply filters</button>
-  </form>
+    <label>Club Records For<select name="club_player" onchange="this.form.requestSubmit()"><option value="">Entire league</option>{% for p in players %}<option value="{{ p.id }}"{% if club_player and club_player.id == p.id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></label>
+    <noscript><button type="submit">View records</button></noscript>
+  </form>{% endif %}
   <div class="desk-scroll" role="region" aria-label="Club records" tabindex="0">
-    <table class="desk-table"><thead><tr>{% for label in ['Club','Picks','Correct','Incorrect','Draws','Net','Accuracy'] %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
-      <tbody>{% for row in club_records %}<tr><th scope="row">{{ row.club }}</th><td>{{ row.picks }}</td><td>{{ row.correct }}</td><td>{{ row.incorrect }}</td><td>{{ row.draws }}</td><td>{{ '%+d'|format(row.net) }}</td><td>{{ row.accuracy_display }}</td></tr>{% else %}<tr><td colspan="7">No club records match these filters yet.</td></tr>{% endfor %}</tbody>
+    <table class="desk-table insight-clubs"><thead><tr>{% for label in ['Club','Picks','Correct','Incorrect','Draws','Net','Accuracy'] %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for row in club_records %}<tr><th scope="row">{{ row.club }}</th><td>{{ row.picks }}</td><td class="insight-positive">{{ row.correct }}</td><td class="insight-negative">{{ row.incorrect }}</td><td>{{ row.draws }}</td><td class="{{ 'insight-positive' if row.net > 0 else 'insight-negative' if row.net < 0 else '' }}">{{ '%+d'|format(row.net) }}</td><td class="{{ 'insight-positive' if row.accuracy >= 0.5 else 'insight-negative' if row.accuracy_display != '—' else '' }}">{{ row.accuracy_display }}</td></tr>{% else %}<tr><td colspan="7">No finalized club records yet.</td></tr>{% endfor %}</tbody>
     </table>
   </div>
+  <p class="insight-note">Small samples describe history, not future performance.</p>
 </section>

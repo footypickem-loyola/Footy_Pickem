@@ -32,7 +32,7 @@ from markupsafe import Markup
 from v3_matchweek import build_matchweek, build_player_context
 from v3_fixtures import build_fixtures
 from v3_table_results import build_table_results
-from v3_analytics import position_chart, recent_form, club_records, personal_summary, explorer
+from v3_analytics import position_chart, performance_chart, matchup_matrix, recent_form, club_records, personal_summary, explorer
 
 from correspondent import (
     CLASSIFIER_PROMPT_VERSION,
@@ -5626,11 +5626,13 @@ def insight_context(league=False):
         club_filter=club_filter, min_picks=min_picks, club_sort=club_sort, form=form,
         summary=personal_summary(standings, form, pid), finalized_count=len(weeks),
         league_totals={key: sum(row[key] for row in standings) for key in ('correct', 'incorrect', 'draws')})
+    snapshots = {w.number: standings_through_week(db, selected_season, w.number) for w in weeks}
     if league:
-        context.update(chart=position_chart(players, {w.number: standings_through_week(db, selected_season, w.number) for w in weeks}),
+        context.update(chart=position_chart(players, snapshots), matrix=matchup_matrix(players, meetings),
                        leader_stats=season_leader_stats(db, selected_season),
                        exploration=explorer(head_to_head, meetings, selected_player, opponent))
     else:
+        context['performance'] = performance_chart(snapshots, pid)
         current = None if selected_season.is_archived else current_drafting_week(db, selected_season)
         week_model = load_matchweek_model(db, selected_season, current, include_context=False) if current else None
         games = ([week_model['primary']] if week_model and week_model['primary'] else []) + (week_model['others'] if week_model else [])

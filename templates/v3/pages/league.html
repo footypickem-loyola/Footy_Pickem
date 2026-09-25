@@ -8,7 +8,9 @@
     <div class="insight-league-grid">
       <div class="insight-column">{% with league=true %}{% include 'v3/components/insight_clubs.html' %}{% endwith %}</div>
       <div class="insight-column">
-    <section class="card insight-section"><h2>Head-to-Head Explorer</h2>
+    <section class="card insight-section"><h2>Head-to-Head Matchups</h2><p class="muted">Finalized records between all players. W–L; draws shown separately.</p>
+      <div class="desk-scroll" role="region" aria-label="Head-to-head matrix" tabindex="0"><table class="desk-table insight-matrix"><thead><tr><th scope="col">vs</th>{% for player in players %}<th scope="col">{{ player.name }}</th>{% endfor %}</tr></thead><tbody>{% for row in matrix %}<tr><th scope="row">{{ row.name }}</th>{% for cell in row.cells %}<td class="{{ 'insight-matrix--' + cell.tone if cell.played and not cell.self else '' }}">{% if cell.self or not cell.played %}<span aria-label="{{ 'Same player' if cell.self else 'No finalized meetings' }}">—</span>{% else %}{{ cell.wins }}–{{ cell.losses }}{% if cell.draws %}<small>{{ cell.draws }}D</small>{% endif %}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+      <details class="insight-h2h-details"><summary>View matchup details</summary>
       <form class="insight-filters" method="get" action="{{ url_for('tab_league') }}" hx-get="{{ url_for('tab_league') }}" hx-target="#main" hx-push-url="true">
         <input type="hidden" name="season" value="{{ selected_season.code }}">
         <label>Player A<select name="player">{% for p in players %}<option value="{{ p.id }}"{% if selected_player and p.id == selected_player.id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></label>
@@ -19,10 +21,12 @@
         <div class="desk-scroll" tabindex="0" role="region" aria-label="Head-to-head meetings"><table class="desk-table"><thead><tr><th scope="col">Matchweek</th><th scope="col">{{ exploration.a }}</th><th scope="col">{{ exploration.b }}</th><th scope="col">{{ exploration.a }} net</th></tr></thead><tbody>{% for game in exploration.meetings %}<tr><th scope="row"><a href="{{ url_for('tab_current',season=selected_season.code,force_week=game.week) }}" hx-get="{{ url_for('tab_current',season=selected_season.code,force_week=game.week) }}" hx-target="#main" hx-push-url="true">{{ game.week }}</a></th><td>{{ game['for'] }}</td><td>{{ game.against }}</td><td>{{ '%+d'|format(game.net) }}</td></tr>{% endfor %}</tbody></table></div>
         {% else %}<p class="muted">No finalized meetings between these players yet.</p>{% endif %}
       {% else %}<p class="muted">Two scheduled players are needed to compare records.</p>{% endif %}
+      </details>
     </section>
     <section class="card insight-section"><h2>Recent Form</h2><p class="muted">Last five finalized meetings per player, oldest first. W = win, D = draw, L = loss.</p>
       <div class="desk-scroll" tabindex="0" role="region" aria-label="Recent league form"><table class="desk-table"><thead><tr><th scope="col">Player</th><th scope="col">Recent meetings</th><th scope="col">Recent net</th></tr></thead><tbody>{% for row in form %}<tr><th scope="row">{{ row.name }}</th><td>{% with recent=row.recent %}{% include 'v3/components/insight_form.html' %}{% endwith %}</td><td>{{ '%+d'|format(row.recent_net) }}</td></tr>{% else %}<tr><td colspan="3">No players scheduled yet.</td></tr>{% endfor %}</tbody></table></div>
     </section>
+    <section class="card insight-section insight-placeholder"><h2>Notable League Trends</h2><p class="muted">League trend insights are not available yet. Explore finalized records and recent form above.</p></section>
     </div><div class="insight-column">
     {% include 'v3/components/position_chart.html' %}
     <section class="card insight-section"><h2>League Leaders</h2><p class="muted">{{ selected_season.name }} · Finalized matchweeks only.</p>

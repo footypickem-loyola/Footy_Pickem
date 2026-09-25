@@ -7,20 +7,23 @@
       <input type="hidden" name="season" value="{{ selected_season.code }}">
       <label>Viewing player<select name="player">{% for p in players %}<option value="{{ p.id }}"{% if selected_player and p.id == selected_player.id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></label><button type="submit">View dossier</button>
     </form>
-    {% if selected_player %}<h2 class="insight-player-name">{{ selected_player.name }} <small>{{ selected_season.name }}</small></h2>{% else %}<p class="desk-notice">No players scheduled in this season yet.</p>{% endif %}
+    {% if selected_player %}<h2 class="insight-player-name">{{ selected_player.name }}</h2>{% else %}<p class="desk-notice">No players scheduled in this season yet.</p>{% endif %}
     <div class="insight-dossier-grid"><div class="insight-column">
       <section class="card insight-section"><h2>This Week’s Matchup</h2>
         {% if this_week %}<div class="insight-matchup-pair">{% for player in matchup_players %}<article><span class="insight-avatar">{{ player.player[:1] }}</span><strong>{{ player.player }}</strong><small>Rank {{ player.rank }}</small><dl><div><dd>{{ player.points_for }}</dd><dt>For</dt></div><div><dd>{{ player.points_against }}</dd><dt>Against</dt></div><div><dd>{{ player.net_points }}</dd><dt>Net</dt></div></dl></article>{% endfor %}</div><p class="insight-note">vs {{ this_week.opponent }}</p><p class="muted">Matchweek {{ this_week.week }} · {{ this_week.state }}</p><a href="{{ url_for('tab_current', season=selected_season.code, force_week=this_week.week) }}" hx-get="{{ url_for('tab_current', season=selected_season.code, force_week=this_week.week) }}" hx-target="#main" hx-push-url="true">View Matchweek →</a>
         {% else %}<p class="muted">{{ 'Archived season. Explore the finalized record below.' if selected_season.is_archived else 'No current matchup for this player.' }}</p>{% endif %}
       </section>
-      <section class="card insight-section"><h2>This Week’s Picks</h2><p class="muted">{% if selected_player %}{{ selected_player.name }}’s{% else %}Your{% endif %} assigned fixtures. Open Matchweek for the full matchup.</p><div class="insight-pick-list">{% for pick in current_picks %}<article><small>{{ pick.kickoff_utc|kickoff_eastern }}</small><div><strong>{{ pick.home }} <span class="muted">vs</span> {{ pick.away }}</strong><span class="insight-picked">{{ pick.team }}</span></div></article>{% else %}<p class="muted">No picks assigned for the current matchup yet.</p>{% endfor %}</div></section>
+      <section class="card insight-section"><h2>This Week’s Picks</h2><p class="muted">{% if selected_player %}{{ selected_player.name }}’s{% else %}Your{% endif %} assigned fixtures.</p>
+        <div class="desk-scroll" role="region" aria-label="This week's picks" tabindex="0"><table class="desk-table insight-picks"><thead><tr><th scope="col">Match</th><th scope="col">Your Pick</th><th scope="col">Date / Time</th></tr></thead><tbody>{% for pick in current_picks %}<tr><td>{{ pick.home }}<span class="insight-fixture-away">vs {{ pick.away }}</span></td><td><span class="insight-picked">{{ pick.team }}</span><small class="insight-pick-caption">Your Pick</small></td><td>{{ pick.kickoff_utc|kickoff_eastern }}</td></tr>{% else %}<tr><td colspan="3">No picks assigned for the current matchup yet.</td></tr>{% endfor %}</tbody></table></div>
+      </section>
 
     </div><div class="insight-column">
       <section class="card insight-section insight-placeholder"><h2>What to Look For</h2><p class="muted">Your pre-match briefing will live here. Personalized scouting is not available yet.</p></section>
     <section class="card insight-section"><h2>My Season{% if selected_player %} · {{ selected_player.name }}{% endif %}</h2><p class="muted">Official record across {{ finalized_count }} finalized matchweek{{ '' if finalized_count == 1 else 's' }}.</p>
       {% if summary %}<dl class="insight-metrics">
-        {% for label, value in [('Rank',summary.rank),('For',summary.points_for),('Against',summary.points_against),('Net',summary.net_points),('Correct',summary.correct),('Incorrect',summary.incorrect),('Draws',summary.draws),('Correct-pick %',summary.correct_percentage)] %}<div><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endfor %}
-      </dl><div class="insight-season-record"><span>{{ summary.record.wins }}W · {{ summary.record.losses }}L · {{ summary.record.ties }}D</span>{% with recent=summary.record.recent %}{% include 'v3/components/insight_form.html' %}{% endwith %}</div><p class="insight-note">Correct-pick percentage includes draws in total picks. Recent form: last five finalized meetings, oldest first.</p>
+        {% for label, value in [('Rank',summary.rank),('For',summary.points_for),('Against',summary.points_against),('Net',summary.net_points),('Correct',summary.correct),('Incorrect',summary.incorrect),('Draws',summary.draws),('Correct-pick %',summary.correct_percentage)] %}<div data-metric="{{ label }}"><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endfor %}
+      </dl><p class="insight-note">Correct-pick percentage includes draws in total picks.</p>
+      {% include 'v3/components/performance_chart.html' %}
       {% else %}<p class="muted">No season record available.</p>{% endif %}
     </section>
     </div><div class="insight-column">
