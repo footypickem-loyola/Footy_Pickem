@@ -1,0 +1,52 @@
+/* Personal and league analytics share the established V3 desk components. */
+.insight-page .insight-section {margin:18px 0;padding:20px}
+.insight-section h2 {margin:0;font-size:1.2rem}
+.insight-section h3 {font-size:.95rem;margin:12px 0 8px}
+.insight-section > p {font-size:.85rem;margin:6px 0 16px}
+.insight-section a {font-size:.85rem}
+.insight-intro {display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.insight-intro .insight-section {margin:0}
+.insight-placeholder {background:#f6f8fb}
+.insight-section .insight-feature {font:700 1.65rem Georgia,serif;color:var(--v3-navy);margin:12px 0 4px}
+.insight-player-name {font:700 1.7rem Georgia,serif;margin:20px 0}
+.insight-player-name small {font:400 .8rem var(--v3-font);color:var(--v3-muted);margin-left:12px}
+.insight-filters {display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin:16px 0}
+.insight-filters label {display:flex;flex-direction:column;gap:4px;font-size:.75rem;min-width:0}
+.insight-filters select,.insight-filters button {font:inherit;font-size:.8rem;border:1px solid var(--v3-border);border-radius:6px;padding:8px 10px;background:white;color:var(--v3-text);max-width:100%}
+.insight-filters button {background:var(--v3-navy);color:white;cursor:pointer}
+.insight-metrics {display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:14px;margin:20px 0}
+.insight-metrics dt {font-size:.75rem;color:var(--v3-muted)}
+.insight-metrics dd {margin:4px 0 0;font-size:1.5rem;font-weight:700}
+.insight-season-record {display:flex;flex-wrap:wrap;gap:20px;align-items:center;padding-top:16px;border-top:1px solid var(--v3-border);font-size:.85rem}
+.insight-section .insight-note {font-size:.75rem;color:var(--v3-muted);margin:12px 0}
+.insight-form {display:inline-flex;gap:5px;align-items:center}
+.insight-result {display:inline-flex;width:25px;height:25px;align-items:center;justify-content:center;border-radius:50%;font-size:.7rem;font-weight:700}
+.insight-result--w {background:#e1f1e8;color:#176544}
+.insight-result--l {background:#fbe7e9;color:#a03240}
+.insight-result--d {background:#e9edf4;color:#496079}
+.insight-leaders {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 24px}
+.insight-leaders article {padding:12px 0;border-top:1px solid var(--v3-border)}
+.insight-leaders h3 {font-size:.75rem;color:var(--v3-muted);font-weight:500;margin:0 0 6px}
+.insight-leaders strong {font-size:1.2rem}
+.insight-leaders p {font-size:.8rem;margin:6px 0}
+.insight-chart-legend {display:flex;flex-wrap:wrap;gap:10px 18px;margin:16px 0}
+.insight-chart-legend label {display:inline-flex;align-items:center;gap:5px;font-size:.8rem;cursor:pointer}
+.insight-key {display:inline-block;width:18px;height:3px;background:var(--series-color)}
+.insight-chart {display:block;width:100%;height:300px;font:12px var(--v3-font);color:var(--v3-muted)}
+.insight-chart text {fill:currentColor}
+.insight-chart-grid {stroke:#e5eaf0;stroke-width:1}
+.insight-chart-data {margin-top:12px;font-size:.8rem}
+.insight-chart-data summary {cursor:pointer;margin:8px 0}
+.insight-empty {padding:30px 8px;text-align:center;color:var(--v3-muted)}
+@media(max-width:900px) {.insight-metrics {grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:600px) {
+ .insight-intro {grid-template-columns:minmax(0,1fr);gap:12px}
+ .insight-page .insight-section {padding:14px}
+ .insight-metrics {gap:16px 8px}
+ .insight-metrics dd {font-size:1.15rem}
+ .insight-leaders {grid-template-columns:minmax(0,1fr)}
+ .insight-filters {display:grid;grid-template-columns:1fr 1fr;gap:10px}
+ .insight-filters button {min-height:36px}
+ .insight-form {gap:3px}
+ .insight-result {width:22px;height:22px}
+}

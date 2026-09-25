@@ -32,6 +32,7 @@ from markupsafe import Markup
 from v3_matchweek import build_matchweek, build_player_context
 from v3_fixtures import build_fixtures
 from v3_table_results import build_table_results
+from v3_analytics import position_chart, recent_form, club_records, personal_summary, explorer
 
 from correspondent import (
     CLASSIFIER_PROMPT_VERSION,
@@ -513,116 +514,6 @@ JOIN_HTML = """
   <p class="muted">Allowed players: {{ allowed_names|join(', ') }}</p>
 </div>
 </body></html>
-"""
-
-STATS_PARTIAL = """
-<div class="card">
-  <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
-    <h3 style="margin:0;">{{ selected_season.name }} Statistics</h3>
-    <form hx-get="{{ url_for('tab_stats') }}" hx-target="#main" hx-swap="innerHTML" hx-push-url="true"
-          style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-      <label>Season
-        <select name="season" onchange="this.form.requestSubmit()">
-          {% for season in seasons %}
-            <option value="{{ season.code }}" {% if season.id == selected_season.id %}selected{% endif %}>{{ season.name }}{% if season.is_archived %} (Archived){% endif %}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Player
-        <select name="player" onchange="this.form.requestSubmit()">
-          {% for player in players %}
-            <option value="{{ player.id }}" {% if selected_player and player.id == selected_player.id %}selected{% endif %}>{{ player.name }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Club
-        <select name="club" onchange="this.form.requestSubmit()">
-          <option value="">All clubs</option>
-          {% for club_name in club_names %}
-            <option value="{{ club_name }}" {% if club_filter == club_name %}selected{% endif %}>{{ club_name }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Minimum picks
-        <select name="min_picks" onchange="this.form.requestSubmit()">
-          {% for choice in [1, 3, 5, 10] %}
-            <option value="{{ choice }}" {% if min_picks == choice %}selected{% endif %}>{{ choice }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Club sort
-        <select name="club_sort" onchange="this.form.requestSubmit()">
-          <option value="best" {% if club_sort == 'best' %}selected{% endif %}>Best record</option>
-          <option value="worst" {% if club_sort == 'worst' %}selected{% endif %}>Worst record</option>
-          <option value="most" {% if club_sort == 'most' %}selected{% endif %}>Most picked</option>
-        </select>
-      </label>
-    </form>
-  </div>
-  <p class="muted">Only finalized weeks are included.</p>
-  <div class="leader-grid">
-    {% for stat in leader_stats %}
-      <div class="leader-stat">
-        <div class="leader-label">{{ stat['label'] }}</div>
-        <div class="leader-value">{{ stat['value'] }}</div>
-        <div class="leader-detail">{{ stat['detail'] }}</div>
-      </div>
-    {% endfor %}
-  </div>
-</div>
-
-<div class="card">
-  <h4>Head-to-Head{% if selected_player %} — {{ selected_player.name }}{% endif %}</h4>
-  <div class="table-scroll">
-    <table class="centered-table detailed-season-table">
-      <thead>
-        <tr>
-          <th>Opponent</th><th>W-D-L</th>
-          <th class="for-header">Correct</th><th class="for-header">Incorrect</th>
-          <th class="for-header">Draws</th><th class="for-header">For Net</th>
-          <th class="against-header against-start">Against Correct</th>
-          <th class="against-header">Against Incorrect</th>
-          <th class="against-header">Against Draws</th>
-          <th class="against-header">Against Net</th>
-          <th class="total-net-header">$ Net</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in head_to_head %}
-          <tr>
-            <td>{{ row['opponent'] }}</td><td>{{ row['wins'] }}-{{ row['ties'] }}-{{ row['losses'] }}</td>
-            <td>{{ row['correct'] }}</td><td>{{ row['incorrect'] }}</td><td>{{ row['draws'] }}</td>
-            <td>{{ '%+d'|format(row['net_for']) }}</td>
-            <td class="against-start">{{ row['against_correct'] }}</td>
-            <td>{{ row['against_incorrect'] }}</td><td>{{ row['against_draws'] }}</td>
-            <td>{{ '%+d'|format(row['net_against']) }}</td>
-            <td class="total-net-cell">{{ row['money_display'] }}</td>
-          </tr>
-        {% endfor %}
-        {% if not head_to_head %}<tr><td colspan="11" class="muted">No finalized head-to-head matchups yet.</td></tr>{% endif %}
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<div class="card">
-  <h4>Club-Picking Record{% if selected_player %} — {{ selected_player.name }}{% endif %}</h4>
-  <div class="table-scroll">
-    <table class="centered-table">
-      <thead><tr><th>Club</th><th>Picks</th><th>Correct</th><th>Incorrect</th><th>Draws</th><th>Net</th><th>Accuracy</th></tr></thead>
-      <tbody>
-        {% for row in club_records %}
-          <tr>
-            <td>{{ row['club'] }}</td><td>{{ row['picks'] }}</td><td>{{ row['correct'] }}</td>
-            <td>{{ row['incorrect'] }}</td><td>{{ row['draws'] }}</td><td>{{ '%+d'|format(row['net']) }}</td>
-            <td>{{ row['accuracy_display'] }}</td>
-          </tr>
-        {% endfor %}
-        {% if not club_records %}<tr><td colspan="7" class="muted">No club records match these filters yet.</td></tr>{% endif %}
-      </tbody>
-    </table>
-  </div>
-</div>
 """
 
 FIXTURES_PARTIAL = """
@@ -5685,14 +5576,15 @@ def tab_season():
                            selected_season=selected_season, seasons=seasons, you=you)
 
 
-@app.get("/tab/stats")
-def tab_stats():
+def insight_context(league=False):
+    """Load official domain outputs for the two read-only analytics destinations."""
     db = SessionLocal()
     you = current_player(db)
     selected_season = requested_season(db)
+    context = dict(you=you, selected_season=selected_season,
+                   seasons=db.query(Season).order_by(Season.id.desc()).all())
     if selected_season is None:
-        return "<div class='card'>No seasons initialized yet.</div>"
-    seasons = db.query(Season).order_by(Season.id.desc()).all()
+        return context
     players = season_players(db, selected_season)
     requested_player_id = request.args.get("player", type=int)
     selected_player = next(
@@ -5711,45 +5603,49 @@ def tab_stats():
         club_sort = "best"
     club_filter = request.args.get("club", "").strip()
 
-    head_to_head = []
-    club_records = []
-    club_names: List[str] = []
-    if selected_player is not None:
-        head_to_head = head_to_head_for_player(db, selected_season, selected_player)
-        all_club_records = club_records_for_player(
-            db, selected_season, selected_player, min_picks=1, sort_mode="most"
-        )
-        club_names = sorted(
-            (row["club"] for row in all_club_records), key=str.lower
-        )
-        club_records = club_records_for_player(
-            db,
-            selected_season,
-            selected_player,
-            club_filter=club_filter,
-            min_picks=min_picks,
-            sort_mode=club_sort,
-        )
+    weeks = db.query(Week).filter_by(season_id=selected_season.id, status='finalized').order_by(Week.number).all()
+    standings = standings_through_week(db, selected_season, max((w.number for w in weeks), default=0))
+    meetings = []
+    for week in weeks:
+        points = weekly_points_map(db, week)
+        for game in db.query(Matchup).filter_by(week_id=week.id).order_by(Matchup.id):
+            a, b = points.get(game.player_a_id, 0), points.get(game.player_b_id, 0)
+            meetings.append(dict(week=week.number, a=game.player_a_id, b=game.player_b_id,
+                                 **{'for': a, 'against': b, 'net': a - b}))
+    form = recent_form(players, meetings)
+    pid = selected_player.id if selected_player else None
+    club_player = next((p for p in players if p.id == request.args.get('club_player', type=int)), None) if league else selected_player
+    club_data = {p.id: club_records_for_player(db, selected_season, p)
+                 for p in players if club_player is None or p.id == club_player.id}
+    clubs, club_names = club_records(club_data, club=club_filter, minimum=min_picks, sort=club_sort)
+    head_to_head = head_to_head_for_player(db, selected_season, selected_player) if selected_player else []
+    opponent = next((p for p in players if p.id == request.args.get('opponent', type=int) and p.id != pid), None)
+    opponent = opponent or next((p for p in players if p.id != pid), None)
+    context.update(players=players, selected_player=selected_player, opponent=opponent,
+        head_to_head=head_to_head, club_records=clubs, club_names=club_names, club_player=club_player,
+        club_filter=club_filter, min_picks=min_picks, club_sort=club_sort, form=form,
+        summary=personal_summary(standings, form, pid), finalized_count=len(weeks))
+    if league:
+        context.update(chart=position_chart(players, {w.number: standings_through_week(db, selected_season, w.number) for w in weeks}),
+                       leader_stats=season_leader_stats(db, selected_season),
+                       exploration=explorer(head_to_head, meetings, selected_player, opponent))
+    else:
+        current = None if selected_season.is_archived else current_drafting_week(db, selected_season)
+        week_model = load_matchweek_model(db, selected_season, current, include_context=False) if current else None
+        games = ([week_model['primary']] if week_model and week_model['primary'] else []) + (week_model['others'] if week_model else [])
+        matchup = next((g for g in games if any(p['id'] == pid for p in g['players'])), None)
+        context['this_week'] = dict(week=current.number, state=matchup['state_label'],
+            opponent=next(p['name'] for p in matchup['players'] if p['id'] != pid)) if matchup else None
+    return context
 
-    return render_template_string(
-        STATS_PARTIAL,
-        seasons=seasons,
-        selected_season=selected_season,
-        players=players,
-        selected_player=selected_player,
-        head_to_head=head_to_head,
-        club_records=club_records,
-        club_names=club_names,
-        club_filter=club_filter,
-        min_picks=min_picks,
-        club_sort=club_sort,
-        leader_stats=season_leader_stats(db, selected_season),
-        you=you,
-    )
+
+@app.get("/tab/stats")
+def tab_stats():
+    return render_template('v3/pages/training_ground.html', **insight_context())
 
 @app.get("/tab/league")
 def tab_league():
-    return render_template("v3/pages/league.html")
+    return render_template('v3/pages/league.html', **insight_context(league=True))
 
 
 # -------------------- Page shell --------------------
