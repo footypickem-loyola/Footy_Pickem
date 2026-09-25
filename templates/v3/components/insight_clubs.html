@@ -11,5 +11,4 @@
       <tbody>{% for row in club_records %}<tr><th scope="row">{{ row.club }}</th><td>{{ row.picks }}</td><td class="insight-positive">{{ row.correct }}</td><td class="insight-negative">{{ row.incorrect }}</td><td>{{ row.draws }}</td><td class="{{ 'insight-positive' if row.net > 0 else 'insight-negative' if row.net < 0 else '' }}">{{ '%+d'|format(row.net) }}</td><td class="{{ 'insight-positive' if row.accuracy >= 0.5 else 'insight-negative' if row.accuracy_display != '—' else '' }}">{{ row.accuracy_display }}</td></tr>{% else %}<tr><td colspan="7">No finalized club records yet.</td></tr>{% endfor %}</tbody>
     </table>
   </div>
-  <p class="insight-note">Small samples describe history, not future performance.</p>
 </section>

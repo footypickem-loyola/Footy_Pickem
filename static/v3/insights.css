@@ -36,6 +36,13 @@
 .insight-h2h-details {margin-top:12px;font-size:.75rem}
 .insight-h2h-details summary {cursor:pointer;color:#2364cb}
 .insight-chart-legend > span {font-size:.75rem}
+.insight-page .insight-column .insight-weekly-results {min-width:340px;width:100%;font-size:.62rem;table-layout:auto}
+.insight-page .insight-weekly-results th,.insight-page .insight-weekly-results td {padding:6px 3px;text-align:center;white-space:nowrap}
+.insight-page .insight-weekly-results thead th {font-size:.55rem;letter-spacing:0}
+.insight-page .insight-weekly-results tbody {font-size:.67rem}
+.insight-page .insight-weekly-results tbody td:nth-child(2) {text-align:left}
+.insight-page .insight-weekly-results .insight-opponent-group {background:#e9f5ef;color:#176544}
+.insight-weekly-results tbody td:nth-child(6) {border-left:1px solid #dce7f6}
 .insight-dossier-grid,.insight-league-grid {display:grid;grid-template-columns:1fr 1.12fr 1fr;gap:14px;align-items:start}
 .insight-column {min-width:0;display:grid;gap:14px}
 .insight-page .insight-player-name {font:600 .9rem var(--v3-font);margin:12px 0}

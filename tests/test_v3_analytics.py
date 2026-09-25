@@ -1,10 +1,23 @@
 import unittest
 from types import SimpleNamespace
 
-from v3_analytics import matchup_matrix, performance_chart, position_chart
+from v3_analytics import matchup_matrix, performance_chart, position_chart, weekly_results
 
 
 class AnalyticsPresentationTests(unittest.TestCase):
+    def test_weekly_results_player_perspective_and_newest_first(self):
+        players = [SimpleNamespace(id=1, name='Steve'), SimpleNamespace(id=2, name='Scott')]
+        meetings = [dict(week=1, a=1, b=2), dict(week=3, a=2, b=1), dict(week=4, a=2, b=3)]
+        own = dict(correct=3, incorrect=1, draws=1)
+        other = dict(correct=1, incorrect=2, draws=2)
+        records = {1: {1: own, 2: other}, 3: {1: other, 2: own}}
+        rows = weekly_results(players, meetings, records, 1)
+        self.assertEqual([r['week'] for r in rows], [3, 1])
+        self.assertEqual(rows[0]['opponent'], 'Scott')
+        self.assertEqual(rows[0]['own'], other)
+        self.assertEqual(rows[0]['opponent_record'], own)
+        self.assertEqual(weekly_results(players, [], {}, 1), [])
+
     def test_matrix_draws_and_reversed_player_perspective(self):
         players = [SimpleNamespace(id=1, name='Steve'), SimpleNamespace(id=2, name='Scott')]
         meetings = [dict(week=1, a=1, b=2, net=2), dict(week=2, a=2, b=1, net=0)]

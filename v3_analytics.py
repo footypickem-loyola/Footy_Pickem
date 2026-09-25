@@ -120,6 +120,21 @@ def personal_summary(standings, form, player_id):
                 correct_percentage=f"{official['correct'] / picks * 100:.1f}%" if picks else '—')
 
 
+def weekly_results(players, meetings, records_by_week, player_id):
+    """Present official finalized pick records from the selected player's perspective."""
+    names = {player.id: player.name for player in players}
+    empty = dict(correct=0, incorrect=0, draws=0)
+    rows = []
+    for game in sorted(meetings, key=lambda g: g['week'], reverse=True):
+        if player_id not in (game['a'], game['b']):
+            continue
+        opponent_id = game['b'] if player_id == game['a'] else game['a']
+        records = records_by_week.get(game['week'], {})
+        rows.append(dict(week=game['week'], opponent=names.get(opponent_id, 'Unknown player'),
+                         own=records.get(player_id, empty), opponent_record=records.get(opponent_id, empty)))
+    return rows
+
+
 def explorer(h2h, meetings, player_a, player_b):
     if player_a is None or player_b is None:
         return None
