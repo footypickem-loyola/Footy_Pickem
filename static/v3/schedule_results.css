@@ -78,7 +78,7 @@
 .desk-your-row {background:#e8f1ff}
 .desk-your-row th[scope="row"] {font-weight:700}
 .desk-standings:has(.desk-table-views[data-table-view="summary"]) {max-width:800px}
-#standings-summary th[scope="row"] {text-align:left}
+#standings-summary th[scope="row"] {text-align:left;white-space:normal;overflow-wrap:anywhere}
 #standings-summary thead th {text-align:center}
 #standings-summary .desk-table {table-layout:fixed}
 #standings-summary thead th:first-child {width:64px}
