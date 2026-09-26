@@ -27,7 +27,7 @@
 .insight-form-tiles .insight-result {width:34px;height:34px;border-radius:7px;font-size:.95rem}
 .insight-form-tiles small,.insight-recent-total small {display:block;color:#536898;font-size:.65rem;margin-top:7px}
 .insight-recent-total strong {font-size:.9rem;color:#10245f}
-.insight-page .insight-column .insight-matrix {min-width:350px;width:100%;font-size:.67rem;table-layout:fixed;border-collapse:separate;border-spacing:2px}
+.insight-page .insight-column .insight-matrix {min-width:350px;width:100%;font-size:.67rem;table-layout:auto;border-collapse:separate;border-spacing:2px}
 .insight-page .insight-matrix th,.insight-page .insight-matrix td {padding:8px 3px;text-align:center;border:0;white-space:nowrap;overflow-wrap:normal}
 .insight-matrix td small {display:block;font-size:.6rem}
 .insight-page .insight-matrix--win {background:#e1f8ed;color:#078452;border-radius:4px}
@@ -42,15 +42,12 @@
 .insight-page .insight-weekly-results tbody {font-size:.67rem}
 .insight-page .insight-weekly-results tbody td:nth-child(2) {text-align:left}
 .insight-page .insight-weekly-results .insight-opponent-group {background:#e9f5ef;color:#176544}
-.insight-weekly-results tbody td:nth-child(6) {border-left:1px solid #dce7f6}
+.insight-weekly-results tbody td:nth-child(7) {border-left:1px solid #dce7f6}
 .insight-dossier-grid,.insight-league-grid {display:grid;grid-template-columns:1fr 1.12fr 1fr;gap:14px;align-items:start}
 .insight-column {min-width:0;display:grid;gap:14px}
 .insight-page .insight-player-name {font:600 .9rem var(--v3-font);margin:12px 0}
 .insight-page .insight-player-picker {margin:8px 0;display:flex;justify-content:flex-end}
 .insight-column .insight-placeholder {background:linear-gradient(130deg,#edf4ff,#f9fbff);min-height:160px}
-.insight-pick-list article {border-top:1px solid #e3ebf6;padding:12px 0}
-.insight-pick-list small {font-size:.65rem;color:var(--v3-muted)}
-.insight-pick-list article > div {display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:6px;font-size:.75rem}
 .insight-picked {display:inline-block;flex-shrink:0;background:#e3edff;color:#17468a;border-radius:5px;padding:6px 8px;font-weight:600;font-size:.7rem}
 .insight-page .insight-column .insight-section {margin:0;padding:16px;border:1px solid #dce7f6;box-shadow:none;border-radius:7px}
 .insight-column .desk-table {min-width:440px;font-size:.72rem}
@@ -79,16 +76,14 @@
 .insight-overview strong {font-size:1.4rem}.insight-overview small {display:block;font-size:.75rem;color:var(--v3-muted)}
 .insight-stat-mark {display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;background:#e5efff;color:#2469d2;font-size:1.5rem}
 @media(max-width:1100px) {.insight-dossier-grid,.insight-league-grid {grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.insight-column:last-child {grid-column:1/-1}}
-@media(max-width:700px) {.insight-page {padding:0}.insight-page::before {inset:-16px -16px auto}.insight-dossier-grid,.insight-league-grid {grid-template-columns:minmax(0,1fr)}.insight-overview {grid-template-columns:repeat(2,minmax(0,1fr))}.insight-overview article {padding:12px}.insight-column:last-child {grid-column:auto}}
+@media(max-width:760px) {.insight-page::before {inset:-16px -16px auto}}
+@media(max-width:700px) {.insight-page {padding:0}.insight-dossier-grid,.insight-league-grid {grid-template-columns:minmax(0,1fr)}.insight-overview {grid-template-columns:repeat(2,minmax(0,1fr))}.insight-overview article {padding:12px}.insight-column:last-child {grid-column:auto}}
 .insight-page .insight-section {margin:18px 0;padding:20px}
 .insight-section h2 {margin:0;font-size:1.2rem}
 .insight-section h3 {font-size:.95rem;margin:12px 0 8px}
 .insight-section > p {font-size:.85rem;margin:6px 0 16px}
 .insight-section a {font-size:.85rem}
-.insight-intro {display:grid;grid-template-columns:1fr 1fr;gap:18px}
-.insight-intro .insight-section {margin:0}
 .insight-placeholder {background:#f6f8fb}
-.insight-section .insight-feature {font:700 1.65rem Georgia,serif;color:var(--v3-navy);margin:12px 0 4px}
 .insight-player-name {font:700 1.7rem Georgia,serif;margin:20px 0}
 .insight-player-name small {font:400 .8rem var(--v3-font);color:var(--v3-muted);margin-left:12px}
 .insight-filters {display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin:16px 0}
@@ -98,7 +93,6 @@
 .insight-metrics {display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:14px;margin:20px 0}
 .insight-metrics dt {font-size:.75rem;color:var(--v3-muted)}
 .insight-metrics dd {margin:4px 0 0;font-size:1.5rem;font-weight:700}
-.insight-season-record {display:flex;flex-wrap:wrap;gap:20px;align-items:center;padding-top:16px;border-top:1px solid var(--v3-border);font-size:.85rem}
 .insight-section .insight-note {font-size:.75rem;color:var(--v3-muted);margin:12px 0}
 .insight-form {display:inline-flex;gap:5px;align-items:center}
 .insight-result {display:inline-flex;width:25px;height:25px;align-items:center;justify-content:center;border-radius:50%;font-size:.7rem;font-weight:700}
@@ -111,7 +105,6 @@
 .insight-leaders strong {font-size:1.2rem}
 .insight-leaders p {font-size:.8rem;margin:6px 0}
 .insight-chart-legend {display:flex;flex-wrap:wrap;gap:10px 18px;margin:16px 0}
-.insight-chart-legend label {display:inline-flex;align-items:center;gap:5px;font-size:.8rem;cursor:pointer}
 .insight-key {display:inline-block;width:18px;height:3px;background:var(--series-color)}
 .insight-chart {display:block;width:100%;height:300px;font:12px var(--v3-font);color:var(--v3-muted)}
 .insight-chart text {fill:currentColor}
@@ -121,7 +114,6 @@
 .insight-empty {padding:30px 8px;text-align:center;color:var(--v3-muted)}
 @media(max-width:900px) {.insight-metrics {grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:600px) {
- .insight-intro {grid-template-columns:minmax(0,1fr);gap:12px}
  .insight-page .insight-section {padding:14px}
  .insight-metrics {gap:16px 8px}
  .insight-metrics dd {font-size:1.15rem}

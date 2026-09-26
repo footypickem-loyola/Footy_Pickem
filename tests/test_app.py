@@ -281,7 +281,7 @@ class PickemAppTests(unittest.TestCase):
                         self.assertEqual(html.count('aria-current="page"'), 1)
                         partial = headers == {"HX-Request": "true"}
                         self.assertEqual('hx-swap-oob="outerHTML"' in html, partial)
-                        self.assertEqual('<html>' in html, not partial)
+                        self.assertEqual('<html lang="en">' in html, not partial)
             response = client.get('/partials/fixtures/1', headers={"HX-Request": "true"})
             self.assertNotIn(b'navigation-tabs', response.data)
             error = client.get('/tab/current?force_week=999', headers={"HX-Request": "true"})
@@ -1166,7 +1166,7 @@ class PickemAppTests(unittest.TestCase):
                 self.assertIn(b'season=archive-review', response.data)
                 self.assertEqual(context['club_records'], [])
                 self.assertEqual(context['finalized_count'], 0)
-                self.assertEqual(b'<html>' in response.data, headers != {'HX-Request':'true'})
+                self.assertEqual(b'<html lang="en">' in response.data, headers != {'HX-Request':'true'})
                 if route == 'league':
                     self.assertEqual(context['chart']['weeks'], [])
                 else:
@@ -1301,7 +1301,7 @@ class PickemAppTests(unittest.TestCase):
                     self.assertIn('Archived season — read only', response.get_data(as_text=True))
                     self.assertIn(b'value="year-2" selected', response.data)
                     self.assertIn(b'season=year-2', response.data)
-                    self.assertEqual(b'<html>' in response.data, not bool(headers))
+                    self.assertEqual(b'<html lang="en">' in response.data, not bool(headers))
 
     def test_desk_no_seasons_and_escaped_player_names(self):
         db = app_module.SessionLocal()

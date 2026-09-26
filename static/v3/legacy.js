@@ -1,4 +1,5 @@
     let pendingPickForm = null;
+    let pickConfirmTrigger = null;
     let arsenalBanterTimer = null;
     let lastArsenalBanterIndex = -1;
     const arsenalBanterImages = JSON.parse(document.getElementById("arsenal-banter-images").textContent);
@@ -32,16 +33,20 @@
 
     function openPickConfirm(form) {
       pendingPickForm = form;
+      pickConfirmTrigger = document.activeElement;
       const gameSelect = form.querySelector('select[name="fixture_id"]');
       const teamSelect = form.querySelector('select[name="team"]');
       document.getElementById('confirm-team').textContent = teamSelect ? teamSelect.value : form.elements.team.value;
       document.getElementById('confirm-fixture').textContent = gameSelect ? gameSelect.options[gameSelect.selectedIndex].textContent : form.dataset.fixtureLabel;
       document.getElementById('pick-confirm-modal').classList.add('open');
+      document.querySelector('#pick-confirm-modal button').focus();
     }
 
     function closePickConfirm() {
       document.getElementById('pick-confirm-modal').classList.remove('open');
       pendingPickForm = null;
+      if (pickConfirmTrigger && pickConfirmTrigger.isConnected) pickConfirmTrigger.focus();
+      pickConfirmTrigger = null;
     }
 
     function submitConfirmedPick() {
@@ -83,6 +88,19 @@
     document.body.addEventListener('arsenalBanter', showArsenalBanter);
 
     document.addEventListener('keydown', (event) => {
+      const modal = document.getElementById('pick-confirm-modal');
+      if (event.key === 'Tab' && modal.classList.contains('open')) {
+        const buttons = modal.querySelectorAll('button');
+        const first = buttons[0];
+        const last = buttons[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
       if (event.key === 'Escape') {
         closePickConfirm();
         closeArsenalBanter();
