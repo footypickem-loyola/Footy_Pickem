@@ -6047,6 +6047,12 @@ def _delete_season_weeks(db, season: Season) -> None:
     if fixture_ids:
         db.query(Result).filter(Result.fixture_id.in_(fixture_ids)).delete(synchronize_session=False)
     if matchup_ids:
+        db.query(AutoDraftPreference).filter(
+            AutoDraftPreference.matchup_id.in_(matchup_ids)
+        ).delete(synchronize_session=False)
+        db.query(AutoDraftSetting).filter(
+            AutoDraftSetting.matchup_id.in_(matchup_ids)
+        ).delete(synchronize_session=False)
         db.query(Pick).filter(Pick.matchup_id.in_(matchup_ids)).delete(synchronize_session=False)
     db.query(Matchup).filter(Matchup.week_id.in_(week_ids)).delete(synchronize_session=False)
     db.query(Fixture).filter(Fixture.week_id.in_(week_ids)).delete(synchronize_session=False)

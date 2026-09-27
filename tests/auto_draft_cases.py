@@ -6,6 +6,62 @@ from auto_draft import DraftService, DraftError
 
 
 class AutoDraftCases:
+    def test_auto_allowed_season_reset_removes_state_before_id_reuse(self):
+        import pickem_flask_htmx_tabs as d
+        from unittest.mock import patch
+
+        db = d.SessionLocal()
+        players = [p.name for p in db.query(d.Player).order_by(d.Player.name)]
+        unrelated = db.query(d.Matchup).first()
+        unrelated_id = unrelated.id
+        unrelated_player = unrelated.first_picker_id
+        unrelated_fixture = db.query(d.Fixture).filter_by(week_id=unrelated.week_id).first()
+        db.add(d.AutoDraftSetting(matchup_id=unrelated_id, player_id=unrelated_player, enabled=1))
+        db.add(d.AutoDraftPreference(matchup_id=unrelated_id, player_id=unrelated_player,
+            fixture_id=unrelated_fixture.id, team=unrelated_fixture.home, priority=0))
+        db.commit()
+
+        # Create/reset the newest season so SQLite reuses its deleted IDs.
+        # Stable pairing also reproduces the same matchup/player scopes.
+        with patch.object(d.random, "shuffle", side_effect=lambda names: None), \
+                patch.object(d.random, "choice", side_effect=lambda items: items[0]):
+            season = d.init_weeks_from_csv(str(self.csv_path), [1], players, "RESETTEST",
+                season_code="auto-reset", season_name="Auto reset")
+            season_id = season.id
+            matchups = db.query(d.Matchup).join(d.Week).filter(d.Week.season_id == season_id).all()
+            old_matchup_ids = {m.id for m in matchups}
+            for matchup in matchups:
+                fixture = db.query(d.Fixture).filter_by(week_id=matchup.week_id).first()
+                for player_id in (matchup.player_a_id, matchup.player_b_id):
+                    db.add(d.AutoDraftSetting(matchup_id=matchup.id, player_id=player_id, enabled=1))
+                    db.add(d.AutoDraftPreference(matchup_id=matchup.id, player_id=player_id,
+                        fixture_id=fixture.id, team=fixture.home, priority=0))
+            db.commit()
+            self.assertEqual(db.query(d.AutoDraftSetting).filter(
+                d.AutoDraftSetting.matchup_id.in_(old_matchup_ids)).count(), 6)
+            self.assertEqual(db.query(d.AutoDraftPreference).filter(
+                d.AutoDraftPreference.matchup_id.in_(old_matchup_ids)).count(), 6)
+            db.expunge_all()
+
+            # Exercise the real explicitly allowed reset-and-recreate entry point.
+            d.init_weeks_from_csv(str(self.csv_path), [1], players, "RESETTEST",
+                season_code="auto-reset", season_name="Auto reset", allow_reset=True)
+
+        recreated = db.query(d.Matchup).join(d.Week).filter(d.Week.season_id == season_id).all()
+        self.assertEqual({m.id for m in recreated}, old_matchup_ids)
+        self.assertEqual(db.query(d.AutoDraftPreference).filter(
+            d.AutoDraftPreference.matchup_id.in_(old_matchup_ids)).count(), 0)
+        self.assertEqual(db.query(d.AutoDraftSetting).filter(
+            d.AutoDraftSetting.matchup_id.in_(old_matchup_ids)).count(), 0)
+        # Other seasons retain their persisted queue and enabled setting.
+        self.assertEqual(db.query(d.AutoDraftPreference).count(), 1)
+        self.assertEqual(db.query(d.AutoDraftSetting).count(), 1)
+        self.assertEqual(db.query(d.AutoDraftSetting).filter_by(matchup_id=unrelated_id).one().enabled, 1)
+        matchup_id, player_id = recreated[0].id, recreated[0].first_picker_id
+        db.rollback()
+        self.assertEqual(DraftService(d).command(matchup_id, player_id)["count"], 0)
+        self.assertEqual(db.query(d.Pick).filter(d.Pick.matchup_id.in_(old_matchup_ids)).count(), 0)
+
     def auto_context(self):
         import pickem_flask_htmx_tabs as d
         self.d = d

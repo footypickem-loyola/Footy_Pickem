@@ -23,8 +23,8 @@ Only successful manual POSTs and Auto-Draft edit/toggle POSTs invoke execution. 
 
 ## Verification — September 27, 2026
 
-- Full Python suite: **177 passed**, using `python -m unittest discover -s tests -v`.
-- Focused run: **19 passed**, using `python -m unittest discover -s tests -p test_app.py -k test_auto` (15 new Auto-Draft cases plus four existing matching cases).
+- Full Python suite: **178 passed**, using `python -m unittest discover -s tests -v`.
+- Focused run: **20 passed**, using `python -m unittest discover -s tests -p test_app.py -k test_auto` (16 new Auto-Draft cases plus four existing matching cases).
 - JavaScript confirmation suite: **3 passed**, using `node --test tests/pick_confirm.test.cjs`.
 - Concurrency coverage uses independent connections and synchronized threads: competing manual requests for a consecutive snake slot; manual versus duplicate automatic execution; two players requesting the same fixture. A held write lock verifies bounded conflict handling with no partial preference write.
 - Coverage also includes CRUD/reorder, invalid teams/Draw, duplicate preferences, ownership, archived/finalized/completed state, persistence, migration, skipped preferences, no fallback, consecutive turns, ten-pick completion, stale versions, GET safety, HTMX responses, and POST/redirect/GET.
@@ -37,4 +37,10 @@ Browser verification used the Codex browser against `127.0.0.1:5111`, backed by 
 - **360px:** manual confirmation/cancel controls, reorder, enable, automatic picks nine and ten, five fixtures per player, refreshed result, and no horizontal overflow.
 - Direct Matchweek URLs, HTMX updates, refresh, back/forward without replayed picks, and archived read-only controls were checked.
 
-No production database was used or migrated. No merge, push, or deployment was performed. Pre-existing untracked files were preserved.
+No production database was used or migrated. No merge or deployment was performed. Pre-existing untracked files were preserved.
+
+## Season-reset follow-up
+
+`_delete_season_weeks()` now deletes `AutoDraftPreference`, then `AutoDraftSetting` rows scoped to the season's matchup IDs before deleting matchups or fixtures. The existing explicit `allow_reset=True` requirement is unchanged.
+
+The regression test persists enabled settings and preferences for all six participants, runs the allowed reset-and-recreate entry point, and verifies that both tables are cleared for the reset season even when SQLite reuses the same matchup IDs and player scopes. It also verifies that another season's state remains intact and that automatic evaluation of a recreated matchup makes no inherited pick. Before the fix, the test failed with six stale preferences remaining. The test counts above include this follow-up; browser verification remains the original UI verification because this change only affects lifecycle cleanup. All follow-up execution used isolated temporary databases.
