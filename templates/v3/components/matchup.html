@@ -60,6 +60,7 @@
             <input type="hidden" name="week" value="{{ mw.week }}">
             <input type="hidden" name="season" value="{{ mw.season_code }}">
             <input type="hidden" name="matchup_id" value="{{ m.id }}">
+            <input type="hidden" name="expected_count" value="{{ m.total_picks }}">
             <input type="hidden" name="fixture_id" value="{{ fixture.id }}">
             <input type="hidden" name="team" value="{{ team }}">
             <button type="submit" class="mw-pick"{% if not m.can_pick %} disabled{% endif %} aria-label="Pick {{ team }} against {{ fixture.away if loop.first else fixture.home }}"><span>Pick {{ team }}</span></button>
@@ -72,11 +73,7 @@
     </section>
     <aside class="mw-side-rail">
       {% include 'v3/components/draft_history.html' %}
-      <section class="card mw-auto-draft" aria-labelledby="auto-draft-title">
-        <div class="mw-section-heading"><h2 id="auto-draft-title">Auto-Draft</h2><span class="mw-state">Coming in Wave 2</span></div>
-        <p>Priority picks when it’s your turn. Coming in a future update.</p>
-        <button type="button" disabled>Configure Auto-Draft</button>
-      </section>
+      {% if m.auto_draft %}{% include 'v3/components/auto_draft.html' %}{% endif %}
     </aside>
   </div>
   {% else %}

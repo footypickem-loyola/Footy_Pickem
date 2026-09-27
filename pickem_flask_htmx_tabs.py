@@ -9,6 +9,7 @@ import re
 import secrets
 import sqlite3
 import time
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -30,6 +31,7 @@ import bleach
 import markdown
 from markupsafe import Markup
 from v3_matchweek import build_matchweek, build_player_context
+from auto_draft import DraftService, DraftError
 from v3_fixtures import build_fixtures
 from v3_table_results import build_table_results
 from v3_analytics import position_chart, performance_chart, matchup_matrix, recent_form, club_records, personal_summary, weekly_results, explorer
@@ -546,6 +548,7 @@ MATCHUPS_PARTIAL = """
             <input type="hidden" name="week" value="{{ week.number }}">
             <input type="hidden" name="season" value="{{ season.code }}">
             <input type="hidden" name="matchup_id" value="{{ m['id'] }}">
+            <input type="hidden" name="expected_count" value="{{ m['log']|length }}">
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
               <label>Game
                 <select name="fixture_id" required onchange="syncTeamOptions(this)">
@@ -823,6 +826,26 @@ class Pick(Base):
     player = relationship("Player")
     fixture = relationship("Fixture")
     matchup = relationship("Matchup")
+
+class AutoDraftSetting(Base):
+    __tablename__ = "auto_draft_settings"
+    id = Column(Integer, primary_key=True)
+    matchup_id = Column(Integer, ForeignKey("matchups.id"), nullable=False)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    enabled = Column(Integer, nullable=False, default=0)
+    __table_args__ = (UniqueConstraint("matchup_id", "player_id", name="uix_auto_draft_setting"),)
+
+
+class AutoDraftPreference(Base):
+    __tablename__ = "auto_draft_preferences"
+    id = Column(Integer, primary_key=True)
+    matchup_id = Column(Integer, ForeignKey("matchups.id"), nullable=False)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    fixture_id = Column(Integer, ForeignKey("fixtures.id"), nullable=False)
+    team = Column(String, nullable=False)
+    priority = Column(Integer, nullable=False)
+    __table_args__ = (UniqueConstraint("matchup_id", "player_id", "fixture_id", name="uix_auto_draft_preference"),)
+
 
 class Result(Base):
     __tablename__ = "results"
@@ -4502,7 +4525,7 @@ def tab_current():
 def load_matchweek_model(db, season, week, include_context=True):
     """Load existing domain data; presentation shaping lives in v3_matchweek."""
     matchups = db.query(Matchup).filter_by(week_id=week.id).order_by(Matchup.id).all()
-    return build_matchweek(
+    model = build_matchweek(
         week=week, season=season, you=current_player(db), matchups=matchups,
         fixtures=db.query(Fixture).filter_by(week_id=week.id).all(),
         picks=db.query(Pick).join(Matchup).filter(Matchup.week_id == week.id).all(),
@@ -4518,6 +4541,20 @@ def load_matchweek_model(db, season, week, include_context=True):
                 Week.number < week.number).order_by(Week.number).all()],
         ) if include_context else None,
     )
+    primary = model["primary"]
+    me = current_player(db)
+    if primary and primary["is_yours"] and primary["state"] == "draft":
+        service = DraftService(sys.modules[__name__])
+        matchup = db.get(Matchup, primary["id"])
+        setting = db.query(AutoDraftSetting).filter_by(matchup_id=matchup.id, player_id=me.id).first()
+        rows = service.preferences(db, matchup.id, me.id)
+        primary["auto_draft"] = {
+            "enabled": bool(setting and setting.enabled),
+            "preferences": [{"id": row.id, "team": row.team,
+                             "reason": service.unavailable(db, matchup, row)} for row in rows],
+            "choices": [f for f in primary["available"] if f.id not in {row.fixture_id for row in rows}],
+        }
+    return model
 
 
 def render_matchweek(db, season, week):
@@ -5830,44 +5867,58 @@ def make_pick():
     wk = season_week(db, season, wk_number)
     if wk is None:
         abort(404, "Week not found")
-    m = db.query(Matchup).get(int(request.form["matchup_id"]))
+    matchup_id = request.form.get("matchup_id", type=int)
     fx_id = int(request.form["fixture_id"])
     team_name = request.form["team"].strip()
 
-    if m.week_id != wk.id:
-        abort(400, "Bad matchup/week")
-
-    turn_id = compute_next_turn(db, m)
-    if me.id != turn_id:
-        abort(400, "Not your turn in this matchup")
-
-    # Ensure the fixture is still available in this matchup
-    avail_ids = [f.id for f in available_fixtures_for_matchup(db, m)]
-    if fx_id not in avail_ids:
-        abort(400, "Fixture already taken or not in this week")
-
-    fx = db.query(Fixture).get(fx_id)
-    if team_name not in (fx.home, fx.away):
-        abort(400, "Team must be one of the fixture teams")
-
+    player_id, week_id = me.id, wk.id
+    expected_count = request.form.get("expected_count", type=int)
+    if expected_count is None or not 0 <= expected_count < 10:
+        abort(400, "Missing or invalid draft version. Refresh before picking.")
+    # Release the request's read transaction before acquiring the write lock.
+    db.rollback()
     try:
-        p = Pick(matchup_id=m.id, player_id=me.id, fixture_id=fx.id, team=team_name)
-        db.add(p); db.commit()
-    except Exception as e:
-        db.rollback()
-        abort(400, f"Pick failed: {e}")
+        summary = DraftService(sys.modules[__name__]).command(
+            matchup_id, player_id, week_id=week_id,
+            manual=(fx_id, team_name), expected_count=expected_count)
+    except DraftError as exc:
+        abort(exc.status, str(exc))
+    db.expire_all()
+
+    if request.headers.get("HX-Request") != "true":
+        return redirect(url_for("tab_current", force_week=wk.number, season=season.code), code=303)
 
     # Re-render the matchups panel after pick. Arsenal gets a one-time client
     # event in this successful POST response, so refreshes never replay it.
     if request.form.get("presentation") == "v3":
-        if request.headers.get("HX-Request") != "true":
-            return redirect(url_for("tab_current", force_week=wk.number, season=season.code))
-        response = make_response(render_matchweek(db, season, wk))
+        response = make_response(render_template("v3/pages/matchweek.html",
+            mw=load_matchweek_model(db, season, wk), auto_summary=summary))
     else:
         response = make_response(matchups_partial(wk.number))
     if team_name.casefold() in ARSENAL_TEAM_ALIASES:
         response.headers["HX-Trigger"] = json.dumps({"arsenalBanter": {}})
     return response
+
+@app.post("/auto-draft/<int:matchup_id>")
+def edit_auto_draft(matchup_id):
+    db = SessionLocal()
+    me = current_player(db)
+    if me is None:
+        abort(403, "Not logged in")
+    player_id = me.id
+    db.rollback()
+    try:
+        summary = DraftService(sys.modules[__name__]).command(
+            matchup_id, player_id, edit=request.form)
+    except DraftError as exc:
+        abort(exc.status, str(exc))
+    db.expire_all()
+    matchup = db.get(Matchup, matchup_id)
+    week = db.get(Week, matchup.week_id)
+    if request.headers.get("HX-Request") != "true":
+        return redirect(url_for("tab_current", force_week=week.number, season=week.season.code), code=303)
+    return render_template("v3/pages/matchweek.html", mw=load_matchweek_model(db, week.season, week),
+                           auto_summary=summary)
 
 @app.post("/set_result")
 def set_result():

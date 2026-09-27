@@ -1,0 +1,45 @@
+{% set ad = m.auto_draft %}
+{% macro action_form(action, label, preference_id='', enabled='', disabled=false) %}
+<form method="post" action="{{ url_for('edit_auto_draft', matchup_id=m.id) }}" hx-post="{{ url_for('edit_auto_draft', matchup_id=m.id) }}" hx-target="#matchweek-view" hx-swap="outerHTML" hx-disabled-elt="find button" hx-on::response-error="this.closest('details').querySelector('[role=alert]').hidden = false">
+  <input type="hidden" name="action" value="{{ action }}">
+  <input type="hidden" name="preference_id" value="{{ preference_id }}">
+  <input type="hidden" name="enabled" value="{{ enabled }}">
+  <button type="submit"{% if disabled or mw.archived %} disabled{% endif %}>{{ label }}</button>
+</form>
+{% endmacro %}
+<details class="card mw-auto-draft" open>
+  <summary><strong>Auto-Draft</strong> <span class="mw-state">{{ 'On' if ad.enabled else 'Off' }}</span></summary>
+  <p role="status">{% if not ad.preferences %}Queue is empty.{% elif not ad.preferences|rejectattr('reason')|list %}No valid priorities remaining.{% elif ad.enabled %}{{ 'Ready to pick.' if m.your_turn else 'Waiting for your turn.' }}{% else %}Priorities saved. Auto-Draft is off.{% endif %}</p>
+  {% if mw.archived %}<p>Archived — read only.</p>{% else %}
+  {{ action_form('toggle', 'Turn Auto-Draft off' if ad.enabled else 'Turn Auto-Draft on', enabled='0' if ad.enabled else '1') }}
+  <p>When on, your highest available priority is picked automatically. Turn off to pick manually.</p>
+  {% endif %}
+  <ol class="mw-auto-priorities">
+    {% for preference in ad.preferences %}
+    <li{% if preference.reason %} class="mw-auto-unavailable"{% endif %}>
+      <strong>{{ preference.team }}</strong>
+      {% if preference.reason %}<small>{{ preference.reason }}</small>{% endif %}
+      {% if not mw.archived %}<div class="mw-auto-actions">
+        {{ action_form('up', 'Up', preference.id, disabled=loop.first) }}
+        {{ action_form('down', 'Down', preference.id, disabled=loop.last) }}
+        {{ action_form('remove', 'Remove', preference.id) }}
+      </div>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% if not mw.archived and ad.choices %}
+  <form method="post" action="{{ url_for('edit_auto_draft', matchup_id=m.id) }}" hx-post="{{ url_for('edit_auto_draft', matchup_id=m.id) }}" hx-target="#matchweek-view" hx-swap="outerHTML" hx-disabled-elt="find button" hx-on::response-error="this.closest('details').querySelector('[role=alert]').hidden = false">
+    <input type="hidden" name="action" value="add">
+    <label for="auto-choice">Add a priority</label>
+    <select id="auto-choice" name="choice" required>
+      <option value="">Choose a team and fixture</option>
+      {% for fixture in ad.choices %}
+        <option value="{{ fixture.id }}:{{ fixture.home }}">{{ fixture.home }} over {{ fixture.away }}</option>
+        <option value="{{ fixture.id }}:{{ fixture.away }}">{{ fixture.away }} over {{ fixture.home }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Add priority</button>
+  </form>
+  {% endif %}
+  <p class="mw-error" role="alert" hidden>Change not saved. Refresh matchweek and try again.</p>
+</details>

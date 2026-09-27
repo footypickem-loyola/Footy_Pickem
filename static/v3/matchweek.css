@@ -121,7 +121,16 @@
 .mw-pending {color:#748399}
 .mw-auto-draft p {font-size:.8125rem;color:#506582;margin:12px 0}
 .mw-auto-draft .mw-state {padding:3px 7px;font-size:.625rem}
-.mw-auto-draft button {width:100%;padding:12px 8px;border:0;border-radius:7px;background:#e5e8ed;color:#63738a;font:inherit;font-size:.8125rem;cursor:not-allowed}
+.mw-auto-draft button {width:100%;padding:12px 8px;border:0;border-radius:7px;background:#e5e8ed;color:#253d60;font:inherit;font-size:.8125rem;cursor:pointer}
+.mw-auto-draft button:disabled {opacity:.5;cursor:not-allowed}
+.mw-auto-draft summary {cursor:pointer}
+.mw-auto-draft select {width:100%;min-width:0;max-width:100%;margin:8px 0}
+.mw-auto-priorities {padding-left:24px;overflow-wrap:anywhere}
+.mw-auto-priorities li {margin:12px 0}
+.mw-auto-priorities small {display:block}
+.mw-auto-unavailable {color:#63738a}
+.mw-auto-actions {display:flex;gap:6px;margin-top:6px}
+.mw-auto-actions form {flex:1;min-width:0}
 .mw-available > .muted {margin:2px 0 16px;font-size:.875rem}
 .mw-available .mw-section-heading > .muted {background:#eff1f4;border-radius:7px;padding:4px 9px}
 .mw-fixture-columns,.mw-available .mw-fixture {display:grid;grid-template-columns:112px minmax(0,1fr) 20px minmax(0,1fr) minmax(210px,1.7fr);gap:10px;align-items:center}
