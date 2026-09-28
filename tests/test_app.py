@@ -1357,14 +1357,15 @@ class PickemAppTests(AutoDraftCases, unittest.TestCase):
         self.assertIn(b"Draft So Far", response.data)
         self.assertEqual([slot["sequence"] for slot in mw["primary"]["draft_slots"]], list(range(1, 11)))
         self.assertEqual(response.data.count(b'class="mw-pending"'), 10)
-        self.assertIn(b'Turn Auto-Draft on', response.data)
+        self.assertIn(b'Set Bulk Picks', response.data)
+        self.assertIn(b'data-bulk-open=', response.data)
         first = matchup.first_picker_id
         second = matchup.player_b_id if first == matchup.player_a_id else matchup.player_a_id
         self.assertEqual([p["id"] for p in mw["primary"]["upcoming_turns"]],
                          [first, second, second, first, first, second])
         self.assertNotIn(b"<table", response.data)
         self.assertNotIn(b'<select name="team"', response.data)
-        self.assertEqual(response.data.count(b"<select"), 1)  # Auto-Draft priority chooser
+        self.assertNotIn(b"<select", response.data)
         self.assertNotIn(b"LOCALTEST", response.data)
         other_id = matchup.player_b_id if player.id == matchup.player_a_id else matchup.player_a_id
         _, other_view = self.matchweek_response(db.get(app_module.Player, other_id).name)

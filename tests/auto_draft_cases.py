@@ -1,11 +1,147 @@
 """Focused cases mixed into the existing isolated-database app fixture."""
 import threading
+import json
 from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy import text
 from auto_draft import DraftService, DraftError
 
 
 class AutoDraftCases:
+    def bulk_edit(self, player, count=0, choices=None):
+        if choices is None:
+            choices = [{"fixture_id": f[0], "team": f[1]} for f in self.fx]
+        return self.auto_edit(player, "confirm", expected_count=str(count), preferences=json.dumps(choices))
+
+    def test_auto_bulk_confirmation_locks_persisted_list_but_allows_pause(self):
+        self.auto_context()
+        # An unconfirmed old-style priority is replaced by the reviewed bulk list.
+        self.auto_add(self.a, 9)
+        choices = [{"fixture_id": f[0], "team": f[2]} for f in reversed(self.fx)]
+        result = self.bulk_edit(self.a, choices=choices)
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(self.auto_picks()[0].fixture_id, self.fx[9][0])
+        self.db.expire_all()
+        setting = self.db.query(self.d.AutoDraftSetting).filter_by(matchup_id=self.mid, player_id=self.a).one()
+        self.assertIsNotNone(setting.confirmed_at)
+        self.assertEqual(setting.enabled, 1)
+        rows = self.service.preferences(self.db, self.mid, self.a)
+        self.assertEqual([p.fixture_id for p in rows], [f[0] for f in reversed(self.fx)])
+        row_id = str(rows[0].id)
+        for action in ("add", "remove", "up", "down", "confirm"):
+            with self.subTest(action=action), self.assertRaises(DraftError) as error:
+                self.auto_edit(self.a, action, preference_id=row_id)
+            self.assertEqual(error.exception.status, 409)
+        self.auto_edit(self.a, "toggle", enabled="0")
+        self.db.expire_all()
+        self.assertEqual(setting.enabled, 0)
+        self.assertIsNotNone(setting.confirmed_at)
+        self.assertEqual(len(self.service.preferences(self.db, self.mid, self.a)), 10)
+
+    def test_auto_bulk_rejects_incomplete_duplicate_invalid_and_wrong_fixture(self):
+        self.auto_context()
+        valid = [{"fixture_id": f[0], "team": f[1]} for f in self.fx]
+        invalid = [valid[:-1], valid + [valid[0]], [valid[0]] * 10,
+                   [dict(valid[0], team="Draw")] + valid[1:],
+                   [dict(valid[0], team="Not a team")] + valid[1:],
+                   [dict(valid[0], fixture_id=999999)] + valid[1:],
+                   [dict(valid[0], fixture_id=True)] + valid[1:], {}, None]
+        for choices in invalid:
+            with self.subTest(choices=choices), self.assertRaises(DraftError):
+                self.bulk_edit(self.b, choices=choices if choices is not None else {})
+        with self.assertRaises(DraftError):
+            self.auto_edit(self.b, "confirm", expected_count="0", preferences="{broken")
+        self.assertEqual(self.db.query(self.d.AutoDraftSetting).count(), 0)
+        self.assertEqual(self.db.query(self.d.AutoDraftPreference).count(), 0)
+        self.assertEqual(len(self.auto_picks()), 0)
+
+    def test_auto_bulk_stale_review_rejected_then_remaining_list_can_confirm(self):
+        self.auto_context()
+        self.service.command(self.mid, self.a, manual=self.fx[0][:2])
+        with self.assertRaises(DraftError) as error:
+            self.bulk_edit(self.b)
+        self.assertEqual(error.exception.status, 409)
+        remaining = [{"fixture_id": f[0], "team": f[1]} for f in self.fx[1:]]
+        self.assertEqual(self.bulk_edit(self.b, count=1, choices=remaining)["count"], 2)
+        self.assertEqual(len(self.auto_picks()), 3)
+        self.assertEqual(len(self.service.preferences(self.db, self.mid, self.b)), 9)
+
+    def test_auto_bulk_competing_confirmations_cannot_replace_locked_list(self):
+        self.auto_context()
+        barrier = threading.Barrier(2)
+        def confirm(reverse):
+            choices = [{"fixture_id": f[0], "team": f[1]} for f in self.fx]
+            if reverse:
+                choices.reverse()
+            barrier.wait()
+            try:
+                self.bulk_edit(self.b, choices=choices)
+                return choices
+            except DraftError as error:
+                self.assertEqual(error.status, 409)
+                return None
+        with ThreadPoolExecutor(2) as pool:
+            results = list(pool.map(confirm, [False, True]))
+        winners = [result for result in results if result is not None]
+        self.assertEqual(len(winners), 1)
+        rows = self.service.preferences(self.db, self.mid, self.b)
+        self.assertEqual([p.fixture_id for p in rows], [p["fixture_id"] for p in winners[0]])
+        self.assertEqual(len(self.auto_picks()), 0)
+
+    def test_auto_bulk_confirm_http_and_read_only_modal(self):
+        self.auto_context()
+        name = self.db.get(self.d.Player, self.b).name
+        self.db.rollback()
+        with self.d.app.test_client() as client:
+            with client.session_transaction() as session:
+                session["player_name"] = name
+            page = client.get("/tab/current")
+            self.assertIn(b"data-bulk-open", page.data)
+            self.assertIn(b"Submit Bulk Picks", page.data)
+            self.assertEqual(len(self.auto_picks()), 0)
+            data = dict(action="confirm", expected_count="0", preferences=json.dumps(
+                [{"fixture_id": f[0], "team": f[1]} for f in self.fx]))
+            response = client.post(f"/auto-draft/{self.mid}", data=data, headers={"HX-Request": "true"})
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b"View Bulk Picks", response.data)
+            self.assertIn(b"List locked", response.data)
+            self.assertNotIn(b"Submit Bulk Picks", response.data)
+            response = client.post(f"/auto-draft/{self.mid}", data=data, headers={"HX-Request": "true"})
+            self.assertEqual(response.status_code, 409)
+            self.assertIn("cannot be edited", response.json["error"])
+            self.assertEqual(len(self.auto_picks()), 0)
+
+    def test_auto_bulk_confirm_archived_and_finalized_rejected(self):
+        self.auto_context()
+        week = self.db.get(self.d.Week, self.week_id)
+        week.season.is_archived = 1
+        self.db.commit()
+        with self.assertRaises(DraftError):
+            self.bulk_edit(self.a)
+        week.season.is_archived = 0
+        week.status = "finalized"
+        self.db.commit()
+        with self.assertRaises(DraftError):
+            self.bulk_edit(self.a)
+        self.assertEqual(self.db.query(self.d.AutoDraftSetting).count(), 0)
+
+    def test_auto_bulk_migration_preserves_existing_unconfirmed_settings(self):
+        self.auto_context()
+        self.auto_add(self.b, 0)
+        self.db.rollback()
+        self.d.AutoDraftSetting.__table__.drop(self.d.engine)
+        with self.d.engine.begin() as connection:
+            connection.execute(text("CREATE TABLE auto_draft_settings (id INTEGER PRIMARY KEY, "
+                "matchup_id INTEGER NOT NULL, player_id INTEGER NOT NULL, enabled INTEGER NOT NULL, "
+                "UNIQUE(matchup_id, player_id))"))
+            connection.execute(text("INSERT INTO auto_draft_settings VALUES (1, :m, :p, 1)"),
+                               {"m": self.mid, "p": self.b})
+        self.assertFalse(self.d.ensure_database_schema(self.d.engine))
+        self.assertFalse(self.d.ensure_database_schema(self.d.engine))
+        setting = self.db.query(self.d.AutoDraftSetting).one()
+        self.assertEqual(setting.enabled, 1)
+        self.assertIsNone(setting.confirmed_at)
+        self.assertEqual(len(self.service.preferences(self.db, self.mid, self.b)), 1)
+
     def test_auto_allowed_season_reset_removes_state_before_id_reuse(self):
         import pickem_flask_htmx_tabs as d
         from unittest.mock import patch
@@ -239,7 +375,7 @@ class AutoDraftCases:
             response = client.post(f"/auto-draft/{self.mid}", data=dict(action="toggle", enabled="1"), headers={"HX-Request": "true"})
             self.assertEqual(response.status_code, 200)
             self.assertIn(b"Auto-Draft made 1 pick", response.data)
-            self.assertIn(b"Fixture already drafted", response.data)
+            self.assertIn(b"Liverpool Picked", response.data)
             self.assertNotIn(b"<!DOCTYPE", response.data)
             for _ in range(2):
                 client.get("/tab/current")

@@ -5,6 +5,8 @@ SQLite's bounded busy timeout is the only wait; commands are never blindly
 replayed after an uncertain commit. The existing fixture uniqueness constraint
 is a second line of defense. GETs never call this service.
 """
+import json
+
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -100,7 +102,8 @@ class DraftService:
         if preference.team not in (fx.home, fx.away):
             return "Team no longer in this fixture"
         if db.query(d.Pick).filter_by(matchup_id=m.id, fixture_id=fx.id).first():
-            return "Fixture already drafted — skipped"
+            pick = db.query(d.Pick).filter_by(matchup_id=m.id, fixture_id=fx.id).first()
+            return f"{preference.team} Picked" if pick.player_id == preference.player_id else "Opponent Picked"
         return None
 
     def _edit(self, db, m, player_id, edit):
@@ -108,10 +111,15 @@ class DraftService:
         action = edit.get("action")
         scope = dict(matchup_id=m.id, player_id=player_id)
         rows = self.preferences(db, m.id, player_id)
+        setting = db.query(d.AutoDraftSetting).filter_by(**scope).first()
+        if setting and setting.confirmed_at and action != "toggle":
+            raise DraftError("Your bulk picks are confirmed and cannot be edited.", 409)
+        if action == "confirm":
+            self._confirm(db, m, scope, rows, setting, edit)
+            return
         if action == "toggle":
             if edit.get("enabled") not in ("0", "1"):
                 raise DraftError("Invalid enabled state")
-            setting = db.query(d.AutoDraftSetting).filter_by(**scope).first()
             if setting is None:
                 setting = d.AutoDraftSetting(**scope)
                 db.add(setting)
@@ -145,4 +153,42 @@ class DraftService:
                 item.priority = priority
         else:
             raise DraftError("Unknown Auto-Draft action")
+        db.flush()
+
+    def _confirm(self, db, m, scope, rows, setting, edit):
+        """Atomically validate, replace and lock a complete ordered bulk list."""
+        d = self.d
+        try:
+            expected = int(edit.get("expected_count", ""))
+            choices = json.loads(edit.get("preferences", ""))
+        except (ValueError, TypeError):
+            raise DraftError("Invalid bulk picks. Refresh and try again.")
+        count = db.query(d.Pick).filter_by(matchup_id=m.id).count()
+        if expected != count:
+            raise DraftError("The draft changed while you were choosing. Close this window and refresh before confirming.", 409)
+        available = {f.id: f for f in d.available_fixtures_for_matchup(db, m)}
+        if not isinstance(choices, list) or len(choices) != len(available) or not 1 <= len(choices) <= 10:
+            raise DraftError("Rank every remaining fixture and choose a team for each one.")
+        seen = set()
+        for choice in choices:
+            if not isinstance(choice, dict) or type(choice.get("fixture_id")) is not int:
+                raise DraftError("Invalid fixture in bulk picks.")
+            fixture_id = choice["fixture_id"]
+            fixture = available.get(fixture_id)
+            if fixture is None or fixture_id in seen:
+                raise DraftError("Each remaining fixture must appear exactly once.")
+            if choice.get("team") not in (fixture.home, fixture.away):
+                raise DraftError("Choose one of the two teams for each fixture. Draw is not a selection.")
+            seen.add(fixture_id)
+        for row in rows:
+            db.delete(row)
+        db.flush()
+        for priority, choice in enumerate(choices):
+            db.add(d.AutoDraftPreference(**scope, fixture_id=choice["fixture_id"],
+                team=choice["team"], priority=priority))
+        if setting is None:
+            setting = d.AutoDraftSetting(**scope)
+            db.add(setting)
+        setting.enabled = 1
+        setting.confirmed_at = d.utcnow()
         db.flush()

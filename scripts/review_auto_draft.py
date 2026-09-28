@@ -6,6 +6,7 @@ priority/double turn; Week 3: ninth pick (Steve has two priorities); archive
 season: read-only draft. No existing database is opened or copied.
 """
 import os
+import argparse
 from pathlib import Path
 import sys
 import tempfile
@@ -15,6 +16,9 @@ sys.path.insert(0, str(ROOT))
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", type=int, default=5111)
+    args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="footy-pr11-browser-") as temp:
         os.environ["DB_PATH"] = f"sqlite:///{Path(temp) / 'review.db'}"
         os.environ["INIT_ON_START"] = "0"
@@ -54,7 +58,7 @@ def main():
         d.SessionLocal.remove()
         print(f"Synthetic review database: {Path(temp) / 'review.db'}", flush=True)
         try:
-            d.app.run(host="127.0.0.1", port=5111, debug=False, use_reloader=False, threaded=True)
+            d.app.run(host="127.0.0.1", port=args.port, debug=False, use_reloader=False, threaded=True)
         finally:
             d.SessionLocal.remove()
             d.engine.dispose()

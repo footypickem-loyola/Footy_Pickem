@@ -797,6 +797,7 @@ class Fixture(Base):
     match_number = Column(Integer, nullable=False)
     home = Column(String, nullable=False)
     away = Column(String, nullable=False)
+    venue = Column(String)
     external_match_id = Column(Integer, unique=True)
     kickoff_utc = Column(DateTime)
     api_status = Column(String)
@@ -833,6 +834,7 @@ class AutoDraftSetting(Base):
     matchup_id = Column(Integer, ForeignKey("matchups.id"), nullable=False)
     player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
     enabled = Column(Integer, nullable=False, default=0)
+    confirmed_at = Column(DateTime)
     __table_args__ = (UniqueConstraint("matchup_id", "player_id", name="uix_auto_draft_setting"),)
 
 
@@ -1353,6 +1355,26 @@ def ensure_database_schema(target_engine=engine) -> bool:
                 _backup_database(target_engine, "pre_week_finalized_at")
                 cursor.execute("ALTER TABLE weeks ADD COLUMN finalized_at DATETIME")
                 raw.commit()
+        fixture_exists = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fixtures'"
+        ).fetchone()
+        if fixture_exists:
+            fixture_columns = {row[1] for row in cursor.execute("PRAGMA table_info(fixtures)").fetchall()}
+            if "venue" not in fixture_columns:
+                _backup_database(target_engine, "pre_fixture_venue")
+                cursor.execute("ALTER TABLE fixtures ADD COLUMN venue VARCHAR")
+                raw.commit()
+        setting_exists = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='auto_draft_settings'"
+        ).fetchone()
+        if setting_exists:
+            setting_columns = {
+                row[1] for row in cursor.execute("PRAGMA table_info(auto_draft_settings)").fetchall()
+            }
+            if "confirmed_at" not in setting_columns:
+                _backup_database(target_engine, "pre_bulk_picks")
+                cursor.execute("ALTER TABLE auto_draft_settings ADD COLUMN confirmed_at DATETIME")
+                raw.commit()
     except Exception:
         raw.rollback()
         raise
@@ -1648,6 +1670,7 @@ def init_season_from_api(
                     home=api_team_name(match["homeTeam"]),
                     away=api_team_name(match["awayTeam"]),
                     external_match_id=match["id"],
+                    venue=match.get("venue"),
                     kickoff_utc=parse_api_datetime(match.get("utcDate")),
                     api_status=match.get("status"),
                 ))
@@ -4550,10 +4573,24 @@ def load_matchweek_model(db, season, week, include_context=True):
         rows = service.preferences(db, matchup.id, me.id)
         primary["auto_draft"] = {
             "enabled": bool(setting and setting.enabled),
-            "preferences": [{"id": row.id, "team": row.team,
-                             "reason": service.unavailable(db, matchup, row)} for row in rows],
-            "choices": [f for f in primary["available"] if f.id not in {row.fixture_id for row in rows}],
+            "confirmed": bool(setting and setting.confirmed_at),
+            "preferences": [{
+                "id": row.id, "fixture_id": row.fixture_id, "team": row.team,
+                "home": db.get(Fixture, row.fixture_id).home if db.get(Fixture, row.fixture_id) else "Unknown",
+                "away": db.get(Fixture, row.fixture_id).away if db.get(Fixture, row.fixture_id) else "Unknown",
+                "venue": (db.get(Fixture, row.fixture_id).venue or "Venue TBD") if db.get(Fixture, row.fixture_id) else "Venue TBD",
+                "reason": service.unavailable(db, matchup, row),
+            } for row in rows],
+            "fixtures": [],
         }
+        picked = {pick.fixture_id: pick for pick in db.query(Pick).filter_by(matchup_id=matchup.id).all()}
+        primary["auto_draft"]["fixtures"] = [{
+            "id": fixture.id, "home": fixture.home, "away": fixture.away,
+            "venue": fixture.venue or "Venue TBD",
+            "picked": fixture.id in picked,
+            "picked_by_you": bool(fixture.id in picked and picked[fixture.id].player_id == me.id),
+            "picked_team": picked[fixture.id].team if fixture.id in picked else None,
+        } for fixture in db.query(Fixture).filter_by(week_id=matchup.week_id).order_by(Fixture.match_number).all()]
     return model
 
 
@@ -5911,6 +5948,8 @@ def edit_auto_draft(matchup_id):
         summary = DraftService(sys.modules[__name__]).command(
             matchup_id, player_id, edit=request.form)
     except DraftError as exc:
+        if request.form.get("action") == "confirm" and request.headers.get("HX-Request") == "true":
+            return jsonify(error=str(exc)), exc.status
         abort(exc.status, str(exc))
     db.expire_all()
     matchup = db.get(Matchup, matchup_id)
@@ -6113,7 +6152,8 @@ def init_weeks_from_csv(
             db.add(Fixture(week_id=wk.id,
                            match_number=int(r["Match Number"]),
                            home=str(r["Home Team"]),
-                           away=str(r["Away Team"])))
+                           away=str(r["Away Team"]),
+                           venue=str(r["Location"]) if "Location" in r and pd.notna(r["Location"]) else None))
         db.commit()
 
         # create 3 matchups for the week

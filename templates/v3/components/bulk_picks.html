@@ -1,0 +1,46 @@
+{% set ad = m.auto_draft %}
+<dialog id="bulk-picks-{{ m.id }}" class="bulk-dialog" aria-labelledby="bulk-title-{{ m.id }}" aria-describedby="bulk-intro-{{ m.id }}">
+  <header class="bulk-header">
+    <div><p class="mw-eyebrow">Matchweek {{ mw.week }} · Your priorities</p><h2 id="bulk-title-{{ m.id }}">{{ 'Your Bulk Picks' if ad.confirmed else 'Set Bulk Picks' }}</h2></div>
+    <button type="button" class="bulk-close" data-bulk-close aria-label="Close bulk picks">×</button>
+  </header>
+  {% if ad.confirmed %}
+  <div class="bulk-content">
+    <p id="bulk-intro-{{ m.id }}">Your picks are confirmed and cannot be edited. Auto-Draft skips any fixture that has already been drafted.</p>
+    <ol class="bulk-review-list">{% for preference in ad.preferences %}<li><span class="bulk-number">{{ loop.index }}</span><div><strong>{{ preference.team }}</strong><small>{{ preference.home }} (Home) vs {{ preference.away }} (Away) · {{ preference.venue }}</small>{% if preference.reason %}<small>{{ preference.reason }}</small>{% endif %}</div></li>{% endfor %}</ol>
+  </div>
+  <footer class="bulk-footer"><span>Confirmed · List locked</span><button type="button" class="btn primary" data-bulk-close>Done</button></footer>
+  {% else %}
+  <script type="application/json" class="bulk-config">{{ {'fixtures': ad.fixtures, 'preferences': ad.preferences}|tojson }}</script>
+  <div class="bulk-content">
+    <div data-bulk-editor>
+      <p id="bulk-intro-{{ m.id }}">Choose a fixture, place it in a numbered slot, then choose your team. Rank all remaining fixtures before submitting.</p>
+      <p class="bulk-instruction" data-bulk-instruction role="status" aria-live="polite">Choose a fixture to begin.</p>
+      <div class="bulk-columns">
+        <section aria-label="Fixtures to rank"><div class="bulk-section-heading"><h3>Fixtures</h3><span data-bulk-progress></span></div><div class="bulk-filter" role="group" aria-label="Fixture filter"><button type="button" class="bulk-filter-button is-active" data-bulk-filter="available">Show Available Fixtures</button><button type="button" class="bulk-filter-button" data-bulk-filter="all">Show All Fixtures</button></div><div class="bulk-fixtures" data-bulk-fixtures></div></section>
+        <section aria-label="Your priority slots"><div class="bulk-section-heading"><h3>Your priorities</h3><span>Highest first</span></div><ol class="bulk-slots" data-bulk-slots></ol></section>
+      </div>
+    </div>
+    <div data-bulk-review hidden>
+      <h3 tabindex="-1" data-bulk-review-title>Confirm Bulk Picks</h3>
+      <p>Check your order and teams below. <strong>After you confirm, this list cannot be edited.</strong> Auto-Draft will turn on and use your highest available priority when it is your turn.</p>
+      <ol class="bulk-review-list" data-bulk-review-list></ol>
+    </div>
+    <p class="mw-error" data-bulk-error role="alert" hidden></p>
+  </div>
+  <footer class="bulk-footer">
+    <p data-bulk-footer-note>Nothing is saved until you confirm.</p>
+    <div class="bulk-footer-actions">
+      <button type="button" class="btn" data-bulk-back hidden>Back to Edit</button>
+      <button type="button" class="btn" data-bulk-close>Cancel</button>
+      <button type="button" class="btn primary" data-bulk-review-button disabled>Submit Bulk Picks</button>
+      <form method="post" action="{{ url_for('edit_auto_draft', matchup_id=m.id) }}" hx-post="{{ url_for('edit_auto_draft', matchup_id=m.id) }}" hx-trigger="bulkConfirmed" hx-target="#matchweek-view" hx-swap="outerHTML" data-bulk-form hidden>
+        <input type="hidden" name="action" value="confirm">
+        <input type="hidden" name="expected_count" value="{{ m.total_picks }}">
+        <input type="hidden" name="preferences" value="">
+        <button type="submit" class="btn primary" data-bulk-confirm>Confirm Bulk Picks</button>
+      </form>
+    </div>
+  </footer>
+  {% endif %}
+</dialog>
