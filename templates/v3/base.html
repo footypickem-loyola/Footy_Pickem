@@ -14,6 +14,8 @@
   <script src="{{ url_for('static', filename='v3/schedule_results.js') }}" defer></script>
   {# Keep executable shell scripts out of HTMX's body history snapshots. #}
   <script src="{{ url_for('static', filename='v3/legacy.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='v3/bulk_picks.js') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='v3/bulk_picks.css') }}">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>

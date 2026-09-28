@@ -1,0 +1,25 @@
+{% set ad = m.auto_draft %}
+<details class="card mw-auto-draft" open>
+  <summary><strong>Auto-Draft</strong> <span class="mw-state">{{ 'On' if ad.enabled else 'Off' }}</span></summary>
+  <p role="status">{% if ad.confirmed %}Bulk picks confirmed · List locked.{% elif not ad.preferences %}No bulk picks set.{% else %}Saved priorities · Not yet confirmed.{% endif %}</p>
+  {% if ad.preferences and not ad.preferences|rejectattr('reason')|list %}<p>No valid priorities remaining.</p>
+  {% elif ad.enabled %}<p>{{ 'Ready to pick.' if m.your_turn else 'Waiting for your turn.' }}</p>{% endif %}
+  {% if mw.archived %}<p>Archived — read only.</p>
+  {% elif ad.confirmed or ad.preferences %}
+  <form method="post" action="{{ url_for('edit_auto_draft', matchup_id=m.id) }}" hx-post="{{ url_for('edit_auto_draft', matchup_id=m.id) }}" hx-target="#matchweek-view" hx-swap="outerHTML" hx-disabled-elt="find button" hx-on::response-error="this.parentElement.querySelector('[role=alert]').hidden = false">
+    <input type="hidden" name="action" value="toggle">
+    <input type="hidden" name="enabled" value="{{ '0' if ad.enabled else '1' }}">
+    <button type="submit">Turn Auto-Draft {{ 'off' if ad.enabled else 'on' }}</button>
+  </form>
+  <p>{{ 'Turning off lets you pick manually. Your confirmed list stays locked.' if ad.confirmed else 'Use Set Bulk Picks to review and confirm your full list.' }}</p>
+  {% else %}<p>Use <strong>Set Bulk Picks</strong> in the turn banner to rank fixtures and choose your teams.</p>{% endif %}
+  <ol class="mw-auto-priorities">
+    {% for preference in ad.preferences %}
+    <li{% if preference.reason %} class="mw-auto-unavailable"{% endif %}>
+      <strong>{{ preference.team }}</strong>
+      {% if preference.reason %}<small>{{ preference.reason }}</small>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="mw-error" role="alert" hidden>Change not saved. Refresh matchweek and try again.</p>
+</details>

@@ -41,7 +41,9 @@
     <span class="mw-turn-dot" aria-hidden="true"></span>
     <div><h2>{{ 'YOUR TURN' if m.your_turn else m.turn.name ~ '’s turn' }}</h2>
     <p>Pick {{ m.total_picks + 1 }} of 10. {% if m.can_pick %}Choose a team from any remaining fixture.{% elif mw.archived %}Archived season — read only.{% else %}Waiting for {{ m.turn.name }} to choose a team.{% endif %}</p></div>
+    {% if m.auto_draft and not mw.archived %}<button type="button" class="btn mw-bulk-trigger" data-bulk-open="bulk-picks-{{ m.id }}">{{ 'View Bulk Picks' if m.auto_draft.confirmed else 'Set Bulk Picks' }}</button>{% endif %}
   </div>
+  {% if m.auto_draft and not mw.archived %}{% include 'v3/components/bulk_picks.html' %}{% endif %}
   <div class="mw-draft-layout">
     <section class="card mw-available" aria-labelledby="available-title">
       <div class="mw-section-heading"><h2 id="available-title">Available fixtures</h2><span class="muted">{{ m.available|length }} remaining</span></div>
@@ -60,6 +62,7 @@
             <input type="hidden" name="week" value="{{ mw.week }}">
             <input type="hidden" name="season" value="{{ mw.season_code }}">
             <input type="hidden" name="matchup_id" value="{{ m.id }}">
+            <input type="hidden" name="expected_count" value="{{ m.total_picks }}">
             <input type="hidden" name="fixture_id" value="{{ fixture.id }}">
             <input type="hidden" name="team" value="{{ team }}">
             <button type="submit" class="mw-pick"{% if not m.can_pick %} disabled{% endif %} aria-label="Pick {{ team }} against {{ fixture.away if loop.first else fixture.home }}"><span>Pick {{ team }}</span></button>
@@ -72,11 +75,7 @@
     </section>
     <aside class="mw-side-rail">
       {% include 'v3/components/draft_history.html' %}
-      <section class="card mw-auto-draft" aria-labelledby="auto-draft-title">
-        <div class="mw-section-heading"><h2 id="auto-draft-title">Auto-Draft</h2><span class="mw-state">Coming in Wave 2</span></div>
-        <p>Priority picks when it’s your turn. Coming in a future update.</p>
-        <button type="button" disabled>Configure Auto-Draft</button>
-      </section>
+      {% if m.auto_draft %}{% include 'v3/components/auto_draft.html' %}{% endif %}
     </aside>
   </div>
   {% else %}

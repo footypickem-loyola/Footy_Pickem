@@ -19,6 +19,7 @@ os.environ["INIT_ON_START"] = "0"
 
 import pickem_flask_htmx_tabs as app_module  # noqa: E402
 from flask import template_rendered
+from auto_draft_cases import AutoDraftCases
 from scripts.copy_week1_correspondent_sources import (  # noqa: E402
     MaintenanceSafetyError,
     WINDOW_END,
@@ -166,7 +167,7 @@ def complete_api_schedule():
     return matches
 
 
-class PickemAppTests(unittest.TestCase):
+class PickemAppTests(AutoDraftCases, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.csv_path = Path(__file__).resolve().parents[1] / "epl_2025.csv"
@@ -786,7 +787,8 @@ class PickemAppTests(unittest.TestCase):
         with app_module.app.test_client() as client:
             with client.session_transaction() as user_session:
                 user_session["player_name"] = first.name
-            response = client.post("/pick", data={
+            response = client.post("/pick", headers={"HX-Request": "true"}, data={
+                "expected_count": 0,
                 "week": 1,
                 "matchup_id": matchup.id,
                 "fixture_id": fixture.id,
@@ -812,7 +814,8 @@ class PickemAppTests(unittest.TestCase):
         with app_module.app.test_client() as client:
             with client.session_transaction() as user_session:
                 user_session["player_name"] = first.name
-            response = client.post("/pick", data={
+            response = client.post("/pick", headers={"HX-Request": "true"}, data={
+                "expected_count": 0,
                 "week": 1,
                 "matchup_id": matchup.id,
                 "fixture_id": fixture.id,
@@ -1354,12 +1357,14 @@ class PickemAppTests(unittest.TestCase):
         self.assertIn(b"Draft So Far", response.data)
         self.assertEqual([slot["sequence"] for slot in mw["primary"]["draft_slots"]], list(range(1, 11)))
         self.assertEqual(response.data.count(b'class="mw-pending"'), 10)
-        self.assertIn(b'button type="button" disabled>Configure Auto-Draft', response.data)
+        self.assertIn(b'Set Bulk Picks', response.data)
+        self.assertIn(b'data-bulk-open=', response.data)
         first = matchup.first_picker_id
         second = matchup.player_b_id if first == matchup.player_a_id else matchup.player_a_id
         self.assertEqual([p["id"] for p in mw["primary"]["upcoming_turns"]],
                          [first, second, second, first, first, second])
         self.assertNotIn(b"<table", response.data)
+        self.assertNotIn(b'<select name="team"', response.data)
         self.assertNotIn(b"<select", response.data)
         self.assertNotIn(b"LOCALTEST", response.data)
         other_id = matchup.player_b_id if player.id == matchup.player_a_id else matchup.player_a_id
@@ -1397,6 +1402,7 @@ class PickemAppTests(unittest.TestCase):
                 with client.session_transaction() as user_session:
                     user_session["player_name"] = turn.name
                 response = client.post("/pick", headers={"HX-Request": "true"}, data={
+                    "expected_count": index,
                     "week": 1, "season": "year-2", "matchup_id": matchup_id,
                     "fixture_id": fixture.id, "team": fixture.home, "presentation": "v3",
                 })

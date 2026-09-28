@@ -1,5 +1,6 @@
 {% from 'v3/components/ui.html' import empty_state %}
 <div id="matchweek-view" class="mw-page{% if mw and mw.primary %} mw-page--matchweek{% endif %}">
+  {% if auto_summary and auto_summary.count %}<p class="mw-notice" role="status">Auto-Draft made {{ auto_summary.count }} {{ 'pick' if auto_summary.count == 1 else 'picks' }}: {{ auto_summary.picks|map(attribute='team')|join(', ') }}</p>{% endif %}
   <header class="mw-page-heading">
     <div class="mw-hero-copy">
       <p class="mw-eyebrow">{{ mw.season if mw else 'Your league' }}</p>
