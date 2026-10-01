@@ -22,6 +22,7 @@ from sqlalchemy.orm import scoped_session, sessionmaker
 from sportmonks_live import normalize_fixture, SportmonksClient, ProviderError
 from live_sync import ingest
 from live_sync_worker import cycle
+from live_bridge import BridgeError
 from live_matchweek import contribution, factual_context
 from live_fakes import seed, payload, NOW
 
@@ -196,49 +197,30 @@ class LiveTests(unittest.TestCase):
                 self.assertEqual(connection.execute(text(f'SELECT * FROM {table}')).fetchall(), rows)
         self.assertIn('match_events', inspect(self.engine).get_table_names())
 
-    def test_worker_idle_multiple_transient_restart_and_network_has_no_lock(self):
-        raw = [payload(f) for f in self.fixtures[:2]]
-        self.sessions.remove()
-        outer = self
-        class Client:
-            league_id = 8
-            rate_limit = None
-            calls = 0
-            def livescores(self):
-                self.calls += 1
-                # A distinct SQLite writer can acquire a lock during provider I/O.
-                with outer.engine.connect() as connection:
-                    connection.exec_driver_sql('BEGIN IMMEDIATE')
-                    connection.rollback()
-                return [normalize_fixture(r) for r in raw]
-        client = Client()
-        self.assertEqual(cycle(d, client, NOW-timedelta(days=1)), 300)
-        self.assertEqual(client.calls, 0)
-        self.assertEqual(cycle(d, client, NOW), 15)
-        self.assertEqual(cycle(d, client, NOW), 15)
-        self.assertEqual(self.sessions().query(d.MatchEvent).count(), 2)
-        self.sessions.remove()
-        with patch.object(client, 'livescores', side_effect=ProviderError('Unavailable', 120)):
-            self.assertEqual(cycle(d, client, NOW), 120)
-        self.assertEqual(self.sessions().query(d.LiveFixtureState).count(), 2)
-
-    def test_worker_near_empty_feed_rate_limit_and_atomic_rollback(self):
-        raw = payload(self.fixtures[0])
-        self.sessions.remove()
+    def test_worker_empty_multiple_live_and_transient_failure(self):
+        items = [normalize_fixture(payload(f)) for f in self.fixtures[:2]]
         client = SimpleNamespace(league_id=8, rate_limit=None, livescores=lambda: [])
-        self.assertEqual(cycle(d, client, NOW), 60)
+        bridge = SimpleNamespace(send=lambda fixtures, league: len(fixtures))
+        self.assertEqual(cycle(client, bridge), 60)
+        client.livescores = lambda: items
+        self.assertEqual(cycle(client, bridge), 15)
+        self.assertEqual(cycle(client, bridge), 15)
+        with patch.object(client, 'livescores', side_effect=ProviderError('Unavailable', 120)):
+            self.assertEqual(cycle(client, bridge), 120)
+        self.assertEqual(self.db.query(d.LiveFixtureState).count(), 0)
+
+    def test_worker_near_finished_rate_limit_and_bridge_failure(self):
+        raw = payload(self.fixtures[0])
+        client = SimpleNamespace(league_id=8, rate_limit=None,
+                                 livescores=lambda: [normalize_fixture(dict(raw, state_id=5))])
+        bridge = SimpleNamespace(send=lambda fixtures, league: len(fixtures))
+        self.assertEqual(cycle(client, bridge), 60)
         client.livescores = lambda: [normalize_fixture(raw)]
         client.rate_limit = {'remaining': 0, 'resets_in_seconds': 240}
-        self.assertEqual(cycle(d, client, NOW), 240)
-        self.sessions.remove()
-        real_ingest = ingest
-        def broken(db, *args):
-            real_ingest(db, *args)
-            raise RuntimeError('synthetic transaction failure')
-        raw['scores'][0]['score']['goals'] = 9
-        with patch('live_sync_worker.ingest', side_effect=broken):
-            self.assertEqual(cycle(d, client, NOW), 60)
-        self.assertEqual(self.sessions().query(d.LiveFixtureState).one().home_score, 1)
+        self.assertEqual(cycle(client, bridge), 240)
+        with patch.object(bridge, 'send', side_effect=BridgeError('Unavailable', 90)):
+            self.assertEqual(cycle(client, bridge), 90)
+        self.assertEqual(self.db.query(d.LiveFixtureState).count(), 0)
 
     def test_migration_keeps_official_and_archived_history(self):
         self.db.add(d.Result(fixture_id=self.fixtures[0].id, outcome='Away', home_score=0, away_score=2, source='manual'))

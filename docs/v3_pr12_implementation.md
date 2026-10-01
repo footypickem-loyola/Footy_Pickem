@@ -1,5 +1,7 @@
 # PR12 implementation and verification
 
+The worker's original shared-database design and configuration below are superseded by the [PR13 stateless HTTP bridge](v3_pr13_implementation.md). The remaining PR12 behavior is preserved.
+
 Work is on `v3/pr12-live-matchweek`, fetched from `origin`. Implementation was initially left uncommitted for architecture review; committing and pushing this branch was subsequently authorized. Merging, deployment, and provisioning remain unauthorized and were not performed. Existing local database files were not opened for implementation or verification. The three pre-existing untracked files were preserved.
 
 ## Architecture for review
