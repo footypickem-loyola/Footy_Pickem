@@ -1,0 +1,50 @@
+<div class="live-layout" data-state="live" data-matchup-id="{{ m.id }}">
+  <section class="live-main" aria-label="Live Pick ’Em matchup">
+    <div class="card live-hero">
+      <p class="mw-eyebrow">Head to head · Week {{ mw.week }} · Provisional</p>
+      <div class="live-versus">
+        {% for player in m.players %}
+        <div class="live-player"><span class="mw-avatar" aria-hidden="true">{{ player.name[:1] }}</span><div><h2>{{ player.name }}</h2>
+          {% if player.season_record %}<p>{{ player.season_record.wins }}–{{ player.season_record.losses }}–{{ player.season_record.ties }} · {{ player.season_record.net_points }} pts</p><p>{{ player.season_record.place }} place</p>{% endif %}
+          <p class="live-player-totals">For {{ '%+d'|format(player['for']) }} · Against {{ '%+d'|format(player.against) }} · Net {{ '%+d'|format(player.net) }}</p></div>
+          <strong class="live-points" aria-label="{{ player.name }} provisional For {{ player['for'] }}">{{ '%+d'|format(player['for']) }}</strong></div>
+        {% if loop.first %}<span class="mw-vs">vs</span>{% endif %}
+        {% endfor %}
+      </div>
+      <p class="live-projection">{% if m.projected_winner %}{{ m.projected_winner }} leads by {{ m.players[0].net|abs }} net · {% endif %}If Scores Hold<br><strong>${{ m.projected_payout }}</strong> projected payout{% if m.projected_winner %} to {{ m.projected_winner }}{% endif %}</p>
+    </div>
+    <p class="live-notice" role="status">{% if m.incomplete %}<strong>Some live scores are unavailable.</strong> Projection includes known scores only.{% elif m.stale %}<strong>Live data delayed.</strong> Showing the last stored update; projections may change.{% else %}<strong>Live now:</strong> follow how each owned fixture affects your matchup.{% endif %}</p>
+    <div class="live-owned-grid">
+    {% for player in m.players %}
+      <section class="card live-owned" aria-label="{{ player.name }}’s picks">
+        <div class="mw-owned-heading"><span class="mw-avatar" aria-hidden="true">{{ player.name[:1] }}</span><div><h2>{{ player.name }}’s Picks</h2><span class="muted">{{ player.owned|length }} fixtures · For {{ '%+d'|format(player['for']) }} · Net {{ '%+d'|format(player.net) }}</span></div></div>
+        {% for pick in player.owned %}
+        <article class="live-fixture" data-fixture-id="{{ pick.fixture_id }}">
+          <div class="live-fixture-meta"><span>{{ pick.kickoff_utc|kickoff_eastern }}</span><span class="live-status {{ 'is-live' if pick.live_status == 'LIVE' else '' }}">{{ pick.live_status }}{% if pick.minute is not none and pick.live_status == 'LIVE' %} {{ pick.minute }}{% if pick.extra_minute %}+{{ pick.extra_minute }}{% endif %}′{% endif %}</span></div>
+          <div class="live-teams"><strong>{{ pick.home }}</strong><b>{{ pick.score or 'vs' }}</b><strong>{{ pick.away }}</strong></div>
+          <div class="live-team-events">
+          {% for side in ['home', 'away'] %}<ul aria-label="{{ pick.home if side == 'home' else pick.away }} events">
+            {% for event in pick.events if event.side == side and event.event_type in ['goal', 'own_goal', 'penalty', 'yellow_card', 'red_card', 'second_yellow'] %}
+            <li><span aria-label="{{ event.event_type|replace('_', ' ') }}">{{ '⚽' if event.event_type in ['goal', 'own_goal', 'penalty'] else '🟨' if event.event_type == 'yellow_card' else '🟥' }}</span> {{ event.player_name or 'Player unavailable' }}{% if event.minute is not none %} · {{ event.minute }}{% if event.extra_minute %}+{{ event.extra_minute }}{% endif %}′{% endif %}{% if event.event_type == 'own_goal' %} (OG){% elif event.event_type == 'penalty' %} (P){% elif event.event_type == 'second_yellow' %} (2nd yellow){% endif %}</li>
+            {% endfor %}
+          </ul>{% endfor %}
+          </div>
+          {% if pick.goal_correction %}<small class="live-delayed">VAR goal correction reported. Event details may be revised; current score drives your pick.</small>{% endif %}
+          <div class="live-pick live-pick--{{ pick.outcome }}"><span>{{ player.name }} picks <strong>{{ pick.team }}</strong> · {{ 'Not started' if pick.live_status == 'Upcoming' else 'Currently correct' if pick.outcome == 'correct' else 'Currently wrong' if pick.outcome == 'incorrect' else 'Level' if pick.outcome == 'draw' else 'Score unavailable' }}</span><strong>{{ '%+d'|format(pick.contribution) if pick.contribution is not none else '—' }}</strong></div>
+          {% if pick.stale %}<small class="live-delayed">Update delayed</small>{% endif %}
+        </article>
+        {% endfor %}
+      </section>
+    {% endfor %}
+    </div>
+  </section>
+  <aside class="live-rail">
+    <section class="card"><h2>Live Matchup</h2><dl>
+      <div><dt>Live Pick ’Em Score</dt><dd>{% for player in m.players %}{{ player.name }} {{ '%+d'|format(player['for']) }}{% if loop.first %} · {% endif %}{% endfor %}</dd></div>
+      <div><dt>If Scores Hold</dt><dd>{{ m.projected_winner ~ ' wins by ' ~ (m.players[0].net|abs) if m.projected_winner else 'Matchup drawn' }}<br>${{ m.projected_payout }} projected payout</dd></div>
+      <div><dt>{{ m.players|sum(attribute='remaining') }} Fixtures Remaining</dt><dd>{% for player in m.players %}{{ player.remaining }} for {{ player.name }}{% if loop.first %} · {% endif %}{% endfor %}</dd></div>
+    </dl><details id="live-history-{{ mw.season_code }}-{{ m.id }}" hx-preserve><summary>View Draft History</summary>{% include 'v3/components/draft_history.html' %}</details></section>
+    <section class="card"><p class="mw-eyebrow">Official results only</p><div class="live-official">{% for player in m.players %}<div>{{ player.name }}<strong>{{ '%+d'|format(player.official_for) }}</strong></div>{% endfor %}</div></section>
+    <section class="card"><h2>Other Pick ’Em Matchups</h2>{% for other in mw.others %}<div class="live-other"><span>{{ other.state_label }}</span><p>{% for player in other.players %}{{ player.name }} <strong>{{ '%+d'|format(player['for']) }}</strong>{% if loop.first %} vs {% endif %}{% endfor %}</p>{% if other.state == 'live' %}<small>If Scores Hold · ${{ other.projected_payout }}</small>{% endif %}</div>{% endfor %}<a href="{{ url_for('tab_season', season=mw.season_code) }}">View Table &amp; Results →</a></section>
+  </aside>
+</div>

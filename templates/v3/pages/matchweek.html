@@ -1,12 +1,14 @@
 {% from 'v3/components/ui.html' import empty_state %}
-<div id="matchweek-view" class="mw-page{% if mw and mw.primary %} mw-page--matchweek{% endif %}">
+<div id="matchweek-view" class="mw-page{% if mw and mw.primary %} mw-page--matchweek{% endif %}"
+  {% if mw and mw.primary and mw.primary.state in ['live', 'ready'] and not mw.archived %}hx-get="{{ url_for('matchweek_partial', week_number=mw.week, season=mw.season_code) }}" hx-trigger="every {{ 15 if mw.primary.state == 'live' else 60 }}s" hx-target="this" hx-swap="outerHTML"{% endif %}>
   {% if auto_summary and auto_summary.count %}<p class="mw-notice" role="status">Auto-Draft made {{ auto_summary.count }} {{ 'pick' if auto_summary.count == 1 else 'picks' }}: {{ auto_summary.picks|map(attribute='team')|join(', ') }}</p>{% endif %}
   <header class="mw-page-heading">
     <div class="mw-hero-copy">
       <p class="mw-eyebrow">{{ mw.season if mw else 'Your league' }}</p>
-      <h1><span class="mw-title-week">Matchweek{% if mw %} {{ mw.week }}{% endif %}</span>{% if mw and mw.primary %}<span class="mw-hero-state"> · {{ mw.primary.state_label }}</span>{% endif %}</h1>
+      <h1><span class="mw-title-week">Matchweek{% if mw %} {{ mw.week }}{% endif %}</span>{% if mw and mw.primary %}<span class="mw-hero-state{% if mw.primary.state == 'live' %} mw-hero-state--live{% endif %}">{{ ' ● LIVE' if mw.primary.state == 'live' else ' · ' ~ mw.primary.state_label }}</span>{% endif %}</h1>
       {% if mw and mw.primary %}
         {% if mw.primary.state == 'final' %}<p class="mw-first-kickoff">Final result official · All fixture results finalized</p>
+        {% elif mw.primary.state == 'live' %}<p class="mw-first-kickoff">{{ mw.primary.progress.live }} fixtures live · {{ mw.primary.progress.finished }} completed · {{ mw.primary.progress.upcoming }} to come</p>
         {% elif mw.first_kickoff %}<p class="mw-first-kickoff">{{ 'Draft deadline' if mw.primary.state == 'draft' else 'First kickoff' }} · {{ mw.first_kickoff|kickoff_eastern }}</p>{% endif %}
       {% endif %}
       {% if mw and mw.archived %}<p class="muted">Archived — read only</p>{% endif %}
@@ -15,7 +17,7 @@
     {% if mw %}
     <div class="mw-page-actions">
       <a href="{{ url_for('tab_stats', season=mw.season_code) }}" hx-get="{{ url_for('tab_stats', season=mw.season_code) }}" hx-target="#main" hx-push-url="true">View all stats</a>
-      <button class="btn" type="button" hx-get="{{ url_for('matchweek_partial', week_number=mw.week, season=mw.season_code) }}" hx-target="#matchweek-view" hx-swap="outerHTML">Refresh matchweek</button>
+      <button id="matchweek-refresh" class="btn" type="button" hx-get="{{ url_for('matchweek_partial', week_number=mw.week, season=mw.season_code) }}" hx-target="#matchweek-view" hx-swap="outerHTML">Refresh matchweek</button>
     </div>
     {% endif %}
   </header>
@@ -29,8 +31,8 @@
     {% elif not mw.has_matchup %}
       <p class="mw-notice">No matchup is assigned to you this week. You’re viewing a league matchup.</p>
     {% endif %}
-    {% with m=mw.primary %}{% include 'v3/components/matchup.html' %}{% endwith %}
-    {% if mw.others %}
+    {% with m=mw.primary %}{% if m.state == 'live' %}{% include 'v3/components/live_matchup.html' %}{% else %}{% include 'v3/components/matchup.html' %}{% endif %}{% endwith %}
+    {% if mw.others and mw.primary.state != 'live' %}
     <section class="mw-other-section" aria-labelledby="other-matchups-title">
       <div class="mw-section-heading"><h2 id="other-matchups-title">Other Matchups</h2><span class="muted">Around your league</span></div>
       <div class="mw-other-grid">
