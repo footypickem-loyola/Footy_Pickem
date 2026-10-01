@@ -6090,6 +6090,15 @@ def _delete_season_weeks(db, season: Season) -> None:
         CorrespondentSource.week_id.in_(week_ids)
     ).delete(synchronize_session=False)
     if fixture_ids:
+        db.query(MatchEvent).filter(MatchEvent.fixture_id.in_(fixture_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(LiveFixtureState).filter(LiveFixtureState.fixture_id.in_(fixture_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(FixtureProviderLink).filter(FixtureProviderLink.fixture_id.in_(fixture_ids)).delete(
+            synchronize_session=False
+        )
         db.query(Result).filter(Result.fixture_id.in_(fixture_ids)).delete(synchronize_session=False)
     if matchup_ids:
         db.query(AutoDraftPreference).filter(
