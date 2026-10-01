@@ -102,7 +102,7 @@ class SportmonksClient:
         query = urlencode({'include': 'participants;scores;state;periods;events',
                            'filters': f'fixtureLeagues:{self.league_id}'})
         request = Request('https://api.sportmonks.com/v3/football/livescores?' + query,
-                          headers={'Authorization': self.token, 'Accept': 'application/json'})
+                          headers={'Authorization': f'Bearer {self.token}', 'Accept': 'application/json'})
         try:
             with self.opener(request, timeout=10) as response:
                 payload = json.loads(response.read())
