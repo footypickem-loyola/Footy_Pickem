@@ -4998,6 +4998,38 @@ def admin_set_correspondent_source_status(source_id: int):
     return redirect(url_for("admin", week=week.number))
 
 
+@app.post("/tasks/live-ingest")
+def live_ingest_snapshot():
+    """Accept a bounded normalized worker snapshot; Flask alone owns the DB."""
+    from live_bridge import MAX_SNAPSHOT_BYTES, LEAGUE_ID, SnapshotError, decode_snapshot
+    from live_sync import ingest
+
+    expected_secret = os.environ.get("LIVE_INGEST_SECRET", "")
+    if not expected_secret.strip():
+        return jsonify(ok=False, error="Live ingest is not configured"), 503
+    supplied_secret = request.headers.get("X-Live-Ingest-Secret", "")
+    if not hmac.compare_digest(supplied_secret.encode('utf-8'), expected_secret.encode('utf-8')):
+        return jsonify(ok=False, error="Forbidden"), 403
+    if not request.is_json:
+        return jsonify(ok=False, error="JSON snapshot required"), 415
+    if request.content_length is not None and request.content_length > MAX_SNAPSHOT_BYTES:
+        return jsonify(ok=False, error="Snapshot too large"), 413
+    body = request.stream.read(MAX_SNAPSHOT_BYTES + 1)
+    if len(body) > MAX_SNAPSHOT_BYTES:
+        return jsonify(ok=False, error="Snapshot too large"), 413
+    try:
+        fixtures = decode_snapshot(body)
+    except SnapshotError:
+        return jsonify(ok=False, error="Invalid normalized live snapshot"), 400
+    try:
+        with SessionLocal() as db, db.begin():
+            stored = ingest(db, sys.modules[__name__], fixtures, league_id=LEAGUE_ID)
+    except Exception:
+        app.logger.error("Live ingest transaction failed; snapshot rolled back")
+        return jsonify(ok=False, error="Live ingest unavailable"), 503
+    return jsonify(ok=True, stored=stored)
+
+
 @app.post("/tasks/sync-results")
 def scheduled_sync_results():
     """Run one score sync from a scheduler without exposing admin credentials."""
