@@ -1168,6 +1168,10 @@ def _backup_legacy_database(target_engine) -> Optional[Path]:
     return _backup_database(target_engine, "pre_seasons")
 
 
+from live_models import register_models
+FixtureProviderLink, LiveFixtureState, MatchEvent = register_models(Base)
+
+
 def ensure_database_schema(target_engine=engine) -> bool:
     """Create the current schema and safely migrate a legacy single-season DB.
 
@@ -4564,6 +4568,8 @@ def load_matchweek_model(db, season, week, include_context=True):
                 Week.number < week.number).order_by(Week.number).all()],
         ) if include_context else None,
     )
+    from live_matchweek import enrich_matchweek
+    enrich_matchweek(model, db, sys.modules[__name__], week)
     primary = model["primary"]
     me = current_player(db)
     if primary and primary["is_yours"] and primary["state"] == "draft":
@@ -6084,6 +6090,15 @@ def _delete_season_weeks(db, season: Season) -> None:
         CorrespondentSource.week_id.in_(week_ids)
     ).delete(synchronize_session=False)
     if fixture_ids:
+        db.query(MatchEvent).filter(MatchEvent.fixture_id.in_(fixture_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(LiveFixtureState).filter(LiveFixtureState.fixture_id.in_(fixture_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(FixtureProviderLink).filter(FixtureProviderLink.fixture_id.in_(fixture_ids)).delete(
+            synchronize_session=False
+        )
         db.query(Result).filter(Result.fixture_id.in_(fixture_ids)).delete(synchronize_session=False)
     if matchup_ids:
         db.query(AutoDraftPreference).filter(

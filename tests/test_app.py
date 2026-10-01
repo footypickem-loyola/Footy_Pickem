@@ -5334,6 +5334,68 @@ class PickemAppTests(AutoDraftCases, unittest.TestCase):
                 season_name="Year 2",
             )
 
+    def test_season_reset_cleans_live_rows_and_preserves_other_seasons(self):
+        db = app_module.SessionLocal()
+        target = db.query(app_module.Season).filter_by(code="year-2").one()
+        target_fixture = db.query(app_module.Fixture).join(app_module.Week).filter(
+            app_module.Week.season_id == target.id
+        ).order_by(app_module.Fixture.id).first()
+
+        other = app_module.Season(code="live-archive", name="Live Archive", is_active=0, is_archived=1)
+        db.add(other)
+        db.flush()
+        other_week = app_module.Week(
+            season_id=other.id, number=1, room_code="ARCHIVE", status="finalized"
+        )
+        db.add(other_week)
+        db.flush()
+        other_fixture = app_module.Fixture(
+            week_id=other_week.id, match_number=1, home="Chelsea", away="Brentford"
+        )
+        db.add(other_fixture)
+        db.flush()
+
+        for fixture, provider_id in ((target_fixture, "target-live"), (other_fixture, "other-live")):
+            db.add(app_module.FixtureProviderLink(
+                fixture_id=fixture.id, provider="sportmonks", external_fixture_id=provider_id
+            ))
+            db.add(app_module.LiveFixtureState(
+                fixture_id=fixture.id, provider="sportmonks", state="live", is_live=True,
+                home_score=1, away_score=0, last_synced_at=datetime.utcnow()
+            ))
+            db.add(app_module.MatchEvent(
+                fixture_id=fixture.id, provider="sportmonks", external_event_id=f"event-{provider_id}",
+                event_type="goal", minute=12, player_name="Synthetic scorer", revisions=[]
+            ))
+        db.commit()
+        target_fixture_id = target_fixture.id
+        other_fixture_id = other_fixture.id
+
+        app_module.init_weeks_from_csv(
+            str(self.csv_path), [1],
+            ["Steve", "Joe", "Marc", "Drew", "Scott", "Connor"],
+            "LOCALTEST", season_code="year-2", season_name="Year 2", allow_reset=True
+        )
+
+        recreated_week = db.query(app_module.Week).filter_by(
+            season_id=target.id, number=1
+        ).one()
+        self.assertIsNone(db.get(app_module.Fixture, target_fixture_id))
+        # Explicitly reuse the deleted ID to model SQLite ID reuse on a later import.
+        recreated = app_module.Fixture(
+            id=target_fixture_id, week_id=recreated_week.id, match_number=99,
+            home="Synthetic Home", away="Synthetic Away"
+        )
+        db.add(recreated)
+        db.flush()
+        self.assertEqual(db.query(app_module.LiveFixtureState).filter_by(fixture_id=recreated.id).count(), 0)
+        self.assertEqual(db.query(app_module.MatchEvent).filter_by(fixture_id=recreated.id).count(), 0)
+        self.assertEqual(db.query(app_module.FixtureProviderLink).filter_by(fixture_id=recreated.id).count(), 0)
+
+        self.assertEqual(db.query(app_module.LiveFixtureState).filter_by(fixture_id=other_fixture_id).count(), 1)
+        self.assertEqual(db.query(app_module.MatchEvent).filter_by(fixture_id=other_fixture_id).count(), 1)
+        self.assertEqual(db.query(app_module.FixtureProviderLink).filter_by(fixture_id=other_fixture_id).count(), 1)
+
     def test_archived_season_rejects_result_changes(self):
         db = app_module.SessionLocal()
         archived = app_module.Season(
