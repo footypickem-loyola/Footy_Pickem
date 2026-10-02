@@ -31,6 +31,7 @@ import bleach
 import markdown
 from markupsafe import Markup
 from v3_matchweek import build_matchweek, build_player_context
+from v3_pick_insight import build_pick_insight
 from auto_draft import DraftService, DraftError
 from v3_fixtures import build_fixtures
 from v3_table_results import build_table_results
@@ -4572,6 +4573,12 @@ def load_matchweek_model(db, season, week, include_context=True):
     enrich_matchweek(model, db, sys.modules[__name__], week)
     primary = model["primary"]
     me = current_player(db)
+    if primary and primary["is_yours"]:
+        setting = db.query(AutoDraftSetting).filter_by(matchup_id=primary["id"], player_id=me.id).first()
+        owned_count = sum(row["is_yours"] for row in primary["history"])
+        primary["recap_mode"] = ("recap" if owned_count >= 5 else
+                                 "bulk" if setting and setting.confirmed_at else
+                                 "recap" if owned_count else None)
     if primary and primary["is_yours"] and primary["state"] == "draft":
         service = DraftService(sys.modules[__name__])
         matchup = db.get(Matchup, primary["id"])
@@ -5929,6 +5936,56 @@ def outcome_options():
     )
 
 # -------------------- Actions --------------------
+@app.get("/pick-insight/<int:matchup_id>")
+def pick_insight(matchup_id):
+    """One authorized, read-only view for manual picks and both recap sources."""
+    db = SessionLocal()
+    me = current_player(db)
+    matchup = db.get(Matchup, matchup_id)
+    if me is None or matchup is None or me.id not in (matchup.player_a_id, matchup.player_b_id):
+        abort(403)
+    week = db.get(Week, matchup.week_id)
+    mode = request.args.get("mode", "recap")
+    if mode not in ("manual", "bulk", "recap"):
+        abort(400)
+    owned = db.query(Pick).filter_by(matchup_id=matchup.id, player_id=me.id).order_by(Pick.created_at, Pick.id).all()
+    selection_status = None
+    if mode == "bulk":
+        setting = db.query(AutoDraftSetting).filter_by(matchup_id=matchup.id, player_id=me.id).first()
+        if not setting or not setting.confirmed_at:
+            abort(404)
+        selections = DraftService(sys.modules[__name__]).preferences(db, matchup.id, me.id)
+    elif mode == "manual":
+        selections = [pick for pick in owned if pick.id == request.args.get("pick_id", type=int)]
+    else:
+        selections = owned
+    index = request.args.get("index", 0, type=int)
+    if index is None or not 0 <= index < len(selections):
+        abort(404)
+    selection = selections[index]
+    fixture = db.get(Fixture, selection.fixture_id)
+    if not fixture or fixture.week_id != week.id or selection.team not in (fixture.home, fixture.away):
+        abort(404)
+    if mode == "bulk":
+        picked = db.query(Pick).filter_by(matchup_id=matchup.id, fixture_id=fixture.id).first()
+        selection_status = ("Confirmed priority · Awaiting your turn" if picked is None else
+                            "Drafted by you" if picked.player_id == me.id and picked.team == selection.team else
+                            "Skipped · You drafted the other team" if picked.player_id == me.id else
+                            "Skipped · Opponent owns this fixture")
+    rows = db.query(Fixture, Result, Week.number).join(Result, Result.fixture_id == Fixture.id).join(
+        Week, Fixture.week_id == Week.id).filter(Week.season_id == week.season_id).all()
+    insight = build_pick_insight(fixture=fixture, team=selection.team, week_number=week.number,
+                                results=rows, now=utcnow())
+    def page_url(position):
+        return url_for("pick_insight", matchup_id=matchup.id, mode=mode, index=position)
+    response = make_response(render_template("v3/components/pick_insight.html", insight=insight,
+        mode=mode, selection_status=selection_status, position=index + 1, total=len(selections),
+        previous_url=page_url(index - 1) if index else None,
+        next_url=page_url(index + 1) if index + 1 < len(selections) else None))
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
 @app.post("/pick")
 def make_pick():
     db = SessionLocal()
@@ -5963,14 +6020,17 @@ def make_pick():
     if request.headers.get("HX-Request") != "true":
         return redirect(url_for("tab_current", force_week=wk.number, season=season.code), code=303)
 
-    # Re-render the matchups panel after pick. Arsenal gets a one-time client
-    # event in this successful POST response, so refreshes never replay it.
+    # Only a successfully committed manual POST opens insight, after the draft
+    # panel swaps. Auto-Draft picks and GET refreshes never emit this event.
     if request.form.get("presentation") == "v3":
         response = make_response(render_template("v3/pages/matchweek.html",
             mw=load_matchweek_model(db, season, wk), auto_summary=summary))
+        picked = db.query(Pick).filter_by(matchup_id=matchup_id, player_id=player_id, fixture_id=fx_id).one()
+        response.headers["HX-Trigger-After-Swap"] = json.dumps({"pickInsight": {
+            "url": url_for("pick_insight", matchup_id=matchup_id, mode="manual", pick_id=picked.id)}})
     else:
         response = make_response(matchups_partial(wk.number))
-    if team_name.casefold() in ARSENAL_TEAM_ALIASES:
+    if request.form.get("presentation") != "v3" and team_name.casefold() in ARSENAL_TEAM_ALIASES:
         response.headers["HX-Trigger"] = json.dumps({"arsenalBanter": {}})
     return response
 

@@ -16,6 +16,9 @@
     {% if mw and mw.primary %}<img class="mw-league-mark" src="{{ url_for('static', filename='v3/premier-league.svg') }}" alt="Premier League" width="116" height="48">{% endif %}
     {% if mw %}
     <div class="mw-page-actions">
+      {% if mw.primary and mw.primary.is_yours and mw.primary.recap_mode %}
+        <button class="btn" type="button" data-insight-open="{{ url_for('pick_insight', matchup_id=mw.primary.id, mode=mw.primary.recap_mode) }}">{{ 'View Pick Recap' if mw.primary.recap_mode == 'bulk' else 'Pick Recap' }}</button>
+      {% endif %}
       <a href="{{ url_for('tab_stats', season=mw.season_code) }}" hx-get="{{ url_for('tab_stats', season=mw.season_code) }}" hx-target="#main" hx-push-url="true">View all stats</a>
       <button id="matchweek-refresh" class="btn" type="button" hx-get="{{ url_for('matchweek_partial', week_number=mw.week, season=mw.season_code) }}" hx-target="#matchweek-view" hx-swap="outerHTML">Refresh matchweek</button>
     </div>
