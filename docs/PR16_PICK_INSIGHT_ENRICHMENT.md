@@ -145,7 +145,9 @@ League `8`, season `28083`, `2026/2027`, goal-topscorer type `208`:
 - `GET https://api.sportmonks.com/v3/football/topscorers/seasons/28083?include=player;participant;type&filters=seasonTopscorerTypes:208`
 
 Both requests add `page=N&per_page=50`, validate `pagination.current_page` and
-boolean `has_more`, and continue until `has_more=false`. Missing pagination,
+boolean `has_more`, and continue until `has_more=false`. An absent `pagination`
+key indicates a complete response (as observed for the 20-team endpoint).
+When pagination is present, malformed pagination,
 repeated/non-progressing pages, empty intermediate pages, oversized responses,
 or the 100-page bound fail closed. Page URLs are constructed locally; supplied
 `next_page` URLs are never followed. Authentication is the raw token in the

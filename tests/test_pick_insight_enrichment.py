@@ -39,8 +39,11 @@ class ProviderTests(unittest.TestCase):
         return dict(data=rows, pagination=dict(current_page=number, has_more=more))
 
     def test_pagination_includes_filter_and_raw_auth_on_every_page(self):
-        client = self.client([self.page([scorer()], more=True), self.page([scorer(player=101)], 2)])
-        self.assertEqual(len(client.scorers()), 2)
+        first_page = [scorer(player=player) for player in range(100, 150)]
+        last_page = [scorer(player=150)]
+        client = self.client([self.page(first_page, more=True), self.page(last_page, 2)])
+        self.assertEqual(client.scorers(), first_page + last_page)
+        self.assertEqual(len(self.requests), 2)
         for n, request in enumerate(self.requests, 1):
             url = urlsplit(request.full_url)
             self.assertEqual(url.path, '/v3/football/topscorers/seasons/28083')
@@ -54,10 +57,47 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(client.participants(), PARTICIPANTS)
         self.assertIn('/teams/seasons/28083?', self.requests[0].full_url)
 
-    def test_missing_malformed_looping_and_empty_incomplete_pages_fail_closed(self):
-        for payloads in ([dict(data=[])], [self.page([], more=True)],
+    def test_non_paginated_teams_are_complete_without_second_request(self):
+        client = self.client([dict(data=PARTICIPANTS)])
+        self.assertEqual(client.participants(), PARTICIPANTS)
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(urlsplit(self.requests[0].full_url).path, '/v3/football/teams/seasons/28083')
+
+    def test_absent_pagination_returns_accumulated_rows(self):
+        client = self.client([self.page(PARTICIPANTS[:10], more=True), dict(data=PARTICIPANTS[10:])])
+        self.assertEqual(client.participants(), PARTICIPANTS)
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(self.client([dict(data=[])]).participants(), [])
+        self.assertEqual(len(self.requests), 1)
+
+    def test_malformed_data_fails_with_or_without_pagination(self):
+        for data in (None, {}, 'teams', [None], [1], [dict(id=19), 'invalid']):
+            for payload in (dict(data=data), self.page(data)):
+                with self.subTest(payload=payload), self.assertRaises(SeasonSyncError):
+                    self.client([payload]).participants()
+        with self.assertRaises(SeasonSyncError):
+            self.client([{}]).participants()
+
+    def test_present_malformed_pagination_fails_closed(self):
+        for pagination in (None, [], 'invalid', {},
+                           dict(has_more=1, current_page=1),
+                           dict(has_more=False, current_page=True),
+                           dict(has_more=False, current_page='1'),
+                           dict(has_more=False, current_page=2)):
+            with self.subTest(pagination=pagination), self.assertRaises(SeasonSyncError):
+                self.client([dict(data=PARTICIPANTS, pagination=pagination)]).participants()
+
+    def test_pagination_still_stops_at_100_page_limit(self):
+        client = self.client([self.page([dict(id=i)], i, more=True) for i in range(1, 101)])
+        with self.assertRaisesRegex(SeasonSyncError, 'pagination limit exceeded'):
+            client.participants()
+        self.assertEqual(len(self.requests), 100)
+
+    def test_malformed_looping_and_empty_incomplete_pages_fail_closed(self):
+        for payloads in ([self.page([], more=True)],
                          [self.page([], number=2)], [dict(data=[], pagination={'has_more': 'false'})],
                          [self.page([scorer()], more=True), self.page([scorer()], 2)],
+                         [self.page([scorer()], more=True), dict(data=[scorer()])],
                          [self.page([scorer()], more=True), self.page([], 1)]):
             with self.subTest(payloads=payloads), self.assertRaises(SeasonSyncError):
                 self.client(payloads).scorers()
