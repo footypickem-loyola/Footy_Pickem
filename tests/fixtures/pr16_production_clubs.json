@@ -1,0 +1,28 @@
+{
+  "verified_at_utc": "2026-10-02T14:36:24.626183+00:00",
+  "season_code": "year-2",
+  "active_season_label": "2026\u201327",
+  "fixture_count": 380,
+  "clubs": [
+    "Arsenal",
+    "Aston Villa",
+    "Bournemouth",
+    "Brentford",
+    "Brighton Hove",
+    "Chelsea",
+    "Coventry City",
+    "Crystal Palace",
+    "Everton",
+    "Fulham",
+    "Hull City",
+    "Ipswich Town",
+    "Leeds United",
+    "Liverpool",
+    "Man City",
+    "Man United",
+    "Newcastle",
+    "Nottingham",
+    "Sunderland",
+    "Tottenham"
+  ]
+}

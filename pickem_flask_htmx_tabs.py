@@ -1171,6 +1171,8 @@ def _backup_legacy_database(target_engine) -> Optional[Path]:
 
 from live_models import register_models
 FixtureProviderLink, LiveFixtureState, MatchEvent = register_models(Base)
+from pick_insight_enrichment import register_models as register_insight_models, cached_enrichment
+ClubSeasonEnrichment = register_insight_models(Base)
 
 
 def ensure_database_schema(target_engine=engine) -> bool:
@@ -5974,8 +5976,10 @@ def pick_insight(matchup_id):
                             "Skipped · Opponent owns this fixture")
     rows = db.query(Fixture, Result, Week.number).join(Result, Result.fixture_id == Fixture.id).join(
         Week, Fixture.week_id == Week.id).filter(Week.season_id == week.season_id).all()
+    now = utcnow()
+    enrichment = cached_enrichment(db, sys.modules[__name__], db.get(Season, week.season_id), selection.team, now)
     insight = build_pick_insight(fixture=fixture, team=selection.team, week_number=week.number,
-                                results=rows, now=utcnow())
+                                results=rows, now=now, **enrichment)
     def page_url(position):
         return url_for("pick_insight", matchup_id=matchup.id, mode=mode, index=position)
     response = make_response(render_template("v3/components/pick_insight.html", insight=insight,

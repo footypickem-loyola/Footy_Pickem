@@ -1,11 +1,41 @@
 """HTTP regressions mixed into the app's existing isolated database harness."""
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 
 class PickInsightCases:
+    def test_insight_cached_enrichment_no_provider_and_stale_fallback(self):
+        from pick_insight_enrichment import verified_mapping
+        self.auto_context()
+        self.service.command(self.mid, self.a, manual=self.fx[0][:2])
+        team = self.fx[0][1]
+        mapping = verified_mapping()
+        team_id = next(key for key, name in mapping.items() if name == team)
+        season = self.db.get(self.d.Week, self.week_id).season
+        season.api_competition_code, season.api_season_year = 'PL', 2026
+        now = self.d.utcnow()
+        row = self.d.ClubSeasonEnrichment(season_id=season.id, sportmonks_team_id=team_id,
+            sportmonks_season_id=28083, league_id=8, footy_club=team,
+            crest_url=f'https://cdn.sportmonks.com/images/soccer/teams/0/{team_id}.png',
+            top_scorers=[dict(player_id=1, name='Cached Player')], goals=7, synced_at=now)
+        self.db.add(row)
+        self.db.commit()
+        with self.insight_client() as client, patch('sportmonks_season.SeasonClient.pages', side_effect=AssertionError('No season provider calls')), patch.object(self.d, 'football_data_client', side_effect=AssertionError('No provider calls')), patch('sportmonks_live.SportmonksClient.livescores', side_effect=AssertionError('No live calls')):
+            response = client.get(f'/pick-insight/{self.mid}')
+            self.assertEqual(response.status_code, 200)
+            body = response.get_data(as_text=True)
+            self.assertIn('Cached Player · 7 goals', body)
+            self.assertIn('class="insight-crest"', body)
+            row.synced_at = now - timedelta(hours=25)
+            self.db.merge(row)  # Request teardown detaches the earlier fixture object.
+            self.db.commit()
+            stale = client.get(f'/pick-insight/{self.mid}').get_data(as_text=True)
+            self.assertNotIn('Cached Player', stale)
+            self.assertNotIn('class="insight-crest"', stale)
+            self.assertIn('<dt>Top Scorer</dt><dd>—</dd>', stale)
+
     def test_insight_single_cta_switches_when_player_owns_five_before_draft_finishes(self):
         self.auto_context()
         self.bulk_edit(self.a)

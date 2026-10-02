@@ -1,0 +1,113 @@
+{
+  "league_id": 8,
+  "season_id": 28083,
+  "season": "2026/2027",
+  "footy_season_code": "year-2",
+  "production_verified_at_utc": "2026-10-02T14:36:24.626183+00:00",
+  "production_fixture_count": 380,
+  "production_source": "https://footypickem-production.up.railway.app/partials/fixtures/{week}?season=year-2",
+  "participant_source": "sportmonks-season-28083-sanitized.json",
+  "participant_source_sha256": "2fdd34a396b414822dc6c4c9363d0700e4f94c9aa86f0c576dde99b7747be620",
+  "teams": [
+    {
+      "sportmonks_team_id": 3,
+      "sportmonks_name": "Sunderland",
+      "footy_club": "Sunderland"
+    },
+    {
+      "sportmonks_team_id": 6,
+      "sportmonks_name": "Tottenham Hotspur",
+      "footy_club": "Tottenham"
+    },
+    {
+      "sportmonks_team_id": 8,
+      "sportmonks_name": "Liverpool",
+      "footy_club": "Liverpool"
+    },
+    {
+      "sportmonks_team_id": 9,
+      "sportmonks_name": "Manchester City",
+      "footy_club": "Man City"
+    },
+    {
+      "sportmonks_team_id": 11,
+      "sportmonks_name": "Fulham",
+      "footy_club": "Fulham"
+    },
+    {
+      "sportmonks_team_id": 13,
+      "sportmonks_name": "Everton",
+      "footy_club": "Everton"
+    },
+    {
+      "sportmonks_team_id": 14,
+      "sportmonks_name": "Manchester United",
+      "footy_club": "Man United"
+    },
+    {
+      "sportmonks_team_id": 15,
+      "sportmonks_name": "Aston Villa",
+      "footy_club": "Aston Villa"
+    },
+    {
+      "sportmonks_team_id": 18,
+      "sportmonks_name": "Chelsea",
+      "footy_club": "Chelsea"
+    },
+    {
+      "sportmonks_team_id": 19,
+      "sportmonks_name": "Arsenal",
+      "footy_club": "Arsenal"
+    },
+    {
+      "sportmonks_team_id": 20,
+      "sportmonks_name": "Newcastle United",
+      "footy_club": "Newcastle"
+    },
+    {
+      "sportmonks_team_id": 22,
+      "sportmonks_name": "Hull City",
+      "footy_club": "Hull City"
+    },
+    {
+      "sportmonks_team_id": 51,
+      "sportmonks_name": "Crystal Palace",
+      "footy_club": "Crystal Palace"
+    },
+    {
+      "sportmonks_team_id": 52,
+      "sportmonks_name": "AFC Bournemouth",
+      "footy_club": "Bournemouth"
+    },
+    {
+      "sportmonks_team_id": 63,
+      "sportmonks_name": "Nottingham Forest",
+      "footy_club": "Nottingham"
+    },
+    {
+      "sportmonks_team_id": 71,
+      "sportmonks_name": "Leeds United",
+      "footy_club": "Leeds United"
+    },
+    {
+      "sportmonks_team_id": 78,
+      "sportmonks_name": "Brighton & Hove Albion",
+      "footy_club": "Brighton Hove"
+    },
+    {
+      "sportmonks_team_id": 116,
+      "sportmonks_name": "Ipswich Town",
+      "footy_club": "Ipswich Town"
+    },
+    {
+      "sportmonks_team_id": 117,
+      "sportmonks_name": "Coventry City",
+      "footy_club": "Coventry City"
+    },
+    {
+      "sportmonks_team_id": 236,
+      "sportmonks_name": "Brentford",
+      "footy_club": "Brentford"
+    }
+  ]
+}

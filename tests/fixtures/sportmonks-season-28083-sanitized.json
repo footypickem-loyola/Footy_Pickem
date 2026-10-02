@@ -1,0 +1,125 @@
+{
+  "season_id": 28083,
+  "league_id": 8,
+  "teams": [
+    {
+      "id": 78,
+      "name": "Brighton & Hove Albion",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/14/78.png"
+    },
+    {
+      "id": 11,
+      "name": "Fulham",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/11/11.png"
+    },
+    {
+      "id": 8,
+      "name": "Liverpool",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/8/8.png"
+    },
+    {
+      "id": 19,
+      "name": "Arsenal",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/19/19.png"
+    },
+    {
+      "id": 116,
+      "name": "Ipswich Town",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/20/116.png"
+    },
+    {
+      "id": 117,
+      "name": "Coventry City",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/21/117.png"
+    },
+    {
+      "id": 71,
+      "name": "Leeds United",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/7/71.png"
+    },
+    {
+      "id": 51,
+      "name": "Crystal Palace",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/19/51.png"
+    },
+    {
+      "id": 14,
+      "name": "Manchester United",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/14/14.png"
+    },
+    {
+      "id": 236,
+      "name": "Brentford",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/12/236.png"
+    },
+    {
+      "id": 3,
+      "name": "Sunderland",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/3/3.png"
+    },
+    {
+      "id": 52,
+      "name": "AFC Bournemouth",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/20/52.png"
+    },
+    {
+      "id": 22,
+      "name": "Hull City",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/22/22.png"
+    },
+    {
+      "id": 20,
+      "name": "Newcastle United",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/20/20.png"
+    },
+    {
+      "id": 63,
+      "name": "Nottingham Forest",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/31/63.png"
+    },
+    {
+      "id": 13,
+      "name": "Everton",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/13/13.png"
+    },
+    {
+      "id": 9,
+      "name": "Manchester City",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/9/9.png"
+    },
+    {
+      "id": 18,
+      "name": "Chelsea",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/18/18.png"
+    },
+    {
+      "id": 15,
+      "name": "Aston Villa",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/15/15.png"
+    },
+    {
+      "id": 6,
+      "name": "Tottenham Hotspur",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/6/6.png"
+    }
+  ],
+  "goal_topscorer_example": {
+    "id": 373333670,
+    "season_id": 28083,
+    "type_id": 208,
+    "player_id": 154421,
+    "participant_id": 9,
+    "total": 5,
+    "participant": {
+      "id": 9,
+      "name": "Manchester City",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/teams/9/9.png"
+    },
+    "player": {
+      "id": 154421,
+      "name": "Erling Håland",
+      "display_name": "Erling Haaland",
+      "image_path": "https://cdn.sportmonks.com/images/soccer/players/21/154421.png"
+    }
+  }
+}
