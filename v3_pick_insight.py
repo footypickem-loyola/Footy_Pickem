@@ -12,7 +12,7 @@ def _utc(value):
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
-def build_pick_insight(*, fixture, team, week_number, results, now, crest=None):
+def build_pick_insight(*, fixture, team, week_number, results, now, crest=None, top_scorer=None):
     """results contains (Fixture, Result, week number) from ONE selected season.
 
     Use results before this fixture's kickoff (or earlier weeks when kickoff is
@@ -58,5 +58,5 @@ def build_pick_insight(*, fixture, team, week_number, results, now, crest=None):
                     dict(label='Goals / Game', value=averages[0]),
                     dict(label='Goals Against / Game', value=averages[1]),
                     # Live MatchEvent snapshots are not a complete PL season ledger.
-                    dict(label='Top Scorer', value='—'),
+                    dict(label='Top Scorer', value=top_scorer or '—'),
                 ])

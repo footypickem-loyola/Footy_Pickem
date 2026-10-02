@@ -21,6 +21,7 @@ import pickem_flask_htmx_tabs as app_module  # noqa: E402
 from flask import template_rendered
 from auto_draft_cases import AutoDraftCases
 from pick_insight_cases import PickInsightCases
+from pick_insight_task_cases import PickInsightTaskCases
 from scripts.copy_week1_correspondent_sources import (  # noqa: E402
     MaintenanceSafetyError,
     WINDOW_END,
@@ -168,7 +169,7 @@ def complete_api_schedule():
     return matches
 
 
-class PickemAppTests(AutoDraftCases, PickInsightCases, unittest.TestCase):
+class PickemAppTests(AutoDraftCases, PickInsightCases, PickInsightTaskCases, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.csv_path = Path(__file__).resolve().parents[1] / "epl_2025.csv"

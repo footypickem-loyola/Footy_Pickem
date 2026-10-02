@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -51,11 +51,19 @@ def main():
                 for i, fixture in enumerate(fixtures):
                     db.add(d.AutoDraftPreference(matchup_id=matchup.id, player_id=steve.id,
                         fixture_id=fixture.id, team=fixture.home, priority=i))
-            if scenario in (1, 3, 4):
+            if scenario in (1, 3, 4, 5, 6):
                 for i in range(10 if scenario == 3 else 9 if scenario == 4 else 1):
                     first, second = (steve.id, other) if scenario == 4 else (other, steve.id)
                     db.add(d.Pick(matchup_id=matchup.id, player_id=d.draft_turn_at(first, second, i),
                                   fixture_id=fixtures[i].id, team=fixtures[i].home))
+            if scenario in (5, 6):
+                season.api_competition_code, season.api_season_year = 'PL', 2026
+                db.add(d.ClubSeasonEnrichment(season_id=season.id, sportmonks_team_id=19,
+                    sportmonks_season_id=28083, league_id=8, footy_club='Arsenal',
+                    crest_url='https://cdn.sportmonks.com/images/soccer/teams/19/19.png',
+                    top_scorers=[dict(player_id=1, name='First Synthetic Scorer'),
+                                 dict(player_id=2, name='Second Synthetic Scorer')], goals=5,
+                    synced_at=d.utcnow() - timedelta(days=36 if scenario == 6 else 0)))
             db.commit()
             session['player_name'] = 'Steve'
             return {'matchup_id': matchup.id}
