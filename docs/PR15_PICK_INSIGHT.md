@@ -11,6 +11,10 @@ recap follows the player's locked priority order and identifies queued,
 drafted, and opponent-owned/skipped fixtures. Confirmed priorities are not
 misrepresented as fixture ownership. Pick Recap, including from Matchup Set,
 shows only the signed-in player's actual persisted picks in draft order.
+There is one contextual recap CTA in the Matchweek header. Confirmed bulk
+priorities take precedence while the player owns fewer than five fixtures;
+once they own five, it opens the owned-picks recap, even if the opponent still
+has a turn remaining. No second recap CTA is rendered in the bulk dialog.
 The read-only endpoint also works in live, final, and archived states.
 
 ## Existing implementation inspected
@@ -60,7 +64,8 @@ known timestamps. The selected fixture is always excluded. Postponed matches
 with known dates follow actual kickoff order rather than matchweek number.
 This is a read-time pre-fixture view, not an immutable pick-time snapshot;
 later official corrections can change its values. Missing imported history
-is not inferred: the footer identifies the count of recorded results used.
+is not inferred. Coverage and missing-score handling are documented here;
+the player-facing source note is simply “Based on Premier League results this season”.
 
 Official results are the sole authority. No live score, event, projection,
 or provider status overrides them. There are no provider requests on the
@@ -77,8 +82,9 @@ supports Escape; content scrolls while the header/footer remain accessible.
 The primary reference's centered heading, venue/opponent above the pitch,
 selected-club hero, pitch outline, and six pastel horizontal bands are retained.
 No shot/goal dots or Opta assets are used. Short/mobile viewports scroll rather
-than shrinking text beyond legibility. A compact source note explains sample
-coverage and unavailable metrics.
+than shrinking text beyond legibility. A compact source note reads
+“Based on Premier League results this season”. Unavailable metrics display
+`—` without diagnostic copy.
 
 Crests are not persisted in the existing models or available as local club
 assets, so the current implementation uses the approved club-name fallback.
@@ -94,7 +100,7 @@ xG, odds, recommendations, or other analytics were introduced.
 - `v3_pick_insight.py`: server-side metrics and shared view model.
 - `templates/v3/components/pick_insight.html`: shared insight content.
 - `templates/v3/base.html`: persistent dialog and asset references.
-- `templates/v3/components/bulk_picks.html`: confirmed-list recap link.
+- `templates/v3/components/bulk_picks.html`: confirmed-list dialog; recap is in the Matchweek header.
 - `templates/v3/pages/matchweek.html`: recap entry points.
 - `static/v3/pick_insight.css` and `.js`: pitch design and modal interaction.
 - `tests/test_v3_pick_insight.py`, `tests/pick_insight_cases.py`,
@@ -104,6 +110,11 @@ xG, odds, recommendations, or other analytics were introduced.
 - `docs/PR15_PICK_INSIGHT.md`: data provenance, limitations, and validation.
 
 ## Validation
+
+Narrow CTA/copy follow-up: 14 focused Python insight tests and 7 Bulk Picks
+Node tests passed. The PR15 browser harness passed all 12 layout checks again,
+including assertions for exactly one recap CTA, routing to owned picks with
+five selections before the opponent's final turn, and the simplified source note.
 
 - `python -W ignore::DeprecationWarning -m unittest discover -s tests`:
   **225 tests passed**.

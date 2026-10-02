@@ -1,10 +1,35 @@
 """HTTP regressions mixed into the app's existing isolated database harness."""
 import json
+import re
 from datetime import datetime
 from unittest.mock import patch
 
 
 class PickInsightCases:
+    def test_insight_single_cta_switches_when_player_owns_five_before_draft_finishes(self):
+        self.auto_context()
+        self.bulk_edit(self.a)
+        self.auto_edit(self.a, 'toggle', enabled='0')
+        with self.insight_client() as client:
+            def assert_cta(mode):
+                body = client.get('/partials/matchweek/1').get_data(as_text=True)
+                links = re.findall(r'data-insight-open="([^"]+)"', body)
+                self.assertEqual(len(links), 1)
+                self.assertIn('mode=' + mode, links[0])
+                return client.get(links[0].replace('&amp;', '&')).get_data(as_text=True)
+            self.assertIn('1 of 10', assert_cta('bulk'))
+            for index in range(1, 9):
+                self.service.command(self.mid, self.d.draft_turn_at(self.a, self.b, index), manual=self.fx[index][:2])
+            self.assertEqual(len(self.auto_picks()), 9)
+            self.assertIn('1 of 5', assert_cta('recap'))
+            self.service.command(self.mid, self.b, manual=self.fx[9][:2])
+            body = assert_cta('recap')
+            self.assertIn('Based on Premier League results this season', body)
+            self.assertNotIn('Goal averages require', body)
+            self.assertNotIn('Top scorer unavailable', body)
+            self.assertNotIn('recorded results', body)
+            self.assertIn('<dd>—</dd>', body)
+
     def insight_client(self, player=None):
         client = self.d.app.test_client()
         with client.session_transaction() as session:

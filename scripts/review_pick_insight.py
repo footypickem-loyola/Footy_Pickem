@@ -31,6 +31,8 @@ def main():
                 (d.Matchup.player_a_id == steve.id) | (d.Matchup.player_b_id == steve.id)).one()
             other = matchup.player_b_id if matchup.player_a_id == steve.id else matchup.player_a_id
             matchup.first_picker_id = other
+            if scenario == 4:
+                matchup.first_picker_id = steve.id
             fixtures = db.query(d.Fixture).filter_by(week_id=week.id).order_by(d.Fixture.match_number).all()
             fixtures[1].home, fixtures[1].away = 'Arsenal', 'Leeds United'
             for fixture in fixtures:
@@ -43,9 +45,16 @@ def main():
                 home_score, away_score = [(3, 1), (1, 2), (2, 2), (0, 1), (1, 0), (3, 1), (2, 0)][i]
                 db.add(d.Result(fixture_id=fixture.id, outcome='Home' if home_score > away_score else 'Away' if away_score > home_score else 'Draw',
                                 home_score=home_score, away_score=away_score, source='manual'))
-            if scenario in (1, 3):
-                for i in range(10 if scenario == 3 else 1):
-                    db.add(d.Pick(matchup_id=matchup.id, player_id=d.draft_turn_at(other, steve.id, i),
+            if scenario in (3, 4):
+                db.add(d.AutoDraftSetting(matchup_id=matchup.id, player_id=steve.id,
+                                         enabled=0, confirmed_at=datetime(2026, 9, 30)))
+                for i, fixture in enumerate(fixtures):
+                    db.add(d.AutoDraftPreference(matchup_id=matchup.id, player_id=steve.id,
+                        fixture_id=fixture.id, team=fixture.home, priority=i))
+            if scenario in (1, 3, 4):
+                for i in range(10 if scenario == 3 else 9 if scenario == 4 else 1):
+                    first, second = (steve.id, other) if scenario == 4 else (other, steve.id)
+                    db.add(d.Pick(matchup_id=matchup.id, player_id=d.draft_turn_at(first, second, i),
                                   fixture_id=fixtures[i].id, team=fixtures[i].home))
             db.commit()
             session['player_name'] = 'Steve'

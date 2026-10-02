@@ -4575,8 +4575,10 @@ def load_matchweek_model(db, season, week, include_context=True):
     me = current_player(db)
     if primary and primary["is_yours"]:
         setting = db.query(AutoDraftSetting).filter_by(matchup_id=primary["id"], player_id=me.id).first()
-        primary["bulk_recap_available"] = bool(setting and setting.confirmed_at)
-        primary["pick_recap_available"] = any(row["is_yours"] for row in primary["history"])
+        owned_count = sum(row["is_yours"] for row in primary["history"])
+        primary["recap_mode"] = ("recap" if owned_count >= 5 else
+                                 "bulk" if setting and setting.confirmed_at else
+                                 "recap" if owned_count else None)
     if primary and primary["is_yours"] and primary["state"] == "draft":
         service = DraftService(sys.modules[__name__])
         matchup = db.get(Matchup, primary["id"])

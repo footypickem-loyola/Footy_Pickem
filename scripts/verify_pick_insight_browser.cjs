@@ -30,6 +30,7 @@ const path = require('node:path');
     const rect = await dialog.boundingBox();
     assert.ok(rect.y >= 0 && rect.y + rect.height <= page.viewportSize().height + 1, label);
     assert.equal(await dialog.locator('.insight-band').count(), 6);
+    assert.equal(await dialog.locator('.insight-source').innerText(), 'Based on Premier League results this season');
     const pitch = await dialog.locator('.insight-pitch').innerText();
     assert.ok(!pitch.includes('Leeds United'));
     const content = dialog.locator('.insight-content');
@@ -76,6 +77,8 @@ const path = require('node:path');
     await bulk.getByRole('button', {name:'Submit Bulk Picks',exact:true}).click();
     await bulk.getByRole('button', {name:'Confirm Bulk Picks',exact:true}).click();
     await page.getByRole('button', {name:'View Pick Recap',exact:true}).first().waitFor();
+    assert.equal(await page.locator('[data-insight-open]').count(), 1);
+    assert.match(await page.locator('[data-insight-open]').getAttribute('data-insight-open'), /mode=bulk/);
     assert.equal(await dialog.isVisible(), false);
     await page.getByRole('button', {name:'View Pick Recap',exact:true}).first().click();
     await dialog.waitFor({state:'visible'});
@@ -91,6 +94,8 @@ const path = require('node:path');
 
     await setup(3);
     assert.match(await page.locator('#matchweek-view').innerText(), /Matchup set/);
+    assert.equal(await page.locator('[data-insight-open]').count(), 1);
+    assert.match(await page.locator('[data-insight-open]').getAttribute('data-insight-open'), /mode=recap/);
     await page.getByRole('button', {name:'Pick Recap',exact:true}).click();
     await dialog.waitFor({state:'visible'});
     assert.match(await dialog.innerText(), /1 of 5/);
@@ -98,6 +103,15 @@ const path = require('node:path');
     await page.screenshot({path:path.join(out, `completed-${width}.png`)});
     await page.keyboard.press('Escape');
   }
+  // Five owned picks switch the CTA even while the opponent's last turn remains.
+  await setup(4);
+  assert.match(await page.locator('#matchweek-view').innerText(), /Pick 10 of 10/);
+  assert.equal(await page.locator('[data-insight-open]').count(), 1);
+  assert.match(await page.locator('[data-insight-open]').getAttribute('data-insight-open'), /mode=recap/);
+  await page.getByRole('button', {name:'Pick Recap',exact:true}).click();
+  await dialog.waitFor({state:'visible'});
+  assert.match(await dialog.innerText(), /1 of 5/);
+  await page.keyboard.press('Escape');
   // A failed insight GET cannot turn a successful pick into a second submission.
   await page.route('**/pick-insight/**', route => route.fulfill({status:503,body:'Unavailable'}));
   await page.getByRole('button', {name:'Pick Recap',exact:true}).click();
