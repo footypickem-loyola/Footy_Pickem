@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Call the protected score-sync endpoint once and exit."""
+"""Sync scores, then optionally dispatch pending enrichment to Flask."""
 
 import json
 import os
@@ -62,6 +62,21 @@ def trigger_score_sync(
     return payload
 
 
+def dispatch_pick_insight(endpoint_url, sync_secret, timeout_seconds, opener=urlopen):
+    """Reuse the authenticated Flask transport; never contact a provider here."""
+    payload = trigger_score_sync(endpoint_url, sync_secret, timeout_seconds, opener)
+    if (not isinstance(payload, dict) or payload.get('status') not in
+            ('no_work', 'already_completed', 'completed')):
+        raise RuntimeError('Invalid Pick Insight task summary')
+    summary = {'status': payload['status']}
+    for field in ('clubs', 'clubs_with_scorers'):
+        value = payload.get(field)
+        if type(value) is not int or value < 0:
+            raise RuntimeError('Invalid Pick Insight task summary')
+        summary[field] = value
+    return summary
+
+
 def main() -> int:
     endpoint_url = os.environ.get("SYNC_URL", "")
     sync_secret = os.environ.get("SYNC_SECRET", "")
@@ -85,6 +100,16 @@ def main() -> int:
         f"{summary.get('results_imported', 0)} imported; "
         f"{summary.get('pending_matches', 0)} pending."
     )
+    insight_url = os.environ.get('PICK_INSIGHT_SYNC_URL', '').strip()
+    if insight_url:
+        try:
+            enrichment = dispatch_pick_insight(insight_url, sync_secret, timeout_seconds)
+            print('Pick Insight task: ' + json.dumps(enrichment, sort_keys=True))
+        except Exception:
+            # Score sync and finalization already succeeded. Do not print
+            # transport exception text, response bodies, endpoint URLs or secrets.
+            print('Pick Insight refresh dispatch failed; score sync succeeded. '
+                  'Pending work can be retried on the next run.', file=sys.stderr)
     return 0
 
 

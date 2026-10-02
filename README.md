@@ -253,6 +253,16 @@ SYNC_URL: https://YOUR-APP.up.railway.app/tasks/sync-results
 SYNC_SECRET: the same secret configured on the web service
 ```
 
+Optional after PR16 deployment: set `PICK_INSIGHT_SYNC_URL` to the explicit Flask
+URL ending in `/tasks/sync-pick-insight`. After each successful score sync, the
+same caller sends an empty authenticated POST using `SYNC_SECRET` and the
+existing timeout. Unset/blank keeps score-only behavior. `no_work` and
+`already_completed` are successful no-ops; enrichment failures are reported
+without changing the successful score-sync exit code. The Flask service alone
+contacts Sportmonks for pending finalized-matchweek tasks. Checking every five
+minutes does not mean polling Sportmonks every five minutes. No Railway settings
+are changed by this code; wire the URL separately after merge/deployment.
+
 Railway evaluates cron expressions in UTC; this cadence runs all day and is
 independent of Eastern daylight-saving changes. `SYNC_SCHEDULE_TIMEZONE` is
 no longer used. The caller prints its result and

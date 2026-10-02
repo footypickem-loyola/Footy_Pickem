@@ -117,11 +117,19 @@ retry. A killed process is recoverable after its lease expires. Provider reads
 may repeat after a crash/failure, but there is one successful completion per
 week. Finalization has already committed and never depends on Sportmonks.
 
-Operational wiring is deliberately not activated: a trusted post-finalization
-task dispatcher should POST this endpoint after the finalization transaction
-commits, with manual/admin retry if dispatch or refresh fails. The durable task
-survives a missed dispatch. This PR implements enqueue + authenticated consumer,
-not a scheduled caller. Browser/page requests never consume tasks. No Railway
+The existing stateless `trigger_score_sync.py` now supports dispatch through
+explicit optional `PICK_INSIGHT_SYNC_URL`. When unset/blank, existing score-only
+behavior is unchanged. After `/tasks/sync-results` succeeds, it POSTs the
+configured Flask enrichment endpoint using the same `SYNC_SECRET` and timeout.
+Score-sync failure skips dispatch. `completed`, `no_work`, and
+`already_completed` are successful outcomes. Dispatch failure logs a generic
+warning without payloads, URLs, or secrets and preserves score-sync exit code
+zero. Pending work can retry on the next invocation; finalization is unaffected.
+
+The cron can check every five minutes; only a claimed pending finalized-week
+task causes Flask to fetch Sportmonks. The cron never contacts Sportmonks and
+holds no database. Browser/page requests never consume tasks. The new URL has
+not been configured: wire it separately after merge/deployment. No Railway
 configuration, cron, secret, deployment, or production execution was performed.
 
 `python scripts/sync_pick_insight.py` remains a direct manual recovery utility
@@ -189,7 +197,10 @@ unchanged. The original checkout and its unrelated untracked files (including
 
 ## Validation
 
-- Full Python suite: 255 passed, including nine follow-up task cases covering
+- Full Python suite: 262 passed, including seven final trigger-script cases
+  for no-work/already-completed, completed, non-fatal dispatch failure, score
+  failure skipping dispatch, unset URL, authenticated Flask transport/safe
+  output, and malformed summaries. Also includes nine task cases covering
   auth/validation, success/idempotency, failure/cache retention/retry, atomic
   enqueue/rollback, missed-transition recovery, lease recovery, late-worker
   fencing, season-wide serialization, and incomplete/wrong-season rejection.
