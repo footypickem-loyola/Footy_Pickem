@@ -38,17 +38,24 @@ class SeasonClient:
                 if len(raw) > 2 * 1024 * 1024:
                     raise ValueError()
                 payload = json.loads(raw)
-                rows, pagination = payload['data'], payload['pagination']
-                if (not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows)
-                        or type(pagination.get('has_more')) is not bool
-                        or type(pagination.get('current_page')) is not int
-                        or pagination['current_page'] != page):
+                rows = payload['data']
+                if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
                     raise ValueError()
                 fingerprint = json.dumps(rows, sort_keys=True)
-                if fingerprint in seen or (pagination['has_more'] and not rows):
+                if fingerprint in seen:
                     raise ValueError()
                 seen.add(fingerprint)
                 result.extend(rows)
+                # Some season endpoints (notably teams) omit pagination entirely.
+                if 'pagination' not in payload:
+                    return result
+                pagination = payload['pagination']
+                if (not isinstance(pagination, dict)
+                        or type(pagination.get('has_more')) is not bool
+                        or type(pagination.get('current_page')) is not int
+                        or pagination['current_page'] != page
+                        or (pagination['has_more'] and not rows)):
+                    raise ValueError()
                 if not pagination['has_more']:
                     return result
             except HTTPError as error:
