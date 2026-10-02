@@ -1,0 +1,33 @@
+<header class="insight-header">
+  <button type="button" class="bulk-close insight-close" data-insight-close aria-label="Close pick insight" autofocus>×</button>
+  <p class="mw-eyebrow" id="pick-insight-title">{{ 'WHAT TO LOOK FOR' if mode == 'manual' else 'PICK RECAP' }}</p>
+  <h2>Your Pick: {{ insight.team }}</h2>
+  <p class="insight-opponent">{{ insight.venue }} {{ insight.opponent }}</p>
+  <p class="insight-kickoff">{{ insight.kickoff|kickoff_eastern }}</p>
+  {% if selection_status %}<p class="insight-status">{{ selection_status }}</p>{% endif %}
+</header>
+<div class="bulk-content insight-content">
+  <section class="insight-pitch" aria-label="{{ insight.team }} statistics">
+    <svg class="insight-markings" viewBox="0 0 900 620" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      <path d="M450 0V620 M0 115H150V505H0 M900 115H750V505H900 M0 225H45V395H0 M900 225H855V395H900"/>
+      <circle cx="450" cy="310" r="90"/>
+      <path d="M150 250Q235 310 150 370 M750 250Q665 310 750 370 M20 0A20 20 0 0 1 0 20 M880 0A20 20 0 0 0 900 20 M0 600A20 20 0 0 1 20 620 M880 620A20 20 0 0 1 900 600"/>
+    </svg>
+    <div class="insight-hero">
+      {% if insight.crest %}<img class="insight-crest" src="{{ insight.crest }}" alt="" width="72" height="80">{% endif %}
+      <h3>{{ insight.team }}</h3>
+    </div>
+    <dl class="insight-bands">{% for band in insight.bands %}<div class="insight-band"><dt>{{ band.label }}</dt><dd>{{ band.value }}</dd></div>{% endfor %}</dl>
+  </section>
+  <p class="insight-source">{{ insight.sample }} recorded results this season before this fixture · Form: oldest → newest. Goal averages require complete scores. Top scorer unavailable.</p>
+</div>
+<footer class="bulk-footer insight-footer">
+  {% if mode != 'manual' %}
+  <nav class="insight-navigation" aria-label="Pick recap navigation">
+    <button type="button" class="btn" {% if previous_url %}hx-get="{{ previous_url }}" hx-target="#pick-insight-content"{% else %}disabled{% endif %}>Previous</button>
+    <span aria-live="polite" aria-atomic="true">{{ position }} of {{ total }}</span>
+    <button type="button" class="btn" {% if next_url %}hx-get="{{ next_url }}" hx-target="#pick-insight-content"{% else %}disabled{% endif %}>Next</button>
+  </nav>
+  {% else %}<button type="button" class="btn primary" data-insight-close>Continue Drafting <span aria-hidden="true">›</span></button>{% endif %}
+  <button type="button" class="btn" data-insight-close>Close</button>
+</footer>

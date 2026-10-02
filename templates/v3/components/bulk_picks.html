@@ -9,7 +9,7 @@
     <p id="bulk-intro-{{ m.id }}">Your picks are confirmed and cannot be edited. Auto-Draft skips any fixture that has already been drafted.</p>
     <ol class="bulk-review-list">{% for preference in ad.preferences %}<li><span class="bulk-number">{{ loop.index }}</span><div><strong>{{ preference.team }}</strong><small>{{ preference.home }} (Home) vs {{ preference.away }} (Away) · {{ preference.venue }}</small>{% if preference.reason %}<small>{{ preference.reason }}</small>{% endif %}</div></li>{% endfor %}</ol>
   </div>
-  <footer class="bulk-footer"><span>Confirmed · List locked</span><button type="button" class="btn primary" data-bulk-close>Done</button></footer>
+  <footer class="bulk-footer"><span>Confirmed · List locked</span><button type="button" class="btn" data-insight-open="{{ url_for('pick_insight', matchup_id=m.id, mode='bulk') }}">View Pick Recap</button><button type="button" class="btn primary" data-bulk-close>Done</button></footer>
   {% else %}
   <script type="application/json" class="bulk-config">{{ {'fixtures': ad.fixtures, 'preferences': ad.preferences}|tojson }}</script>
   <div class="bulk-content">
