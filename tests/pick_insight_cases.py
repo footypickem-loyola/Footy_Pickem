@@ -28,7 +28,7 @@ class PickInsightCases:
             body = response.get_data(as_text=True)
             self.assertIn('Cached Player · 7 goals', body)
             self.assertIn('class="insight-crest"', body)
-            row.synced_at = now - timedelta(hours=25)
+            row.synced_at = now - timedelta(days=36)
             self.db.merge(row)  # Request teardown detaches the earlier fixture object.
             self.db.commit()
             stale = client.get(f'/pick-insight/{self.mid}').get_data(as_text=True)

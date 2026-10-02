@@ -63,7 +63,7 @@ def main():
                     crest_url='https://cdn.sportmonks.com/images/soccer/teams/19/19.png',
                     top_scorers=[dict(player_id=1, name='First Synthetic Scorer'),
                                  dict(player_id=2, name='Second Synthetic Scorer')], goals=5,
-                    synced_at=d.utcnow() - timedelta(hours=25 if scenario == 6 else 0)))
+                    synced_at=d.utcnow() - timedelta(days=36 if scenario == 6 else 0)))
             db.commit()
             session['player_name'] = 'Steve'
             return {'matchup_id': matchup.id}

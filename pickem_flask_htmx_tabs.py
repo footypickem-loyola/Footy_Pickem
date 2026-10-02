@@ -1173,6 +1173,8 @@ from live_models import register_models
 FixtureProviderLink, LiveFixtureState, MatchEvent = register_models(Base)
 from pick_insight_enrichment import register_models as register_insight_models, cached_enrichment
 ClubSeasonEnrichment = register_insight_models(Base)
+from pick_insight_tasks import register_models as register_insight_tasks, enqueue as enqueue_insight_refresh
+PickInsightRefresh = register_insight_tasks(Base)
 
 
 def ensure_database_schema(target_engine=engine) -> bool:
@@ -1602,10 +1604,13 @@ def _set_week_status_without_commit(db, week: Week) -> None:
         new_status = "provisional"
     else:
         new_status = "finalized"
+    was_finalized = week.status == "finalized"
     week.status = new_status
     if new_status == "finalized" and week.finalized_at is None:
         week.finalized_at = utcnow()
     db.add(week)
+    if new_status == "finalized" and not was_finalized:
+        enqueue_insight_refresh(db, sys.modules[__name__], week, utcnow())
 
 
 def init_season_from_api(
@@ -5037,6 +5042,41 @@ def live_ingest_snapshot():
         app.logger.error("Live ingest transaction failed; snapshot rolled back")
         return jsonify(ok=False, error="Live ingest unavailable"), 503
     return jsonify(ok=True, stored=stored)
+
+
+@app.post("/tasks/sync-pick-insight")
+def scheduled_sync_pick_insight():
+    """Consume a committed finalization task in the volume-owning Flask service."""
+    expected = os.environ.get("SYNC_SECRET", "").strip()
+    if not expected:
+        return jsonify(ok=False, error="Pick Insight task is not configured"), 503
+    supplied = request.headers.get("X-Sync-Secret", "")
+    if not hmac.compare_digest(supplied.encode('utf-8'), expected.encode('utf-8')):
+        return jsonify(ok=False, error="Forbidden"), 403
+    if request.content_length is not None and request.content_length > 1024:
+        return jsonify(ok=False, error="Invalid task request"), 400
+    body = request.stream.read(1025)
+    try:
+        payload = json.loads(body) if body else {}
+        if (len(body) > 1024 or not isinstance(payload, dict) or set(payload) - {'week_id'}
+                or ('week_id' in payload and (type(payload['week_id']) is not int or payload['week_id'] <= 0))):
+            raise ValueError()
+    except (ValueError, UnicodeError):
+        return jsonify(ok=False, error="Invalid task request"), 400
+    from pick_insight_tasks import run_task, TaskBusy, TaskUnavailable
+    from sportmonks_season import SeasonClient
+    try:
+        with SessionLocal() as db:
+            summary = run_task(db, sys.modules[__name__], SeasonClient(), payload.get('week_id'))
+        response = jsonify(ok=True, **summary)
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+    except TaskBusy:
+        return jsonify(ok=False, error="Pick Insight task is busy; retry later"), 409
+    except TaskUnavailable:
+        return jsonify(ok=False, error="Pick Insight task unavailable; verify season or retry later"), 409
+    except Exception:
+        return jsonify(ok=False, error="Pick Insight sync failed; retry later"), 502
 
 
 @app.post("/tasks/sync-results")

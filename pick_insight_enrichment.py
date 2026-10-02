@@ -8,7 +8,8 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, UniqueCons
 
 LEAGUE_ID = 8
 SEASON_ID = 28083
-MAX_AGE = timedelta(hours=24)
+# Weekly refreshes must survive ordinary gaps and international breaks.
+MAX_AGE = timedelta(days=35)
 MAPPING_PATH = Path(__file__).parent / 'data' / 'sportmonks_2026_27_mapping.json'
 
 

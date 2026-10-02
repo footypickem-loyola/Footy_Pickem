@@ -69,11 +69,26 @@ The existing schema initializer creates the new table; no existing table is
 rebuilt or existing result/pick data migrated. No provider payloads or secrets
 are stored. The supplied sample is test evidence only.
 
-The explicit central entry point is `python scripts/sync_pick_insight.py` with
-`DB_PATH` and `SPORTMONKS_API_TOKEN` available to that process. Run it only in
-the service environment that owns the application SQLite volume, after a
-separately approved rollout. It refuses non-active/archived seasons and any
-season other than `year-2` / `PL` / 2026. It requires exact agreement between
+The supported production entry point is `POST /tasks/sync-pick-insight` inside
+the Flask service that owns the SQLite `/data` volume. It uses the existing
+`SYNC_SECRET` / `X-Sync-Secret` pattern and constant-time comparison; an unset
+secret fails closed (503), a missing/wrong header returns 403, and GET is not
+supported. Do not put secrets in query strings. The Flask process needs its
+own `SPORTMONKS_API_TOKEN`; the worker's environment does not supply it.
+No secrets or Railway settings have been set by this PR.
+
+An empty body or `{}` consumes the oldest pending task for the active season.
+For manual/admin retry, send `{"week_id": <local Week.id>}`. This retries a
+pending/failed task or recovers a missed enqueue for an already fully finalized
+week. Completed tasks are no-ops even with an explicit ID; no force-refresh
+flag is exposed. A successful response contains only `ok`, `status`, `clubs`,
+and `clubs_with_scorers`. Status is `completed`, `already_completed`, or
+`no_work`. Busy/invalid targets return 409; provider failures return a generic
+502. No exception text, provider payload, DB path, or credential is returned.
+
+The endpoint delegates to the existing `sync_season(...)`. It refuses
+non-active/archived seasons and any season other than `year-2` / `PL` / 2026.
+It requires exact agreement between
 the database club set, the verified mapping, and the full participant ID set.
 It fetches and validates both full collections before atomically updating all
 20 rows. Missing scorer/crest data clears that field on a successful snapshot;
@@ -81,13 +96,38 @@ HTTP errors, incomplete pages, and mapping failures retain the prior cache and
 its original timestamp. Unknown scorer IDs are ignored; participant-set drift
 rejects the entire synchronization.
 
-Proposed cadence: one central hourly run (24/day), with one runner at a time;
-never trigger it from user traffic. Start with a manual run during the later
-approved rollout, then schedule in the volume-owning application environment.
-No scheduler/service/environment variables or production configuration were
-changed in this PR. A standalone worker without the mounted application DB
-must not run this command against its own ephemeral SQLite file. Until central
-sync is provisioned, Pick Insight continues to use its existing fallbacks.
+**Primary: once after each fully finalized matchweek.** Optional manual/admin
+retry covers missed or failed refreshes. There is no hourly Sportmonks refresh.
+
+The clean transition point is `_set_week_status_without_commit`, shared by
+`sync_results_from_api` (official API import) and `update_week_status` (manual
+result entry/corrections). When status changes to finalized, it records one
+`pick_insight_refreshes` row keyed by local `week_id`, in the same database
+transaction. A rollback therefore rolls back the task too. Repeated status
+updates and re-finalizing a corrected week cannot create duplicate tasks.
+No provider client, network operation, or background thread runs here.
+
+The additive task table stores season ID, pending/running/completed status,
+created/completed timestamps, and a claim token/lease. A short atomic claim
+serializes all tasks in the season, then releases the write transaction before
+provider I/O. Completion checks the claim token and unexpired ten-minute lease.
+Cache writes and completion share one transaction; a late/expired worker cannot
+publish its snapshot. Failure retains the old cache and releases the task for
+retry. A killed process is recoverable after its lease expires. Provider reads
+may repeat after a crash/failure, but there is one successful completion per
+week. Finalization has already committed and never depends on Sportmonks.
+
+Operational wiring is deliberately not activated: a trusted post-finalization
+task dispatcher should POST this endpoint after the finalization transaction
+commits, with manual/admin retry if dispatch or refresh fails. The durable task
+survives a missed dispatch. This PR implements enqueue + authenticated consumer,
+not a scheduled caller. Browser/page requests never consume tasks. No Railway
+configuration, cron, secret, deployment, or production execution was performed.
+
+`python scripts/sync_pick_insight.py` remains a direct manual recovery utility
+requiring `DB_PATH` and `SPORTMONKS_API_TOKEN` on the volume-owning service.
+It does not mark a week task complete; prefer the endpoint for normal operation
+and task retries. Do not run a separate worker against an ephemeral SQLite DB.
 
 ## Provider contract and entitlement
 
@@ -108,13 +148,13 @@ References: [teams by season](https://docs.sportmonks.com/v3/endpoints-and-entit
 [topscorers by season](https://docs.sportmonks.com/v3/endpoints-and-entities/endpoints/topscorers/get-topscorers-by-season-id),
 and [Sportmonks participant/player include example](https://www.sportmonks.com/blogs/exploring-topscorers-with-sportmonks-football-api-and-crystal/).
 
-The account must entitle the token to EPL 2026/27, both endpoints, and the
-player/participant/type includes. The export confirms participant identities
-and the example scorer shape, not the account's current entitlement or a
-complete paginated scorer response. No real provider request was made in this
-implementation session because no provider credential was exposed. Validate
-both complete endpoint responses and quota during the separately approved
-activation. HTTP 401/403/429 and other failures preserve safe behavior.
+Sportmonks access was verified during the current Starter trial through
+**October 16, 2026**, as confirmed by the user. **Post-trial entitlement remains
+unverified.** The token needs EPL 2026/27, both endpoints, and the
+player/participant/type includes. No real provider request was made in this
+implementation session. Confirm continued access and quota during the
+separately approved activation and after the trial; HTTP 401/403/429 and other
+failures retain the prior cache and allow retry without affecting finalization.
 
 ## Selection and fallbacks
 
@@ -128,7 +168,7 @@ All equal positive leaders are displayed in stable player-ID order with “each.
 No goals or no valid records produces `—`, not an invented scorer or zero.
 
 Read-time data must match the local season, provider season, league, team ID,
-and stored string. Missing, older-than-24-hour, future-dated, or unmapped rows
+and stored string. Missing, older-than-35-day, future-dated, or unmapped rows
 return the original name/empty-crest and scorer `—` fallbacks. Invalid scorer
 data can still leave a valid crest, and vice versa. Crest URLs must be HTTPS
 Sportmonks static team CDN PNGs for that exact ID, without query credentials.
@@ -136,6 +176,10 @@ The browser loads only that cached static image URL; it never calls the
 Sportmonks API. A broken image hides while the club name remains visible.
 The small `[hidden]` CSS rule fixes the existing `display:block` override so
 the already-existing image-error handler actually hides the broken crest.
+The 35-day safety limit replaces the original 24-hour limit so a weekly snapshot
+remains usable during the next draft cycle and international breaks. Failed
+refreshes retain the prior snapshot, subject to this limit; no automatic refresh
+is triggered by age or a page read.
 
 Opening any manual/bulk/owned-pick recap reads local data only; no provider
 client is imported on this path. Five existing metric calculations, draft
@@ -145,8 +189,13 @@ unchanged. The original checkout and its unrelated untracked files (including
 
 ## Validation
 
-- Full Python suite: 246 passed, including 19 isolated enrichment tests and an
-  authorized HTTP test with provider methods patched to fail if called.
+- Full Python suite: 255 passed, including nine follow-up task cases covering
+  auth/validation, success/idempotency, failure/cache retention/retry, atomic
+  enqueue/rollback, missed-transition recovery, lease recovery, late-worker
+  fencing, season-wide serialization, and incomplete/wrong-season rejection.
+  Includes 19 isolated enrichment tests and an authorized HTTP test with
+  provider methods patched to fail if called. A 14-day cache remains readable;
+  data older than 35 days safely falls back.
 - Bulk Picks Node suite: 7 passed.
 - Enrichment browser: 12 cases across desktop, 390px/360px mobile, and landscape;
   fresh tied leaders, rendered crest, broken-image fallback, stale fallback,

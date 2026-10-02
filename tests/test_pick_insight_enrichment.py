@@ -185,7 +185,8 @@ class CacheTests(unittest.TestCase):
         fallback = dict(crest=None, top_scorer=None)
         self.assertEqual(self.view(), fallback)
         self.sync()
-        for team, now in [('Arsenal', NOW+timedelta(hours=24, seconds=1)),
+        self.assertIsNotNone(self.view(now=NOW+timedelta(days=14))['top_scorer'])
+        for team, now in [('Arsenal', NOW+timedelta(days=35, seconds=1)),
                           ('Arsenal', NOW-timedelta(seconds=1)), ('Unknown', NOW)]:
             self.assertEqual(self.view(team, now), fallback)
         self.season.api_season_year = 2025

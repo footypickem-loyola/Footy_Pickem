@@ -100,7 +100,7 @@ def select_scorers(rows, mapping):
     return result
 
 
-def sync_season(db, models, season, client, now=None):
+def sync_season(db, models, season, client, now=None, before_commit=None):
     if not supported_season(season) or not season.is_active or season.is_archived:
         raise SeasonSyncError('Only the active 2026/2027 PL season is supported')
     mapping = verified_mapping()
@@ -126,6 +126,8 @@ def sync_season(db, models, season, client, now=None):
             row.crest_url = crest_url(participant.get('image_path'), team_id)
             row.goals, row.top_scorers = scorers[team_id]
             row.synced_at = timestamp
+        if before_commit is not None:
+            before_commit(db)
         db.commit()
     except Exception:
         db.rollback()
