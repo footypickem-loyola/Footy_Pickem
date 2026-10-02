@@ -89,7 +89,7 @@ class LiveTests(unittest.TestCase):
         client = SportmonksClient(token='FAKE_SECRET', opener=opener)
         self.assertEqual(client.livescores(), [])
         self.assertEqual(client.rate_limit['remaining'], 9)
-        self.assertEqual(seen[0][2], 'Bearer FAKE_SECRET')
+        self.assertEqual(seen[0][2], 'FAKE_SECRET')
         self.assertNotIn('FAKE_SECRET', seen[0][0])
         self.assertEqual(seen[0][1], 10)
         for error in (RuntimeError('FAKE_SECRET'), HTTPError('FAKE_SECRET', 429, 'FAKE_SECRET', {'Retry-After':'120'}, None)):
