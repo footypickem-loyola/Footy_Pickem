@@ -4,7 +4,6 @@
   <h2>Your Pick: {{ insight.team }}</h2>
   <p class="insight-opponent">{{ insight.venue }} {{ insight.opponent }}</p>
   <p class="insight-kickoff">{{ insight.kickoff|kickoff_eastern }}</p>
-  {% if selection_status %}<p class="insight-status">{{ selection_status }}</p>{% endif %}
 </header>
 <div class="bulk-content insight-content">
   <section class="insight-pitch" aria-label="{{ insight.team }} statistics">

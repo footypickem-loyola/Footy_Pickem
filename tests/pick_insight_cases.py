@@ -47,7 +47,7 @@ class PickInsightCases:
                 self.assertEqual(len(links), 1)
                 self.assertIn('mode=' + mode, links[0])
                 return client.get(links[0].replace('&amp;', '&')).get_data(as_text=True)
-            self.assertIn('1 of 10', assert_cta('bulk'))
+            self.assertIn('1 of 1', assert_cta('recap'))
             for index in range(1, 9):
                 self.service.command(self.mid, self.d.draft_turn_at(self.a, self.b, index), manual=self.fx[index][:2])
             self.assertEqual(len(self.auto_picks()), 9)
@@ -107,24 +107,47 @@ class PickInsightCases:
                 self.assertGreaterEqual(client.get(url + suffix).status_code, 400)
             self.assertEqual(client.get(url).headers['Cache-Control'], 'private, no-store')
 
-    def test_insight_bulk_confirmation_exposes_recap_without_modal_event(self):
+    def test_insight_bulk_confirmation_hides_recap_until_committed(self):
         self.auto_context()
         with self.insight_client(self.b) as client:
             response = client.post(f'/auto-draft/{self.mid}', headers={'HX-Request': 'true'}, data=dict(
                 action='confirm', expected_count=0,
                 preferences=json.dumps([dict(fixture_id=f[0], team=f[1]) for f in self.fx])))
             self.assertEqual(response.status_code, 200)
-            self.assertIn(b'View Pick Recap', response.data)
+            self.assertNotIn(b'data-insight-open=', response.data)
             self.assertNotIn('HX-Trigger-After-Swap', response.headers)
-            body = client.get(f'/pick-insight/{self.mid}?mode=bulk').get_data(as_text=True)
-            self.assertIn('1 of 10', body)
-            self.assertIn('Awaiting your turn', body)
+            for mode in ('bulk', 'recap'):
+                self.assertEqual(client.get(f'/pick-insight/{self.mid}?mode={mode}').status_code, 404)
             self.assertEqual(len(self.auto_picks()), 0)
             self.service.command(self.mid, self.a, manual=self.fx[0][:2])
-            skipped = client.get(f'/pick-insight/{self.mid}?mode=bulk').get_data(as_text=True)
-            self.assertIn('Opponent owns this fixture', skipped)
-            owned = client.get(f'/pick-insight/{self.mid}?mode=bulk&index=1').get_data(as_text=True)
-            self.assertIn('Drafted by you', owned)
+            # The snake draft commits two bulk picks after the opponent's first.
+            for mode in ('bulk', 'recap'):
+                body = client.get(f'/pick-insight/{self.mid}?mode={mode}').get_data(as_text=True)
+                self.assertIn('1 of 2', body)
+                self.assertIn('Your Pick: ' + self.fx[1][1], body)
+                self.assertNotIn('Awaiting your turn', body)
+                self.assertEqual(client.get(f'/pick-insight/{self.mid}?mode={mode}&index=2').status_code, 404)
+
+    def test_insight_recap_tracks_only_owned_picks_at_every_draft_stage(self):
+        from html import unescape
+        self.auto_context()
+        self.bulk_edit(self.b)
+        self.auto_edit(self.b, 'toggle', enabled='0')
+        with self.insight_client(self.b) as client:
+            for index in range(10):
+                player = self.d.draft_turn_at(self.a, self.b, index)
+                # Opposite team to the stored preference: show the actual pick.
+                self.service.command(self.mid, player, manual=(self.fx[index][0], self.fx[index][2]))
+                owned = [p for p in self.auto_picks() if p.player_id == self.b]
+                page = client.get('/partials/matchweek/1').get_data(as_text=True)
+                self.assertEqual(page.count('data-insight-open='), int(bool(owned)))
+                for mode in ('recap', 'bulk'):
+                    url = f'/pick-insight/{self.mid}?mode={mode}'
+                    for position, pick in enumerate(owned):
+                        body = unescape(client.get(f'{url}&index={position}').get_data(as_text=True))
+                        self.assertIn(f'{position + 1} of {len(owned)}', body)
+                        self.assertIn('Your Pick: ' + pick.team, body)
+                    self.assertEqual(client.get(f'{url}&index={len(owned)}').status_code, 404)
 
     def test_insight_complete_and_archived_recap_contains_only_owned_picks(self):
         self.auto_context()
