@@ -68,6 +68,18 @@ def main():
             session['player_name'] = 'Steve'
             return {'matchup_id': matchup.id}
 
+        @d.app.post('/__review/advance')
+        def advance():
+            db = d.SessionLocal()
+            steve = db.query(d.Player).filter_by(name='Steve').one()
+            week = db.query(d.Week).filter_by(number=2).one()
+            matchup = db.query(d.Matchup).filter(d.Matchup.week_id == week.id,
+                (d.Matchup.player_a_id == steve.id) | (d.Matchup.player_b_id == steve.id)).one()
+            other = matchup.player_b_id if matchup.player_a_id == steve.id else matchup.player_a_id
+            fixture = db.query(d.Fixture).filter_by(week_id=week.id).order_by(d.Fixture.match_number).first()
+            d.DraftService(d).command(matchup.id, other, manual=(fixture.id, fixture.home))
+            return {'ok': True}
+
         try:
             d.app.run(host='127.0.0.1', port=5115, debug=False, use_reloader=False)
         finally:

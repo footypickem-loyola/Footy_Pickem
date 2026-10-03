@@ -41,7 +41,10 @@
     <span class="mw-turn-dot" aria-hidden="true"></span>
     <div><h2>{{ 'YOUR TURN' if m.your_turn else m.turn.name ~ '’s turn' }}</h2>
     <p>Pick {{ m.total_picks + 1 }} of 10. {% if m.can_pick %}Choose a team from any remaining fixture.{% elif mw.archived %}Archived season — read only.{% else %}Waiting for {{ m.turn.name }} to choose a team.{% endif %}</p></div>
-    {% if m.auto_draft and not mw.archived %}<button type="button" class="btn mw-bulk-trigger" data-bulk-open="bulk-picks-{{ m.id }}">{{ 'View Bulk Picks' if m.auto_draft.confirmed else 'Set Bulk Picks' }}</button>{% endif %}
+    <div class="mw-turn-actions">
+      {% if m.is_yours and m.recap_mode %}<button type="button" class="btn" data-insight-open="{{ url_for('pick_insight', matchup_id=m.id, mode=m.recap_mode) }}">Pick Recap</button>{% endif %}
+      {% if m.auto_draft and not mw.archived %}<button type="button" class="btn mw-bulk-trigger" data-bulk-open="bulk-picks-{{ m.id }}">{{ 'View Bulk Picks' if m.auto_draft.confirmed else 'Set Bulk Picks' }}</button>{% endif %}
+    </div>
   </div>
   {% if m.auto_draft and not mw.archived %}{% include 'v3/components/bulk_picks.html' %}{% endif %}
   <div class="mw-draft-layout">
@@ -84,6 +87,7 @@
       <div><h2>{{ 'Final' if m.state == 'final' else 'Matchup set' }}</h2>
         <p>{% if m.state == 'final' %}All fixture results are finalized. Here is the official matchup result.{% else %}The draft is complete. Five fixtures each, ordered by kickoff.{% endif %}</p>
       </div>
+      {% if m.is_yours and m.recap_mode %}<div class="mw-turn-actions"><button type="button" class="btn" data-insight-open="{{ url_for('pick_insight', matchup_id=m.id, mode=m.recap_mode) }}">Pick Recap</button></div>{% endif %}
     </div>
     <div class="mw-owned-grid">
       {% for player in m.players %}

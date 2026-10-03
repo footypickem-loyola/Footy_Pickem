@@ -10,6 +10,9 @@ const path = require('node:path');
   fs.mkdirSync(out, {recursive:true});
   const browser = await chromium.launch({channel:'msedge', headless:true});
   const context = await browser.newContext();
+  if (process.env.LOCAL_HTMX_PATH) {
+    await context.route('https://unpkg.com/htmx.org@2.0.2', route => route.fulfill({path: process.env.LOCAL_HTMX_PATH, contentType: 'application/javascript'}));
+  }
   const page = await context.newPage();
   const errors = [];
   const providers = [];
@@ -25,6 +28,14 @@ const path = require('node:path');
     await page.waitForFunction(() => !!window.htmx);
   }
   async function geometry(label) {
+    assert.equal(await page.locator('.mw-turn-banner [data-insight-open]').count(), 1, `${label}: recap in turn card`);
+    const spacing = await page.locator('.mw-matchup').evaluate(el => {
+      const summary = el.querySelector('.mw-summary').getBoundingClientRect();
+      const banner = el.querySelector('.mw-turn-banner').getBoundingClientRect();
+      const fixtures = el.querySelector('.mw-available, .mw-owned-grid').getBoundingClientRect();
+      return [banner.top - summary.bottom, fixtures.top - banner.bottom];
+    });
+    assert.ok(spacing.every(gap => gap >= 0 && gap <= 16), `${label}: compact card spacing ${spacing}`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, label);
     assert.equal(await dialog.evaluate(el => el.scrollWidth > el.clientWidth), false, label);
     const rect = await dialog.boundingBox();
@@ -76,20 +87,24 @@ const path = require('node:path');
     }
     await bulk.getByRole('button', {name:'Submit Bulk Picks',exact:true}).click();
     await bulk.getByRole('button', {name:'Confirm Bulk Picks',exact:true}).click();
-    await page.getByRole('button', {name:'View Pick Recap',exact:true}).first().waitFor();
-    assert.equal(await page.locator('[data-insight-open]').count(), 1);
-    assert.match(await page.locator('[data-insight-open]').getAttribute('data-insight-open'), /mode=bulk/);
+    await page.waitForFunction(() => document.querySelector('#matchweek-view').textContent.includes('Bulk picks confirmed'));
+    assert.equal(await page.locator('[data-insight-open]').count(), 0);
     assert.equal(await dialog.isVisible(), false);
-    await page.getByRole('button', {name:'View Pick Recap',exact:true}).first().click();
+    assert.equal((await context.request.post(`${base}/__review/advance`)).status(), 200);
+    await page.goto(view);
+    assert.equal(await page.locator('[data-insight-open]').count(), 1);
+    assert.match(await page.locator('[data-insight-open]').getAttribute('data-insight-open'), /mode=recap/);
+    assert.equal(await dialog.isVisible(), false);
+    await page.getByRole('button', {name:'Pick Recap',exact:true}).first().click();
     await dialog.waitFor({state:'visible'});
-    assert.match(await dialog.innerText(), /1 of 10/);
+    assert.match(await dialog.innerText(), /1 of 2/);
     assert.equal(await dialog.getByRole('button', {name:'Previous',exact:true}).isDisabled(), true);
     await dialog.getByRole('button', {name:'Next',exact:true}).click();
-    await page.waitForFunction(() => document.querySelector('.insight-navigation').textContent.includes('2 of 10'));
+    await page.waitForFunction(() => document.querySelector('.insight-navigation').textContent.includes('2 of 2'));
     await geometry(`${width}x${height}: bulk recap`);
     await page.screenshot({path:path.join(out, `bulk-${width}.png`)});
     await dialog.getByRole('button', {name:'Previous',exact:true}).click();
-    await page.waitForFunction(() => document.querySelector('.insight-navigation').textContent.includes('1 of 10'));
+    await page.waitForFunction(() => document.querySelector('.insight-navigation').textContent.includes('1 of 2'));
     await dialog.getByRole('button', {name:'Close',exact:true}).click();
 
     await setup(3);

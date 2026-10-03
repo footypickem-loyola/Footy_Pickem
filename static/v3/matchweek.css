@@ -108,6 +108,15 @@
 .mw-turn-banner--yours {border-color:#bed9cb;background:#eaf3ee}
 .mw-turn-dot {width:12px;height:12px;border-radius:50%;background:#647c98;flex-shrink:0;margin-top:8px}
 .mw-turn-banner--yours .mw-turn-dot {background:#548d6b}
+.mw-matchup {grid-template-rows:auto auto minmax(0,1fr)}
+.mw-turn-banner > div:not(.mw-turn-actions) {min-width:0;flex:1}
+.mw-turn-actions {display:flex;flex-wrap:wrap;align-self:center;justify-content:flex-end;gap:8px;margin-left:auto}
+.mw-turn-actions:empty {display:none}
+.mw-turn-actions .btn {white-space:nowrap}
+.mw-turn-actions .mw-bulk-trigger {margin-left:0;width:auto}
+@media(max-width:700px) {
+ .mw-turn-actions {flex-basis:100%;margin-left:22px;justify-content:flex-start}
+}
 .mw-side-rail {grid-column:2;grid-row:1 / span 3;display:grid;gap:16px;min-width:0}
 .mw-matchup .mw-section-heading h2,.mw-side-rail .mw-history summary {font-size:1.55rem;letter-spacing:-.025em}
 .mw-side-rail .mw-history summary {list-style:none}
