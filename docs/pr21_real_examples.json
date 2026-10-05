@@ -1,0 +1,332 @@
+{
+  "cutoff": "2026-10-05T03:00:00+00:00",
+  "source_snapshot_sha256": "73c37c2cceff71f360dbf36f55ecadc1a9ad05143ed0cbf93c369794df35bef4",
+  "examples": [
+    {
+      "target_fixture_id": 811,
+      "target": "Arsenal vs Leeds United",
+      "target_kickoff": "2026-10-10T11:30:00+00:00",
+      "signal_type": "EXACT_PRIOR_SEASON_FIXTURE",
+      "editorial_score": 81,
+      "evidence": {
+        "home_score": 5,
+        "away_score": 0,
+        "season": "2025/2026",
+        "nearest_available_prior_season": true,
+        "immediately_previous_season": true
+      },
+      "reference_fixtures": [
+        {
+          "reference_id": 491,
+          "sportmonks_id": 19427465,
+          "season": "2025/2026",
+          "kickoff": "2025-08-23T16:30:00+00:00",
+          "home": "Arsenal",
+          "away": "Leeds United",
+          "score": [
+            5,
+            0
+          ]
+        }
+      ],
+      "events": []
+    },
+    {
+      "target_fixture_id": 813,
+      "target": "Chelsea vs Bournemouth",
+      "target_kickoff": "2026-10-10T14:00:00+00:00",
+      "signal_type": "H2H_UNBEATEN_RUN",
+      "editorial_score": 82,
+      "evidence": {
+        "metric": "UNBEATEN",
+        "count": 4,
+        "lower_bound": true
+      },
+      "reference_fixtures": [
+        {
+          "reference_id": 171,
+          "sportmonks_id": 19134623,
+          "season": "2024/2025",
+          "kickoff": "2024-09-14T19:00:00+00:00",
+          "home": "AFC Bournemouth",
+          "away": "Chelsea",
+          "score": [
+            0,
+            1
+          ]
+        },
+        {
+          "reference_id": 108,
+          "sportmonks_id": 19134560,
+          "season": "2024/2025",
+          "kickoff": "2025-01-14T19:30:00+00:00",
+          "home": "Chelsea",
+          "away": "AFC Bournemouth",
+          "score": [
+            2,
+            2
+          ]
+        },
+        {
+          "reference_id": 622,
+          "sportmonks_id": 19427597,
+          "season": "2025/2026",
+          "kickoff": "2025-12-06T15:00:00+00:00",
+          "home": "AFC Bournemouth",
+          "away": "Chelsea",
+          "score": [
+            0,
+            0
+          ]
+        },
+        {
+          "reference_id": 663,
+          "sportmonks_id": 19427639,
+          "season": "2025/2026",
+          "kickoff": "2025-12-30T19:30:00+00:00",
+          "home": "Chelsea",
+          "away": "AFC Bournemouth",
+          "score": [
+            2,
+            2
+          ]
+        }
+      ],
+      "events": []
+    },
+    {
+      "target_fixture_id": 816,
+      "target": "Man United vs Tottenham",
+      "target_kickoff": "2026-10-10T16:30:00+00:00",
+      "signal_type": "LATE_DECISIVE_GOAL",
+      "editorial_score": 79,
+      "evidence": {
+        "kind": "equalizer",
+        "minute": 90,
+        "extra_minute": 6,
+        "threshold_minute": 85,
+        "score_before": [
+          2,
+          1
+        ],
+        "score_after": [
+          2,
+          2
+        ],
+        "final_score": [
+          2,
+          2
+        ],
+        "player_id": 26768,
+        "own_goal": false
+      },
+      "reference_fixtures": [
+        {
+          "reference_id": 589,
+          "sportmonks_id": 19427564,
+          "season": "2025/2026",
+          "kickoff": "2025-11-08T12:30:00+00:00",
+          "home": "Tottenham Hotspur",
+          "away": "Manchester United",
+          "score": [
+            2,
+            2
+          ]
+        }
+      ],
+      "events": [
+        {
+          "reference_id": 9419,
+          "sportmonks_id": 152060032,
+          "type_id": 14,
+          "player_id": 529689,
+          "player": "Bryan Mbeumo",
+          "minute": 32,
+          "extra_minute": null,
+          "running_score": "0-1"
+        },
+        {
+          "reference_id": 9423,
+          "sportmonks_id": 152062833,
+          "type_id": 14,
+          "player_id": 37531504,
+          "player": "Mathys Tel",
+          "minute": 84,
+          "extra_minute": null,
+          "running_score": "1-1"
+        },
+        {
+          "reference_id": 9426,
+          "sportmonks_id": 152063247,
+          "type_id": 14,
+          "player_id": 219633,
+          "player": "Richarlison",
+          "minute": 90,
+          "extra_minute": 1,
+          "running_score": "2-1"
+        },
+        {
+          "reference_id": 9429,
+          "sportmonks_id": 152063471,
+          "type_id": 14,
+          "player_id": 26768,
+          "player": "Matthijs de Ligt ",
+          "minute": 90,
+          "extra_minute": 6,
+          "running_score": "2-2"
+        }
+      ]
+    },
+    {
+      "target_fixture_id": 819,
+      "target": "Liverpool vs Man City",
+      "target_kickoff": "2026-10-11T15:30:00+00:00",
+      "signal_type": "LATE_DECISIVE_GOAL",
+      "editorial_score": 94,
+      "evidence": {
+        "kind": "winner",
+        "minute": 90,
+        "extra_minute": 3,
+        "threshold_minute": 85,
+        "score_before": [
+          1,
+          1
+        ],
+        "score_after": [
+          1,
+          2
+        ],
+        "final_score": [
+          1,
+          2
+        ],
+        "player_id": 154421,
+        "own_goal": false
+      },
+      "reference_fixtures": [
+        {
+          "reference_id": 726,
+          "sportmonks_id": 19427702,
+          "season": "2025/2026",
+          "kickoff": "2026-02-08T16:30:00+00:00",
+          "home": "Liverpool",
+          "away": "Manchester City",
+          "score": [
+            1,
+            2
+          ]
+        }
+      ],
+      "events": [
+        {
+          "reference_id": 11535,
+          "sportmonks_id": 152728658,
+          "type_id": 14,
+          "player_id": 785998,
+          "player": "Dominik Szoboszlai",
+          "minute": 74,
+          "extra_minute": null,
+          "running_score": "1-0"
+        },
+        {
+          "reference_id": 11540,
+          "sportmonks_id": 152728810,
+          "type_id": 14,
+          "player_id": 96353,
+          "player": "Bernardo Silva",
+          "minute": 84,
+          "extra_minute": null,
+          "running_score": "1-1"
+        },
+        {
+          "reference_id": 11543,
+          "sportmonks_id": 152728950,
+          "type_id": 16,
+          "player_id": 154421,
+          "player": "Erling Haaland",
+          "minute": 90,
+          "extra_minute": 3,
+          "running_score": "1-2"
+        }
+      ]
+    },
+    {
+      "target_fixture_id": 1098,
+      "target": "Arsenal vs Tottenham",
+      "target_kickoff": "2027-05-01T14:00:00+00:00",
+      "signal_type": "HAT_TRICK",
+      "editorial_score": 108,
+      "evidence": {
+        "player_id": 7643,
+        "player_name": "Eberechi Eze",
+        "goals": 3,
+        "own_goals_excluded": true,
+        "roster_verified": false
+      },
+      "reference_fixtures": [
+        {
+          "reference_id": 591,
+          "sportmonks_id": 19427566,
+          "season": "2025/2026",
+          "kickoff": "2025-11-23T16:30:00+00:00",
+          "home": "Arsenal",
+          "away": "Tottenham Hotspur",
+          "score": [
+            4,
+            1
+          ]
+        }
+      ],
+      "events": [
+        {
+          "reference_id": 9459,
+          "sportmonks_id": 152199999,
+          "type_id": 14,
+          "player_id": 7643,
+          "player": "Eberechi Eze",
+          "minute": 41,
+          "extra_minute": null,
+          "running_score": "2-0"
+        },
+        {
+          "reference_id": 9462,
+          "sportmonks_id": 152200527,
+          "type_id": 14,
+          "player_id": 7643,
+          "player": "Eberechi Eze",
+          "minute": 46,
+          "extra_minute": null,
+          "running_score": "3-0"
+        },
+        {
+          "reference_id": 9468,
+          "sportmonks_id": 152201396,
+          "type_id": 14,
+          "player_id": 7643,
+          "player": "Eberechi Eze",
+          "minute": 76,
+          "extra_minute": null,
+          "running_score": "4-1"
+        }
+      ],
+      "additional_player_fact": {
+        "player_id": 7643,
+        "player_name": "Eberechi Eze",
+        "goals": 5,
+        "meetings": 4,
+        "scoring_meetings": 2,
+        "appearance_count": null,
+        "roster_verified": false,
+        "own_goals_excluded": true,
+        "sportmonks_event_ids": [
+          156035181,
+          156036522,
+          152199999,
+          152200527,
+          152201396
+        ]
+      },
+      "prior_anchor_suppression": "historical_anchor_covered_by_event"
+    }
+  ]
+}
