@@ -7,7 +7,7 @@ import re
 from fixture_intelligence import Candidate
 from fixture_history import utc
 
-VERSION = "historical-fixture-intelligence-v1"
+VERSION = "historical-fixture-intelligence-v2"
 LATE_MINUTE = 85
 GOALS = {14, 15, 16}
 NORMAL_GOALS = {14, 16}
@@ -45,6 +45,14 @@ class Context:
                          opponent_specificity=8, venue_specificity=4 if venue else 0,
                          recency=8 if age_days <= 365 else 4 if age_days <= 730 else 0,
                          rarity=rarity, historical_significance=5 if kind == "EXACT_PRIOR_SEASON_FIXTURE" else 0)
+        if kind == "EXACT_PRIOR_SEASON_FIXTURE":
+            home, away = evidence['home_score'], evidence['away_score']
+            notable = abs(home-away) >= 3 or home+away >= 5
+            breakdown['scoreline_interest'] = 0 if notable else -32 if home+away == 0 else -24
+        if kind == "PLAYER_VS_OPPONENT":
+            meetings = evidence['scoring_meetings']
+            # Recurrence is distinct scored meetings, never inferred appearances.
+            breakdown['distinct_scoring_meetings'] = 22 + 4*(meetings-3) if meetings >= 3 else 0
         identity = sha256(json.dumps(dict(kind=kind, team=team_id, fixtures=[r["external_fixture_id"] for r in ordered],
                                          events=[e["external_event_id"] for e in events], evidence=evidence), sort_keys=True).encode()).hexdigest()[:16]
         source = dict(source="Sportmonks reference", fixtures=[provenance(r) for r in ordered],
@@ -104,6 +112,30 @@ def detect_h2h_streak(ctx):
 
 def detect_venue_h2h(ctx):
     return _streaks(ctx, venue=True)
+
+
+def detect_exact_goals_sequence(ctx):
+    """Positive exact totals in the uninterrupted newest stored meeting sequence."""
+    rows = sequence(ctx.history)
+    candidates = []
+    for team_id in ctx.team_names:
+        matching, goals = [], None
+        for row in rows:
+            total = row['home_score'] if row['home_team_id'] == team_id else row['away_score']
+            if goals is None:
+                goals = total
+            if total != goals:
+                break
+            matching.append(row)
+        if len(matching) < 3 or not goals:
+            continue
+        lower = len(matching) == len(rows)
+        candidates.append(ctx.candidate('H2H_EXACT_GOALS_SEQUENCE', team_id, matching,
+            dict(fact=f"{ctx.team_names[team_id]} scored exactly {goals} {'goal' if goals == 1 else 'goals'} in each of the last {len(matching)} stored PL meetings between these clubs.",
+                 goals_each=goals, count=len(matching), lower_bound=lower,
+                 boundary='available history/window or evidence gap' if lower else 'preceding different total'),
+            min(64, 26 + 6*(len(matching)-3) + 8*min(goals, 4)), rarity=8 if goals >= 3 else 0))
+    return candidates
 
 
 def complete_scorer_evidence(row):
@@ -246,6 +278,6 @@ def build_historical_candidates(fixture, history):
     if history["status"] != "available":
         return []
     ctx = Context(fixture, history)
-    return [c for detector in (detect_exact_prior_season_fixture, detect_h2h_streak, detect_venue_h2h,
+    return [c for detector in (detect_exact_prior_season_fixture, detect_h2h_streak, detect_venue_h2h, detect_exact_goals_sequence,
                                detect_hat_trick_or_brace, detect_late_decisive_goal,
                                detect_player_vs_opponent, detect_previous_red_cards) for c in detector(ctx)]

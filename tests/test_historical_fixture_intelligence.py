@@ -206,6 +206,136 @@ class HistoricalTests(unittest.TestCase):
             weeks=[NS(id=1, season_id=1)], season_id=1, as_of=self.as_of, reference_history=h)
         self.assertIn("history", p)
 
+    def test_brighton_three_in_three_real_reference_regression(self):
+        # Football rows from PR23's verified snapshot, SHA-256 documented in PR24.
+        # Reuse local IDs; retain the actual provider IDs, scores and kickoff times.
+        rows = [(19134574, "2025-02-14T20:00:00+00:00", 1, (3, 0), 14, 19),
+                (19427507, "2025-09-27T14:00:00+00:00", 2, (1, 3), 19, 14),
+                (19427198, "2026-04-21T19:00:00+00:00", 2, (3, 0), 14, 19)]
+        for i, (external, kickoff, season, score, home, away) in enumerate(rows, 1):
+            self.fixture(i, kickoff, score, home, away, season)
+            self.db.execute("UPDATE football_reference_fixtures SET external_fixture_id=? WHERE id=?", (external, i))
+        self.db.execute("""UPDATE football_reference_fixtures SET
+            home_team_name=CASE home_team_id WHEN 19 THEN 'Chelsea' ELSE 'Brighton & Hove Albion' END,
+            away_team_name=CASE away_team_id WHEN 19 THEN 'Chelsea' ELSE 'Brighton & Hove Albion' END,
+            home_team_id=CASE home_team_id WHEN 19 THEN 18 ELSE 78 END,
+            away_team_id=CASE away_team_id WHEN 19 THEN 18 ELSE 78 END""")
+        self.target.home, self.target.away = "Chelsea", "Brighton Hove"
+        c = self.candidates("H2H_EXACT_GOALS_SEQUENCE", ranked=True)[0]
+        self.assertEqual((c['subject_team'], c['evidence']['goals_each'], c['evidence']['count']), ('Brighton Hove', 3, 3))
+        self.assertEqual([r['external_fixture_id'] for r in c['provenance']['fixtures']], [r[0] for r in rows])
+        self.assertEqual([r['kickoff'] for r in c['provenance']['fixtures']], [r[1] for r in rows])
+
+    def test_exact_sequence_four_and_interruption(self):
+        for i in range(1, 5):
+            self.fixture(i, f"2026-0{i}-01T00:00:00+00:00", score=(3, 0))
+        c = self.candidates('H2H_EXACT_GOALS_SEQUENCE')[0]
+        self.assertEqual(c['evidence']['count'], 4)
+        self.db.execute("UPDATE football_reference_fixtures SET home_score=2 WHERE id=1")
+        c = self.candidates('H2H_EXACT_GOALS_SEQUENCE')[0]
+        self.assertEqual(c['evidence']['count'], 3)
+        self.assertFalse(c['evidence']['lower_bound'])
+        self.db.execute("UPDATE football_reference_fixtures SET home_score=2 WHERE id=3")
+        self.assertEqual(self.candidates('H2H_EXACT_GOALS_SEQUENCE'), [])
+
+    def test_exact_sequence_zero_and_gap_are_withheld(self):
+        for i in range(1, 4):
+            self.fixture(i, f"2026-0{i}-01T00:00:00+00:00", score=(0, 0))
+        self.assertEqual(self.candidates('H2H_EXACT_GOALS_SEQUENCE'), [])
+        self.db.execute("UPDATE football_reference_fixtures SET home_score=3")
+        self.assertEqual(len(self.candidates('H2H_EXACT_GOALS_SEQUENCE')), 1)
+        self.fixture(4, '2026-02-15T00:00:00+00:00', score=(None, None), state=1)
+        self.assertEqual(self.candidates('H2H_EXACT_GOALS_SEQUENCE'), [])
+
+    def test_exact_sequence_cutoff_and_either_subject(self):
+        for i in range(1, 4):
+            self.fixture(i, f"2026-0{i}-01T00:00:00+00:00", score=(3, 2))
+        self.assertEqual({c['subject_team'] for c in self.candidates('H2H_EXACT_GOALS_SEQUENCE')}, {'Arsenal', 'Man United'})
+        self.as_of = datetime(2026, 3, 1, tzinfo=timezone.utc)
+        self.assertEqual(self.candidates('H2H_EXACT_GOALS_SEQUENCE'), [])
+        self.as_of = self.target.kickoff_utc
+        before = self.packet()
+        self.fixture(4, self.as_of.isoformat(), score=(0, 0), season=3)
+        self.assertEqual(before, self.packet())
+
+    def test_two_home_draws_keep_one_story_with_audit_reason(self):
+        for i in range(1, 3):
+            self.fixture(i, f"2026-0{i}-01T00:00:00+00:00", score=(1, 1))
+        p = self.packet()
+        raw = [c for c in p['candidates'] if c['signal_type'].startswith('VENUE_H2H_')]
+        kept = [c for c in p['ranked_candidates'] if c['signal_type'].startswith('VENUE_H2H_')]
+        self.assertEqual((len(raw), len(kept)), (2, 1))
+        self.assertTrue(any(d['reason'] == 'redundant_h2h_story' for d in p['ranking_decisions']))
+
+    def test_forest_style_two_away_wins_survive_as_home_losses(self):
+        for i in range(1, 3):
+            self.fixture(i, f"2026-0{i}-01T00:00:00+00:00", score=(0, 1))
+        c = self.candidates('VENUE_H2H_LOSING_RUN', ranked=True)
+        self.assertEqual(len(c), 1)
+        self.assertEqual(c[0]['evidence']['count'], 2)
+        self.assertEqual(self.candidates('VENUE_H2H_WINLESS_RUN', ranked=True), [])
+
+    def test_overlapping_runs_prefer_longer_and_concrete_equal_window(self):
+        for i in range(1, 5):
+            self.fixture(i, f"2026-0{i}-01T00:00:00+00:00", score=(1, 1) if i == 1 else (2, 0),
+                         home=19 if i % 2 else 14, away=14 if i % 2 else 19)
+        # Make Arsenal win across alternating venues after the opening draw.
+        self.db.execute("UPDATE football_reference_fixtures SET home_score=0,away_score=2 WHERE id IN (2,4)")
+        kept = [c for c in self.packet()['ranked_candidates'] if c['signal_type'].endswith('_RUN')]
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]['evidence']['count'], 4)
+        self.db.execute("UPDATE football_reference_fixtures SET home_score=2,away_score=0 WHERE id=1")
+        kept = [c for c in self.packet()['ranked_candidates'] if c['signal_type'].endswith('_RUN')]
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]['evidence']['metric'], 'WINNING')
+
+    def test_ordinary_anchor_below_brace_and_notable_remains_strong(self):
+        self.fixture(1, '2026-01-01T00:00:00+00:00', score=(2, 1))
+        self.goal(1, 1, 10, '1-0')
+        self.goal(2, 1, 20, '2-0')
+        self.goal(3, 1, 30, '2-1', team=14, player=200)
+        anchor = self.candidates('EXACT_PRIOR_SEASON_FIXTURE')[0]
+        brace = self.candidates('BRACE', ranked=True)[0]
+        self.assertLess(anchor['editorial_score'], brace['editorial_score'])
+        self.assertEqual(self.candidates('EXACT_PRIOR_SEASON_FIXTURE', ranked=True), [])
+        for score in ((3, 0), (3, 2), (2, 3), (0, 3)):
+            self.db.execute('UPDATE football_reference_fixtures SET home_score=?,away_score=?', score)
+            self.assertEqual(self.candidates('EXACT_PRIOR_SEASON_FIXTURE')[0]['editorial_score'], 85)
+        self.db.execute('UPDATE football_reference_fixtures SET home_score=0,away_score=0')
+        self.assertLess(self.candidates('EXACT_PRIOR_SEASON_FIXTURE')[0]['editorial_score'], 60)
+
+    def test_player_recurrence_requires_three_distinct_scoring_meetings(self):
+        for i in range(1, 4):
+            self.fixture(i, f"2026-0{i}-01T00:00:00+00:00", score=(1, 0))
+            self.goal(i, i, 30, '1-0')
+        c = self.candidates('PLAYER_VS_OPPONENT', ranked=True)[0]
+        self.assertEqual((c['evidence']['goals'], c['evidence']['scoring_meetings']), (3, 3))
+        self.assertEqual(c['score_breakdown']['distinct_scoring_meetings'], 22)
+        self.assertIsNone(c['evidence']['appearance_count'])
+        self.assertFalse(c['evidence']['roster_verified'])
+        self.assertEqual(len(c['provenance']['external_event_ids']), 3)
+        self.db.execute('UPDATE football_reference_events SET type_id=15,team_provider_id=14 WHERE id=3')
+        c = self.candidates('PLAYER_VS_OPPONENT')[0]
+        self.assertEqual((c['evidence']['goals'], c['evidence']['scoring_meetings']), (2, 2))
+        self.assertEqual(c['score_breakdown']['distinct_scoring_meetings'], 0)
+        self.assertEqual(self.candidates('PLAYER_VS_OPPONENT', ranked=True), [])
+
+    def test_one_hat_trick_is_not_recurrence(self):
+        self.fixture(1, '2026-01-01T00:00:00+00:00', score=(3, 0))
+        for i in range(1, 4):
+            self.goal(i, 1, i*20, f'{i}-0')
+        c = self.candidates('PLAYER_VS_OPPONENT')[0]
+        self.assertEqual(c['evidence']['scoring_meetings'], 1)
+        self.assertEqual(c['score_breakdown']['distinct_scoring_meetings'], 0)
+        self.assertEqual(self.candidates('PLAYER_VS_OPPONENT', ranked=True), [])
+
+    def test_new_ranking_deterministic_under_candidate_permutation(self):
+        from fixture_intelligence import Candidate, rank_candidates
+        for i in range(1, 5):
+            self.fixture(i, f"2026-0{i}-01T00:00:00+00:00", score=(3, 0))
+        candidates = [Candidate(**c) for c in self.packet()['candidates']]
+        self.assertEqual(rank_candidates(candidates, self.target), rank_candidates(list(reversed(candidates)), self.target))
+
 
 if __name__ == "__main__":
     unittest.main()
