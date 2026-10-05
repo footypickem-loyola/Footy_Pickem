@@ -1,0 +1,1380 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "d03812d",
+  "snapshot_sha256": "73c37c2cceff71f360dbf36f55ecadc1a9ad05143ed0cbf93c369794df35bef4",
+  "evaluation_version": "retrospective-eval-v1",
+  "cutoff_rule": "24h before the first kickoff of each complete matchweek",
+  "slates": [
+    {
+      "cutoff": "2026-08-27T19:00:00+00:00",
+      "first_kickoff": "2026-08-28T19:00:00+00:00",
+      "fixture_ids": [
+        771,
+        772,
+        773,
+        774,
+        775,
+        776,
+        777,
+        778,
+        779,
+        780
+      ],
+      "full_matchweek": true,
+      "week": 2
+    },
+    {
+      "cutoff": "2026-09-03T19:00:00+00:00",
+      "first_kickoff": "2026-09-04T19:00:00+00:00",
+      "fixture_ids": [
+        781,
+        782,
+        783,
+        784,
+        785,
+        786,
+        787,
+        788,
+        789,
+        790
+      ],
+      "full_matchweek": true,
+      "week": 3
+    },
+    {
+      "cutoff": "2026-09-11T14:00:00+00:00",
+      "first_kickoff": "2026-09-12T14:00:00+00:00",
+      "fixture_ids": [
+        791,
+        792,
+        793,
+        794,
+        795,
+        796,
+        797,
+        798,
+        799,
+        800
+      ],
+      "full_matchweek": true,
+      "week": 4
+    },
+    {
+      "cutoff": "2026-09-17T19:00:00+00:00",
+      "first_kickoff": "2026-09-18T19:00:00+00:00",
+      "fixture_ids": [
+        801,
+        802,
+        803,
+        805,
+        806,
+        808,
+        804,
+        807,
+        809,
+        810
+      ],
+      "full_matchweek": true,
+      "week": 5
+    }
+  ],
+  "limitations": [
+    "Official result.updated_at is enforced unchanged; later corrections/backfills are unavailable, not rewound.",
+    "Reference facts describe pre-cutoff matches in the supplied corrected snapshot, not an as-known-at-time archive.",
+    "No new detector, AI writer, external context, scraping, or subjective engine labels.",
+    "Coverage is semantic structured-fact matching against a small curated set, not text matching or statistical model accuracy."
+  ],
+  "unchanged_existing_candidate_ids": 377,
+  "new_candidate_ids": [
+    "775:history:H2H_EXACT_GOALS_SEQUENCE:149868716c044b52",
+    "777:history:H2H_EXACT_GOALS_SEQUENCE:a8bf0762ad0c0bf5",
+    "792:history:H2H_EXACT_GOALS_SEQUENCE:d365be07fa0d4b99",
+    "793:history:H2H_EXACT_GOALS_SEQUENCE:c2eb8d241f0f9c6f"
+  ],
+  "before": {
+    "fixture_count": 40,
+    "raw_candidate_count": 377,
+    "ranked_candidate_count": 88,
+    "gold_counts": {
+      "raw_equivalent_found": 1,
+      "surfaced": 1,
+      "top_3": 1,
+      "top_5": 1
+    },
+    "gold_items": 10,
+    "gold_coverage_rate": 0.1,
+    "gold_excluded_data_unavailable_at_replay": 5,
+    "supported_data_only_coverage_rate": 0.5,
+    "duplication_flagged_slots": 4,
+    "duplication_rate": 0.0455,
+    "top_5_slots": 88,
+    "fixtures_with_zero_usable_signals": 7,
+    "fixtures_with_zero_strong_signals": 8,
+    "supplemental": {
+      "gold_counts": {
+        "raw_equivalent_found": 13,
+        "surfaced": 10,
+        "top_3": 7,
+        "top_5": 10
+      },
+      "gold_items": 14,
+      "gold_excluded_data_unavailable_at_replay": 6
+    },
+    "detector_types": {
+      "BRACE": {
+        "raw": 25,
+        "retained": 8
+      },
+      "EXACT_PRIOR_SEASON_FIXTURE": {
+        "raw": 33,
+        "retained": 26
+      },
+      "H2H_LOSING_RUN": {
+        "raw": 3,
+        "retained": 0
+      },
+      "H2H_UNBEATEN_RUN": {
+        "raw": 12,
+        "retained": 10
+      },
+      "H2H_WINLESS_RUN": {
+        "raw": 12,
+        "retained": 0
+      },
+      "H2H_WINNING_RUN": {
+        "raw": 3,
+        "retained": 3
+      },
+      "HAT_TRICK": {
+        "raw": 3,
+        "retained": 3
+      },
+      "LATE_DECISIVE_GOAL": {
+        "raw": 20,
+        "retained": 20
+      },
+      "PLAYER_VS_OPPONENT": {
+        "raw": 237,
+        "retained": 0
+      },
+      "PREVIOUS_MEETING_RED_CARD": {
+        "raw": 4,
+        "retained": 1
+      },
+      "VENUE_H2H_LOSING_RUN": {
+        "raw": 4,
+        "retained": 4
+      },
+      "VENUE_H2H_UNBEATEN_RUN": {
+        "raw": 7,
+        "retained": 3
+      },
+      "VENUE_H2H_WINLESS_RUN": {
+        "raw": 10,
+        "retained": 6
+      },
+      "VENUE_H2H_WINNING_RUN": {
+        "raw": 4,
+        "retained": 4
+      }
+    }
+  },
+  "after": {
+    "fixture_count": 40,
+    "raw_candidate_count": 381,
+    "ranked_candidate_count": 71,
+    "gold_counts": {
+      "raw_equivalent_found": 2,
+      "surfaced": 2,
+      "top_3": 2,
+      "top_5": 2
+    },
+    "gold_items": 10,
+    "gold_coverage_rate": 0.2,
+    "gold_excluded_data_unavailable_at_replay": 5,
+    "supported_data_only_coverage_rate": 1.0,
+    "duplication_flagged_slots": 0,
+    "duplication_rate": 0.0,
+    "top_5_slots": 71,
+    "fixtures_with_zero_usable_signals": 11,
+    "fixtures_with_zero_strong_signals": 16,
+    "supplemental": {
+      "gold_counts": {
+        "raw_equivalent_found": 13,
+        "surfaced": 10,
+        "top_3": 10,
+        "top_5": 10
+      },
+      "gold_items": 14,
+      "gold_excluded_data_unavailable_at_replay": 6
+    },
+    "detector_types": {
+      "BRACE": {
+        "raw": 25,
+        "retained": 8
+      },
+      "EXACT_PRIOR_SEASON_FIXTURE": {
+        "raw": 33,
+        "retained": 17
+      },
+      "H2H_EXACT_GOALS_SEQUENCE": {
+        "raw": 4,
+        "retained": 3
+      },
+      "H2H_LOSING_RUN": {
+        "raw": 3,
+        "retained": 0
+      },
+      "H2H_UNBEATEN_RUN": {
+        "raw": 12,
+        "retained": 10
+      },
+      "H2H_WINLESS_RUN": {
+        "raw": 12,
+        "retained": 0
+      },
+      "H2H_WINNING_RUN": {
+        "raw": 3,
+        "retained": 2
+      },
+      "HAT_TRICK": {
+        "raw": 3,
+        "retained": 3
+      },
+      "LATE_DECISIVE_GOAL": {
+        "raw": 20,
+        "retained": 20
+      },
+      "PLAYER_VS_OPPONENT": {
+        "raw": 237,
+        "retained": 1
+      },
+      "PREVIOUS_MEETING_RED_CARD": {
+        "raw": 4,
+        "retained": 1
+      },
+      "VENUE_H2H_LOSING_RUN": {
+        "raw": 4,
+        "retained": 1
+      },
+      "VENUE_H2H_UNBEATEN_RUN": {
+        "raw": 7,
+        "retained": 3
+      },
+      "VENUE_H2H_WINLESS_RUN": {
+        "raw": 10,
+        "retained": 1
+      },
+      "VENUE_H2H_WINNING_RUN": {
+        "raw": 4,
+        "retained": 1
+      }
+    }
+  },
+  "fixed_review_label_impact": {
+    "EXCELLENT": {
+      "reviewed": 12,
+      "affected": 1,
+      "score_changed": 0,
+      "rank_or_retention_changed": 1,
+      "retained_before": 12,
+      "retained_after": 12,
+      "removed_from_retained": 0,
+      "newly_retained": 0
+    },
+    "MARGINAL": {
+      "reviewed": 26,
+      "affected": 20,
+      "score_changed": 8,
+      "rank_or_retention_changed": 20,
+      "retained_before": 25,
+      "retained_after": 11,
+      "removed_from_retained": 14,
+      "newly_retained": 0
+    },
+    "NOISY": {
+      "reviewed": 6,
+      "affected": 5,
+      "score_changed": 0,
+      "rank_or_retention_changed": 5,
+      "retained_before": 5,
+      "retained_after": 0,
+      "removed_from_retained": 5,
+      "newly_retained": 0
+    },
+    "USEFUL": {
+      "reviewed": 48,
+      "affected": 27,
+      "score_changed": 11,
+      "rank_or_retention_changed": 26,
+      "retained_before": 46,
+      "retained_after": 45,
+      "removed_from_retained": 2,
+      "newly_retained": 1
+    }
+  },
+  "gold_comparisons": {
+    "primary": [
+      {
+        "gold_id": "user-haaland-first-five",
+        "fixture_id": 771,
+        "before": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-haaland-sixth-milestone",
+        "fixture_id": 771,
+        "before": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-forest-anfield-two",
+        "fixture_id": 772,
+        "before": {
+          "assessment": "SURFACED",
+          "rank": 3,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 3,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "user-brighton-three-each",
+        "fixture_id": 777,
+        "before": {
+          "assessment": "ENGINE MISS",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 3,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "user-brighton-fourth-record",
+        "fixture_id": 777,
+        "before": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-arsenal-away-openers",
+        "fixture_id": 780,
+        "before": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-arsenal-away-fifth-record",
+        "fixture_id": 780,
+        "before": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-raya-fifty",
+        "fixture_id": 780,
+        "before": {
+          "assessment": "EXTERNAL DATA REQUIRED",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "EXTERNAL DATA REQUIRED",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-chelsea-21-drought",
+        "fixture_id": 801,
+        "before": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-arsenal-nine-wins",
+        "fixture_id": 805,
+        "before": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-arsenal-tenth-conditional",
+        "fixture_id": 805,
+        "before": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-arsenal-perfect-five",
+        "fixture_id": 805,
+        "before": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-spurs-four-scoreless",
+        "fixture_id": 802,
+        "before": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-spurs-worst-since-2008",
+        "fixture_id": 802,
+        "before": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "user-hull-promoted-start",
+        "fixture_id": 788,
+        "before": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "HISTORICAL DEPTH INSUFFICIENT",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      }
+    ],
+    "supplemental": [
+      {
+        "gold_id": "palmer-four",
+        "fixture_id": 777,
+        "before": {
+          "assessment": "SURFACED",
+          "rank": 1,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 1,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "kluivert-three",
+        "fixture_id": 782,
+        "before": {
+          "assessment": "SURFACED",
+          "rank": 1,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 1,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "schade-three",
+        "fixture_id": 794,
+        "before": {
+          "assessment": "SURFACED",
+          "rank": 1,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 1,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "haaland-palace-brace",
+        "fixture_id": 771,
+        "before": {
+          "assessment": "SURFACED",
+          "rank": 5,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": false,
+          "top_5": true
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 3,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "villa-arsenal-late",
+        "fixture_id": 780,
+        "before": {
+          "assessment": "SURFACED",
+          "rank": 1,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 1,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "arsenal-chelsea-score",
+        "fixture_id": 790,
+        "before": {
+          "assessment": "SURFACED",
+          "rank": 1,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 3,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "arsenal-chelsea-run",
+        "fixture_id": 790,
+        "before": {
+          "assessment": "SURFACED",
+          "rank": 2,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 1,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "chelsea-red-context",
+        "fixture_id": 790,
+        "before": {
+          "assessment": "SURFACED",
+          "rank": 4,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": false,
+          "top_5": true
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 2,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "brighton-stamford-result",
+        "fixture_id": 777,
+        "before": {
+          "assessment": "SURFACED",
+          "rank": 2,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 2,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "solanke-villa-brace",
+        "fixture_id": 802,
+        "before": {
+          "assessment": "ENGINE MISS",
+          "rank": null,
+          "raw_equivalent_found": true,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "ENGINE MISS",
+          "rank": null,
+          "raw_equivalent_found": true,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "trossard-villa-total",
+        "fixture_id": 780,
+        "before": {
+          "assessment": "ENGINE MISS",
+          "rank": null,
+          "raw_equivalent_found": true,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "SURFACED",
+          "rank": 2,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": true,
+          "top_5": true
+        }
+      },
+      {
+        "gold_id": "haaland-palace-total",
+        "fixture_id": 771,
+        "before": {
+          "assessment": "ENGINE MISS",
+          "rank": null,
+          "raw_equivalent_found": true,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "ENGINE MISS",
+          "rank": null,
+          "raw_equivalent_found": true,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "brentford-chelsea-two-draws",
+        "fixture_id": 801,
+        "before": {
+          "assessment": "SURFACED",
+          "rank": 4,
+          "raw_equivalent_found": true,
+          "surfaced": true,
+          "top_3": false,
+          "top_5": true
+        },
+        "after": {
+          "assessment": "ENGINE MISS",
+          "rank": null,
+          "raw_equivalent_found": true,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "arsenal-four-wins",
+        "fixture_id": 805,
+        "before": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "spurs-four-scoreless",
+        "fixture_id": 802,
+        "before": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "coventry-three-scoreless",
+        "fixture_id": 798,
+        "before": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "city-four-wins",
+        "fixture_id": 807,
+        "before": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "bournemouth-four-winless",
+        "fixture_id": 809,
+        "before": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "hull-two-wins",
+        "fixture_id": 788,
+        "before": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "DATA UNAVAILABLE AT REPLAY",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      },
+      {
+        "gold_id": "pair-eleven-goals",
+        "fixture_id": 809,
+        "before": {
+          "assessment": "ENGINE MISS",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        },
+        "after": {
+          "assessment": "ENGINE MISS",
+          "rank": null,
+          "raw_equivalent_found": false,
+          "surfaced": false,
+          "top_3": false,
+          "top_5": false
+        }
+      }
+    ]
+  },
+  "representative_findings": [
+    {
+      "fixture_id": 777,
+      "fixture": {
+        "away": "Brighton Hove",
+        "home": "Chelsea",
+        "id": 777,
+        "kickoff_utc": "2026-08-30T13:00:00+00:00",
+        "season_id": 2
+      },
+      "cutoff": "2026-08-27T19:00:00+00:00",
+      "before": [
+        {
+          "rank": 1,
+          "id": "777:history:HAT_TRICK:7ff34f2edd9be522",
+          "type": "HAT_TRICK",
+          "score": 96,
+          "claim": "Cole Palmer: 4 goals for Chelsea in the stored 2024/2025 meeting."
+        },
+        {
+          "rank": 2,
+          "id": "777:history:LATE_DECISIVE_GOAL:922862b188966bf6",
+          "type": "LATE_DECISIVE_GOAL",
+          "score": 94,
+          "claim": "Brighton Hove: late winner at 90+2 in the stored 2025/2026 meeting."
+        },
+        {
+          "rank": 3,
+          "id": "777:history:H2H_WINNING_RUN:582755b35c27151f",
+          "type": "H2H_WINNING_RUN",
+          "score": 73,
+          "claim": "Brighton Hove: winning across the last 3 stored PL meetings."
+        },
+        {
+          "rank": 4,
+          "id": "777:history:BRACE:4f3cf7eca937fcd2",
+          "type": "BRACE",
+          "score": 63,
+          "claim": "Danny Welbeck: 2 goals for Brighton Hove in the stored 2025/2026 meeting."
+        }
+      ],
+      "after": [
+        {
+          "rank": 1,
+          "id": "777:history:HAT_TRICK:7ff34f2edd9be522",
+          "type": "HAT_TRICK",
+          "score": 96,
+          "claim": "Cole Palmer: 4 goals for Chelsea in the stored 2024/2025 meeting."
+        },
+        {
+          "rank": 2,
+          "id": "777:history:LATE_DECISIVE_GOAL:922862b188966bf6",
+          "type": "LATE_DECISIVE_GOAL",
+          "score": 94,
+          "claim": "Brighton Hove: late winner at 90+2 in the stored 2025/2026 meeting."
+        },
+        {
+          "rank": 3,
+          "id": "777:history:H2H_EXACT_GOALS_SEQUENCE:a8bf0762ad0c0bf5",
+          "type": "H2H_EXACT_GOALS_SEQUENCE",
+          "score": 82,
+          "claim": "Brighton Hove scored exactly 3 goals in each of the last 3 stored PL meetings between these clubs."
+        },
+        {
+          "rank": 4,
+          "id": "777:history:H2H_WINNING_RUN:582755b35c27151f",
+          "type": "H2H_WINNING_RUN",
+          "score": 73,
+          "claim": "Brighton Hove: winning across the last 3 stored PL meetings."
+        },
+        {
+          "rank": 5,
+          "id": "777:history:BRACE:4f3cf7eca937fcd2",
+          "type": "BRACE",
+          "score": 63,
+          "claim": "Danny Welbeck: 2 goals for Brighton Hove in the stored 2025/2026 meeting."
+        }
+      ]
+    },
+    {
+      "fixture_id": 771,
+      "fixture": {
+        "away": "Man City",
+        "home": "Crystal Palace",
+        "id": 771,
+        "kickoff_utc": "2026-08-28T19:00:00+00:00",
+        "season_id": 2
+      },
+      "cutoff": "2026-08-27T19:00:00+00:00",
+      "before": [
+        {
+          "rank": 1,
+          "id": "771:history:EXACT_PRIOR_SEASON_FIXTURE:70f02bae144d6748",
+          "type": "EXACT_PRIOR_SEASON_FIXTURE",
+          "score": 85,
+          "claim": "Crystal Palace 0-3 Manchester City (2025/2026, same venue orientation)."
+        },
+        {
+          "rank": 2,
+          "id": "771:history:H2H_UNBEATEN_RUN:264dd9405b993510",
+          "type": "H2H_UNBEATEN_RUN",
+          "score": 82,
+          "claim": "Man City: unbeaten across the last 4 stored PL meetings."
+        },
+        {
+          "rank": 3,
+          "id": "771:history:H2H_WINNING_RUN:bdd8cf7727c7c0e6",
+          "type": "H2H_WINNING_RUN",
+          "score": 73,
+          "claim": "Man City: winning across the last 3 stored PL meetings."
+        },
+        {
+          "rank": 4,
+          "id": "771:history:VENUE_H2H_WINLESS_RUN:1985184f6dfcf2a5",
+          "type": "VENUE_H2H_WINLESS_RUN",
+          "score": 68,
+          "claim": "Crystal Palace: winless across the last 2 stored home PL meetings."
+        },
+        {
+          "rank": 5,
+          "id": "771:history:BRACE:7495226732bbebb5",
+          "type": "BRACE",
+          "score": 63,
+          "claim": "Erling Haaland: 2 goals for Man City in the stored 2025/2026 meeting."
+        }
+      ],
+      "after": [
+        {
+          "rank": 1,
+          "id": "771:history:EXACT_PRIOR_SEASON_FIXTURE:70f02bae144d6748",
+          "type": "EXACT_PRIOR_SEASON_FIXTURE",
+          "score": 85,
+          "claim": "Crystal Palace 0-3 Manchester City (2025/2026, same venue orientation)."
+        },
+        {
+          "rank": 2,
+          "id": "771:history:H2H_UNBEATEN_RUN:264dd9405b993510",
+          "type": "H2H_UNBEATEN_RUN",
+          "score": 82,
+          "claim": "Man City: unbeaten across the last 4 stored PL meetings."
+        },
+        {
+          "rank": 3,
+          "id": "771:history:BRACE:7495226732bbebb5",
+          "type": "BRACE",
+          "score": 63,
+          "claim": "Erling Haaland: 2 goals for Man City in the stored 2025/2026 meeting."
+        }
+      ]
+    },
+    {
+      "fixture_id": 801,
+      "fixture": {
+        "away": "Chelsea",
+        "home": "Brentford",
+        "id": 801,
+        "kickoff_utc": "2026-09-18T19:00:00+00:00",
+        "season_id": 2
+      },
+      "cutoff": "2026-09-17T19:00:00+00:00",
+      "before": [
+        {
+          "rank": 1,
+          "id": "801:history:LATE_DECISIVE_GOAL:0536f245f6f176cc",
+          "type": "LATE_DECISIVE_GOAL",
+          "score": 83,
+          "claim": "Brentford: late equalizer at 90+3 in the stored 2025/2026 meeting."
+        },
+        {
+          "rank": 2,
+          "id": "801:history:H2H_UNBEATEN_RUN:cf12599695f1a045",
+          "type": "H2H_UNBEATEN_RUN",
+          "score": 82,
+          "claim": "Chelsea: unbeaten across the last 4 stored PL meetings."
+        },
+        {
+          "rank": 3,
+          "id": "801:history:VENUE_H2H_UNBEATEN_RUN:551fbeb30a6527db",
+          "type": "VENUE_H2H_UNBEATEN_RUN",
+          "score": 64,
+          "claim": "Brentford: unbeaten across the last 2 stored home PL meetings."
+        },
+        {
+          "rank": 4,
+          "id": "801:history:VENUE_H2H_WINLESS_RUN:89c8d1ab72b18490",
+          "type": "VENUE_H2H_WINLESS_RUN",
+          "score": 64,
+          "claim": "Brentford: winless across the last 2 stored home PL meetings."
+        }
+      ],
+      "after": [
+        {
+          "rank": 1,
+          "id": "801:history:LATE_DECISIVE_GOAL:0536f245f6f176cc",
+          "type": "LATE_DECISIVE_GOAL",
+          "score": 83,
+          "claim": "Brentford: late equalizer at 90+3 in the stored 2025/2026 meeting."
+        },
+        {
+          "rank": 2,
+          "id": "801:history:H2H_UNBEATEN_RUN:cf12599695f1a045",
+          "type": "H2H_UNBEATEN_RUN",
+          "score": 82,
+          "claim": "Chelsea: unbeaten across the last 4 stored PL meetings."
+        },
+        {
+          "rank": 3,
+          "id": "801:history:VENUE_H2H_UNBEATEN_RUN:551fbeb30a6527db",
+          "type": "VENUE_H2H_UNBEATEN_RUN",
+          "score": 64,
+          "claim": "Brentford: unbeaten across the last 2 stored home PL meetings."
+        }
+      ]
+    },
+    {
+      "fixture_id": 778,
+      "fixture": {
+        "away": "Brentford",
+        "home": "Leeds United",
+        "id": 778,
+        "kickoff_utc": "2026-08-30T13:00:00+00:00",
+        "season_id": 2
+      },
+      "cutoff": "2026-08-27T19:00:00+00:00",
+      "before": [
+        {
+          "rank": 1,
+          "id": "778:history:EXACT_PRIOR_SEASON_FIXTURE:b406cf8e9f2d2961",
+          "type": "EXACT_PRIOR_SEASON_FIXTURE",
+          "score": 85,
+          "claim": "Leeds United 0-0 Brentford (2025/2026, same venue orientation)."
+        }
+      ],
+      "after": []
+    },
+    {
+      "fixture_id": 802,
+      "fixture": {
+        "away": "Aston Villa",
+        "home": "Tottenham",
+        "id": 802,
+        "kickoff_utc": "2026-09-19T11:30:00+00:00",
+        "season_id": 2
+      },
+      "cutoff": "2026-09-17T19:00:00+00:00",
+      "before": [
+        {
+          "rank": 1,
+          "id": "802:history:EXACT_PRIOR_SEASON_FIXTURE:01daf77516195e97",
+          "type": "EXACT_PRIOR_SEASON_FIXTURE",
+          "score": 85,
+          "claim": "Tottenham Hotspur 1-2 Aston Villa (2025/2026, same venue orientation)."
+        }
+      ],
+      "after": [
+        {
+          "rank": 1,
+          "id": "802:history:EXACT_PRIOR_SEASON_FIXTURE:01daf77516195e97",
+          "type": "EXACT_PRIOR_SEASON_FIXTURE",
+          "score": 61,
+          "claim": "Tottenham Hotspur 1-2 Aston Villa (2025/2026, same venue orientation)."
+        }
+      ]
+    },
+    {
+      "fixture_id": 780,
+      "fixture": {
+        "away": "Arsenal",
+        "home": "Aston Villa",
+        "id": 780,
+        "kickoff_utc": "2026-08-31T19:00:00+00:00",
+        "season_id": 2
+      },
+      "cutoff": "2026-08-27T19:00:00+00:00",
+      "before": [
+        {
+          "rank": 1,
+          "id": "780:history:LATE_DECISIVE_GOAL:33a4de485e43bfb1",
+          "type": "LATE_DECISIVE_GOAL",
+          "score": 94,
+          "claim": "Aston Villa: late winner at 90+5 in the stored 2025/2026 meeting."
+        }
+      ],
+      "after": [
+        {
+          "rank": 1,
+          "id": "780:history:LATE_DECISIVE_GOAL:33a4de485e43bfb1",
+          "type": "LATE_DECISIVE_GOAL",
+          "score": 94,
+          "claim": "Aston Villa: late winner at 90+5 in the stored 2025/2026 meeting."
+        },
+        {
+          "rank": 2,
+          "id": "780:history:PLAYER_VS_OPPONENT:39851cdf538481e4",
+          "type": "PLAYER_VS_OPPONENT",
+          "score": 78,
+          "claim": "Leandro Trossard: 3 goals for Arsenal across the last 4 stored PL meetings between these clubs."
+        }
+      ]
+    },
+    {
+      "fixture_id": 772,
+      "fixture": {
+        "away": "Nottingham",
+        "home": "Liverpool",
+        "id": 772,
+        "kickoff_utc": "2026-08-29T11:30:00+00:00",
+        "season_id": 2
+      },
+      "cutoff": "2026-08-27T19:00:00+00:00",
+      "before": [
+        {
+          "rank": 1,
+          "id": "772:history:LATE_DECISIVE_GOAL:9dca3591e1cef944",
+          "type": "LATE_DECISIVE_GOAL",
+          "score": 86,
+          "claim": "Liverpool: late winner at 90+7 in the stored 2025/2026 meeting."
+        },
+        {
+          "rank": 2,
+          "id": "772:history:EXACT_PRIOR_SEASON_FIXTURE:334a8d414751c5d1",
+          "type": "EXACT_PRIOR_SEASON_FIXTURE",
+          "score": 85,
+          "claim": "Liverpool 0-3 Nottingham Forest (2025/2026, same venue orientation)."
+        },
+        {
+          "rank": 3,
+          "id": "772:history:VENUE_H2H_LOSING_RUN:0ac3309972b9c73c",
+          "type": "VENUE_H2H_LOSING_RUN",
+          "score": 68,
+          "claim": "Liverpool: losing across the last 2 stored home PL meetings."
+        }
+      ],
+      "after": [
+        {
+          "rank": 1,
+          "id": "772:history:LATE_DECISIVE_GOAL:9dca3591e1cef944",
+          "type": "LATE_DECISIVE_GOAL",
+          "score": 86,
+          "claim": "Liverpool: late winner at 90+7 in the stored 2025/2026 meeting."
+        },
+        {
+          "rank": 2,
+          "id": "772:history:EXACT_PRIOR_SEASON_FIXTURE:334a8d414751c5d1",
+          "type": "EXACT_PRIOR_SEASON_FIXTURE",
+          "score": 85,
+          "claim": "Liverpool 0-3 Nottingham Forest (2025/2026, same venue orientation)."
+        },
+        {
+          "rank": 3,
+          "id": "772:history:VENUE_H2H_LOSING_RUN:0ac3309972b9c73c",
+          "type": "VENUE_H2H_LOSING_RUN",
+          "score": 68,
+          "claim": "Liverpool: losing across the last 2 stored home PL meetings."
+        }
+      ]
+    }
+  ]
+}

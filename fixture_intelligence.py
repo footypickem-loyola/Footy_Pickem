@@ -8,7 +8,7 @@ from datetime import timezone
 from hashlib import sha256
 import json
 
-VERSION = "fixture-intelligence-v2"
+VERSION = "fixture-intelligence-v3"
 MIN_SCORE = 60
 
 
@@ -277,16 +277,58 @@ def build_fixture_intelligence(*, fixture, fixtures, results, weeks, season_id, 
                              "Season-start claims assume the supplied schedule covers the season from its start."])
 
 
+def h2h_story_suppression(candidates, fixture):
+    """Select H2H representatives without changing scores or other fact families."""
+    stories = []
+    for c in candidates:
+        if (c.family != 'HISTORY' or not c.signal_type.endswith('_RUN') or
+                not c.signal_type.startswith(('H2H_', 'VENUE_H2H_')) or c.editorial_score < MIN_SCORE):
+            continue
+        rows = c.provenance['fixtures']
+        metric = c.evidence['metric']
+        drawn = all(r['home_score'] == r['away_score'] for r in rows)
+        advantaged = (c.subject_team if metric in ('WINNING', 'UNBEATEN') else
+                      fixture.away if c.subject_team == fixture.home else fixture.home)
+        stories.append((c, 'draws' if drawn else advantaged,
+                        {r['external_fixture_id'] for r in rows}))
+    # Prefer the larger supporting window; concrete wins/losses break equal windows.
+    stories.sort(key=lambda item: (-len(item[2]),
+                                  item[0].evidence['metric'] not in ('WINNING', 'LOSING'),
+                                  -item[0].editorial_score,
+                                  {'WINNING': 0, 'LOSING': 1, 'UNBEATEN': 2, 'WINLESS': 3}[item[0].evidence['metric']], item[0].id))
+    representatives, suppressed = [], {}
+    for c, angle, ids in stories:
+        for k, other_angle, other_ids in representatives:
+            if angle != other_angle or not ids & other_ids:
+                continue
+            nested = ids <= other_ids or other_ids <= ids
+            # A two-meeting venue gloss can repeat a broader current H2H story
+            # even when its older venue meeting sits outside that overall run.
+            small_venue_gloss = ((c.signal_type.startswith('VENUE_H2H_') and len(ids) == 2 and
+                                   k.signal_type.startswith('H2H_') and len(other_ids) >= 3) or
+                                  (k.signal_type.startswith('VENUE_H2H_') and len(other_ids) == 2 and
+                                   c.signal_type.startswith('H2H_') and len(ids) >= 3))
+            if nested or small_venue_gloss:
+                suppressed[c.id] = k.id
+                break
+        else:
+            representatives.append((c, angle, ids))
+    return suppressed
+
+
 def rank_candidates(candidates, fixture):
     """Keep raw facts intact; disclose threshold and semantic suppression reasons."""
     ordered = sorted(candidates, key=lambda c: (-c.editorial_score, -len(c.components), c.scope != "overall",
         {"WINNING": 0, "LOSING": 1, "UNBEATEN": 2, "WINLESS": 3}.get(c.evidence.get("metric"), 0)
         if c.family == "HISTORY" else 0, c.id))
+    h2h_suppressed = h2h_story_suppression(candidates, fixture)
     kept, decisions = [], []
     for c in ordered:
         reason, winner = None, None
         if c.editorial_score < MIN_SCORE:
             reason = "below_editorial_threshold"
+        if c.id in h2h_suppressed:
+            reason, winner = 'redundant_h2h_story', h2h_suppressed[c.id]
         if c.family == "CONTINUATION" and c.scope not in ("overall", "home" if c.subject_team == fixture.home else "away"):
             reason = "continuation_not_applicable_at_fixture_venue"
         if reason is None:
