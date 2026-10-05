@@ -1,0 +1,485 @@
+{
+  "schema_version": 1,
+  "provenance": "User-supplied 14 Squawka-style examples split into 21 atomic football stories. Semantic targets, not verified quotations or an exhaustive benchmark.",
+  "binding_policy": "Use a named-pair or explicitly documented team-context probe only when meaningful. Unspecified dates, opponents or post-match targets remain unscored. Missing-data claims are capability diagnostics, not established engine failures.",
+  "items": [
+    {
+      "id": "user-haaland-first-five",
+      "source_example": 1,
+      "fixture_id": 771,
+      "claim": "Haaland scored in each of his first five Premier League meetings with Crystal Palace.",
+      "category": "player_opponent",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "PLAYER_OPPONENT_SCORING_RUN"
+            ],
+            "evidence": {
+              "player_id": 154421,
+              "count": 5,
+              "from_first_meeting": true
+            },
+            "subject_team": "Man City"
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "historical_depth_insufficient",
+      "miss_rationale": "Only four recent meetings are stored. Career-first ordering and all five scoring meetings cannot be established; a three-goal total in four stored meetings is not an equivalent always-scores story.",
+      "binding_note": "Palace-City week 2 is the pair-level probe; original publication date is unspecified, so this does not assert that the first-five claim was true at this cutoff."
+    },
+    {
+      "id": "user-haaland-sixth-milestone",
+      "source_example": 1,
+      "fixture_id": 771,
+      "claim": "Scoring in a sixth straight meeting with Palace would make Haaland only the third player to do that against one Premier League opponent.",
+      "category": "continuation",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "PLAYER_OPPONENT_CONTINUATION"
+            ],
+            "evidence": {
+              "player_id": 154421,
+              "would_be": 6,
+              "historical_player_rank": 3
+            },
+            "subject_team": "Man City"
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "historical_depth_insufficient",
+      "miss_rationale": "Requires complete player/opponent sequences and a league-wide historical comparison, neither established by the two-season reference sample."
+    },
+    {
+      "id": "user-forest-anfield-two",
+      "source_example": 2,
+      "fixture_id": 772,
+      "claim": "Nottingham Forest won on their previous two Premier League trips to Anfield.",
+      "category": "venue_h2h",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "VENUE_H2H_LOSING_RUN"
+            ],
+            "evidence": {
+              "metric": "LOSING",
+              "count": 2
+            },
+            "subject_team": "Liverpool",
+            "external_fixture_ids": [
+              19134628,
+              19427572
+            ]
+          }
+        ],
+        [
+          {
+            "signal_types": [
+              "VENUE_H2H_WINNING_RUN"
+            ],
+            "evidence": {
+              "metric": "WINNING",
+              "count": 2
+            },
+            "subject_team": "Nottingham",
+            "external_fixture_ids": [
+              19134628,
+              19427572
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Both stored Liverpool-home fixtures are Forest wins: 0-1 on 2024-09-14 and 0-3 on 2025-11-22. Liverpool losing the same two home meetings is the equivalent football fact."
+    },
+    {
+      "id": "user-brighton-three-each",
+      "source_example": 3,
+      "fixture_id": 777,
+      "claim": "Brighton scored exactly three goals in each of their previous three meetings with Chelsea.",
+      "category": "unsupported_story",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "H2H_EXACT_GOALS_SEQUENCE"
+            ],
+            "evidence": {
+              "goals_each": 3,
+              "count": 3
+            },
+            "subject_team": "Brighton Hove",
+            "external_fixture_ids": [
+              19134574,
+              19427507,
+              19427198
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Verified stored sequence: Brighton 3-0 Chelsea (2025-02-14), Chelsea 1-3 Brighton (2025-09-27), Brighton 3-0 Chelsea (2026-04-21). A three-win H2H run does not state the repeated exact scoring pattern.",
+      "binding_note": "The supplied Brighton-Chelsea heading is reversed in week 2, but this scoring pattern is venue-independent. Bind to Chelsea-Brighton 777 with the same pre-cutoff three meetings; do not infer a venue-specific claim."
+    },
+    {
+      "id": "user-brighton-fourth-record",
+      "source_example": 3,
+      "fixture_id": 777,
+      "claim": "Scoring three against Chelsea for a fourth consecutive meeting would match a top-flight record set by West Ham in 1974.",
+      "category": "continuation",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "EXACT_GOALS_SEQUENCE_CONTINUATION"
+            ],
+            "evidence": {
+              "goals_each": 3,
+              "would_be": 4,
+              "comparison_year": 1974
+            },
+            "subject_team": "Brighton Hove"
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "historical_depth_insufficient",
+      "miss_rationale": "The three recent scorelines are supported; the 1974 league-wide record is outside the stored history and is not independently verified."
+    },
+    {
+      "id": "user-arsenal-away-openers",
+      "source_example": 4,
+      "fixture_id": 780,
+      "claim": "Arsenal won their opening away league match in four consecutive seasons.",
+      "category": "season_start",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "AWAY_SEASON_OPENER_RUN"
+            ],
+            "evidence": {
+              "wins": 4,
+              "seasons": 4
+            },
+            "subject_team": "Arsenal"
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "historical_depth_insufficient",
+      "miss_rationale": "Two reference seasons cannot establish four consecutive season-opening away results. Current-season eligibility is also limited, but the multi-season comparison independently needs deeper history.",
+      "binding_note": "Use Villa-Arsenal 780, Arsenal first away fixture in this season. The semantic away-opener condition takes priority over the source heading Arsenal vs Aston Villa."
+    },
+    {
+      "id": "user-arsenal-away-fifth-record",
+      "source_example": 4,
+      "fixture_id": 780,
+      "claim": "A fifth consecutive opening-away league win would be an Arsenal club record.",
+      "category": "continuation",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "AWAY_SEASON_OPENER_RECORD"
+            ],
+            "evidence": {
+              "would_be": 5,
+              "club_record": true
+            },
+            "subject_team": "Arsenal"
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "historical_depth_insufficient",
+      "miss_rationale": "A club-record superlative requires the club historical baseline, not merely two season schedules."
+    },
+    {
+      "id": "user-raya-fifty",
+      "source_example": 4,
+      "fixture_id": 780,
+      "claim": "David Raya was approaching his 50th Arsenal clean sheet.",
+      "category": "unsupported_story",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [],
+      "miss_reason_if_absent": "requires_external_editorial_context",
+      "miss_rationale": "Goalkeeper appearances, player-attributed clean sheets and relevant competition/career scope are absent. A team clean sheet is not sufficient evidence of a Raya clean sheet.",
+      "binding_note": "Contextual Arsenal probe only; the supplied claim does not specify exact current count or competition scope."
+    },
+    {
+      "id": "user-chelsea-21-drought",
+      "source_example": 5,
+      "fixture_id": 801,
+      "claim": "Chelsea had gone 21 Premier League matches without a clean sheet.",
+      "category": "clean_sheet_runs",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "NO_CLEAN_SHEET_RUN"
+            ],
+            "evidence": {
+              "metric": "NO_CLEAN_SHEET",
+              "count": 21
+            },
+            "subject_team": "Chelsea"
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "The available current-season official rows were refreshed October 5 and cannot be replayed before September 17. A 21-game run also needs cross-season continuity beyond the PR19 current-season scope; do not count its absence as a detector failure here.",
+      "requires_official_history_for": [
+        "Chelsea"
+      ],
+      "binding_note": "Brentford-Chelsea 801 is a Chelsea September probe, not a verified original publication date for the number 21."
+    },
+    {
+      "id": "user-arsenal-nine-wins",
+      "source_example": 6,
+      "fixture_id": 805,
+      "claim": "Arsenal entered the fixture with nine consecutive league wins, chasing a tenth.",
+      "category": "result_runs",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "WINNING_RUN"
+            ],
+            "evidence": {
+              "metric": "WINNING",
+              "count": 9
+            },
+            "subject_team": "Arsenal"
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Current-season result availability is not recoverable at the September cutoff. A nine-match cross-season sequence cannot be established from the eligible official ledger.",
+      "requires_official_history_for": [
+        "Arsenal"
+      ]
+    },
+    {
+      "id": "user-arsenal-tenth-conditional",
+      "source_example": 6,
+      "fixture_id": 805,
+      "claim": "Another Arsenal league win would be their tenth in succession.",
+      "category": "continuation",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "WINNING_CONTINUATION"
+            ],
+            "evidence": {
+              "current": 9,
+              "would_be": 10
+            },
+            "subject_team": "Arsenal"
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "The underlying nine-match run cannot be replayed with the available official timestamps; a four-game current-season run is not an equivalent ten-win milestone.",
+      "requires_official_history_for": [
+        "Arsenal"
+      ]
+    },
+    {
+      "id": "user-arsenal-perfect-five",
+      "source_example": 6,
+      "fixture_id": 805,
+      "claim": "Arsenal were chasing five wins from five at the start of the league season.",
+      "category": "season_start",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "WINNING_SEASON_START"
+            ],
+            "evidence": {
+              "count": 4,
+              "comparison": "this season only"
+            },
+            "subject_team": "Arsenal"
+          }
+        ],
+        [
+          {
+            "signal_types": [
+              "SEASON_START_RECORD"
+            ],
+            "evidence": {
+              "played": 4,
+              "wins": 4,
+              "draws": 0,
+              "losses": 0
+            },
+            "subject_team": "Arsenal"
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "The four recorded wins are in fixtures 761/780/790/797, but all updates postdate the September 17 cutoff. A four-win season-start fact is an equivalent underlying perfect-start story; it still cannot be replayed here.",
+      "requires_official_history_for": [
+        "Arsenal"
+      ]
+    },
+    {
+      "id": "user-spurs-four-scoreless",
+      "source_example": 7,
+      "fixture_id": 802,
+      "claim": "Tottenham failed to score in their opening four league matches.",
+      "category": "scoring_runs",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "NO_SCORING_SEASON_START"
+            ],
+            "evidence": {
+              "count": 4
+            },
+            "subject_team": "Tottenham"
+          }
+        ],
+        [
+          {
+            "signal_types": [
+              "NO_SCORING_RUN"
+            ],
+            "evidence": {
+              "count": 4
+            },
+            "subject_team": "Tottenham"
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Fixtures 766/775/783/796 support the sequence in the refreshed snapshot, but every Result.updated_at is October 5. This is NOT EVALUABLE FROM AVAILABLE SNAPSHOT at the September 17 cutoff.",
+      "requires_official_history_for": [
+        "Tottenham"
+      ]
+    },
+    {
+      "id": "user-spurs-worst-since-2008",
+      "source_example": 7,
+      "fixture_id": 802,
+      "claim": "Tottenham opening scoreless sequence was their worst such start since 2008/09.",
+      "category": "season_start",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "HISTORICAL_SCORELESS_START"
+            ],
+            "evidence": {
+              "comparison_season": "2008/2009"
+            },
+            "subject_team": "Tottenham"
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "historical_depth_insufficient",
+      "miss_rationale": "The comparative claim needs opening sequences back through 2008/09. That history is absent regardless of the October result timestamp limitation."
+    },
+    {
+      "id": "user-hull-promoted-start",
+      "source_example": 8,
+      "fixture_id": 788,
+      "claim": "Hull could reach the joint-second-best start by a promoted Premier League side.",
+      "category": "season_start",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [],
+      "miss_reason_if_absent": "historical_depth_insufficient",
+      "miss_rationale": "Promoted-season identities and a comparable league-wide historical baseline are absent. The supplied example also does not specify the match-count window; do not invent one.",
+      "binding_note": "Hull-Villa 788 is an early-season Hull probe only, not confirmation of the original milestone timing."
+    },
+    {
+      "id": "user-haaland-opponent-exception",
+      "source_example": 9,
+      "fixture_id": null,
+      "claim": "One Premier League opponent was the notable club Haaland had never scored against.",
+      "category": "player_opponent",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [],
+      "miss_reason_if_absent": "requires_external_editorial_context",
+      "miss_rationale": "The opponent and target date are unspecified. Negative scoring records also require complete appearances/opponent coverage; no goal events cannot prove an appearance or a never-scored claim.",
+      "binding_note": "Unresolved opponent/date: deliberately not assigned to Palace or any other convenient fixture."
+    },
+    {
+      "id": "user-isak-prior-season-total",
+      "source_example": 10,
+      "fixture_id": null,
+      "claim": "Isak had matched his previous season goal total unusually early.",
+      "category": "unsupported_story",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [],
+      "miss_reason_if_absent": "requires_external_editorial_context",
+      "miss_rationale": "Needs the target season/date, previous-season player total and competition scope; fixture-pair goal aggregates do not establish a player-season comparison.",
+      "binding_note": "Unresolved club/fixture/date and comparison season; retained as an unscored capability target."
+    },
+    {
+      "id": "user-united-worst-start",
+      "source_example": 11,
+      "fixture_id": null,
+      "claim": "Manchester United were in danger of matching or setting their worst-ever Premier League start.",
+      "category": "season_start",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [],
+      "miss_reason_if_absent": "historical_depth_insufficient",
+      "miss_rationale": "All Premier League opening sequences and an exact games-played window are needed. The supplied claim does not identify which slate; do not bind it to a Manchester derby arbitrarily.",
+      "binding_note": "Unresolved matchweek/window; preserved as an unscored deep-history target."
+    },
+    {
+      "id": "user-newcastle-liverpool-202",
+      "source_example": 12,
+      "fixture_id": 769,
+      "claim": "Newcastle-Liverpool had produced 202 Premier League goals, second only to Liverpool-Tottenham with 211.",
+      "category": "unsupported_story",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [],
+      "miss_reason_if_absent": "historical_depth_insufficient",
+      "miss_rationale": "Two stored seasons cannot establish either all-time aggregate or the league-wide rank. Fixture 769 is in week 1, outside the evaluated weeks 2-5; no score is assigned.",
+      "binding_note": "Named pair exists as fixture 769, but outside the selected slates; all-time counts are user-supplied targets, not asserted as verified pre-kickoff totals."
+    },
+    {
+      "id": "user-liverpool-opener-14",
+      "source_example": 13,
+      "fixture_id": null,
+      "claim": "Liverpool extended their unbeaten Premier League opening-week run to 14.",
+      "category": "season_start",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [],
+      "miss_reason_if_absent": "historical_depth_insufficient",
+      "miss_rationale": "Requires at least fourteen seasons of opener results. The wording describes an already-extended run and supplies no target date; do not leak a target opening-week result into its own pre-match packet.",
+      "binding_note": "Unresolved subsequent-preview target; not assigned to the same match whose result would extend the run."
+    },
+    {
+      "id": "user-wissa-liverpool-performance",
+      "source_example": 14,
+      "fixture_id": null,
+      "claim": "Wissa vs Liverpool: 89 minutes, 12/17 passes, 40 touches, 11 duels won (match-high), 4 tackles, 4 fouls won (match-high), 3 possessions won, 3 opposition-box touches, 1 chance created and 1 assist.",
+      "category": "unsupported_story",
+      "source": "User-supplied manually curated Squawka-style semantic target (2026-10-05); not scraped or independently verified",
+      "equivalents": [],
+      "miss_reason_if_absent": "requires_external_editorial_context",
+      "miss_rationale": "Requires player match-performance statistics and match-wide comparators. Reference goals/cards do not contain duels, touches, tackles or pass attempts. As a post-match line it must not enter a pre-match packet for that same game.",
+      "binding_note": "Unresolved source match/date and later preview target; retained as an unscored external-stat requirement."
+    }
+  ]
+}
