@@ -1,0 +1,955 @@
+{
+  "as_of": "2026-09-17T19:00:00+00:00",
+  "availability": [
+    "Persisted picks in this snapshot, created by as-of; no pick revision archive.",
+    "Official Result.updated_at must be strictly before as-of; unavailable form is not reconstructed.",
+    "Historical facts describe pre-cutoff matches in this reference snapshot, not an as-known-at-time archive.",
+    "Stored meeting samples do not establish all-time records, appearances or current player membership."
+  ],
+  "candidate_limit": 5,
+  "context_version": "pre-match-context-v1",
+  "earliest_kickoff": "2026-09-18T19:00:00+00:00",
+  "picks": [
+    {
+      "away": "Chelsea",
+      "candidates": [
+        {
+          "claim": "Brentford: late equalizer at 90+3 in the stored 2025/2026 meeting.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 83,
+          "evidence": {
+            "extra_minute": 3,
+            "fact": "Brentford: late equalizer at 90+3 in the stored 2025/2026 meeting.",
+            "final_score": [
+              2,
+              2
+            ],
+            "kind": "equalizer",
+            "minute": 90,
+            "own_goal": false,
+            "player_id": 21412957,
+            "score_after": [
+              2,
+              2
+            ],
+            "score_before": [
+              1,
+              2
+            ],
+            "threshold_minute": 85
+          },
+          "family": "HISTORY",
+          "id": "801:history:LATE_DECISIVE_GOAL:0536f245f6f176cc",
+          "provenance": {
+            "external_event_ids": [
+              151200914,
+              151201642,
+              151202036,
+              151202175
+            ],
+            "fixtures": [
+              {
+                "away_score": 2,
+                "away_team": "Chelsea",
+                "away_team_id": 18,
+                "external_fixture_id": 19427487,
+                "external_season_id": 25583,
+                "home_score": 2,
+                "home_team": "Brentford",
+                "home_team_id": 236,
+                "kickoff": "2025-09-13T19:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 513,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [
+              8235,
+              8239,
+              8242,
+              8245
+            ],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-09-17T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "ca2d25887afbc7adf954bde017e8363a86898ba03ccdfc27f6b89f88a01c296e"
+          },
+          "sample": {
+            "end": "2025-09-13T19:00:00+00:00",
+            "fixture_ids": [
+              513
+            ],
+            "size": 1,
+            "start": "2025-09-13T19:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "LATE_DECISIVE_GOAL",
+          "subject_team": "Brentford"
+        },
+        {
+          "claim": "Chelsea: unbeaten across the last 4 stored PL meetings.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 82,
+          "evidence": {
+            "boundary": "available history/window or evidence gap",
+            "count": 4,
+            "fact": "Chelsea: unbeaten across the last 4 stored PL meetings.",
+            "lower_bound": true,
+            "metric": "UNBEATEN"
+          },
+          "family": "HISTORY",
+          "id": "801:history:H2H_UNBEATEN_RUN:cf12599695f1a045",
+          "provenance": {
+            "external_event_ids": [],
+            "fixtures": [
+              {
+                "away_score": 1,
+                "away_team": "Brentford",
+                "away_team_id": 236,
+                "external_fixture_id": 19134636,
+                "external_season_id": 23614,
+                "home_score": 2,
+                "home_team": "Chelsea",
+                "home_team_id": 18,
+                "kickoff": "2024-12-15T19:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 184,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 0,
+                "away_team": "Chelsea",
+                "away_team_id": 18,
+                "external_fixture_id": 19134970,
+                "external_season_id": 23614,
+                "home_score": 0,
+                "home_team": "Brentford",
+                "home_team_id": 236,
+                "kickoff": "2025-04-06T13:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 302,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 2,
+                "away_team": "Chelsea",
+                "away_team_id": 18,
+                "external_fixture_id": 19427487,
+                "external_season_id": 25583,
+                "home_score": 2,
+                "home_team": "Brentford",
+                "home_team_id": 236,
+                "kickoff": "2025-09-13T19:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 513,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              },
+              {
+                "away_score": 0,
+                "away_team": "Brentford",
+                "away_team_id": 236,
+                "external_fixture_id": 19427668,
+                "external_season_id": 25583,
+                "home_score": 2,
+                "home_team": "Chelsea",
+                "home_team_id": 18,
+                "kickoff": "2026-01-17T15:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 692,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-09-17T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "ca2d25887afbc7adf954bde017e8363a86898ba03ccdfc27f6b89f88a01c296e"
+          },
+          "sample": {
+            "end": "2026-01-17T15:00:00+00:00",
+            "fixture_ids": [
+              184,
+              302,
+              513,
+              692
+            ],
+            "size": 4,
+            "start": "2024-12-15T19:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "H2H_UNBEATEN_RUN",
+          "subject_team": "Chelsea"
+        },
+        {
+          "claim": "Brentford: unbeaten across the last 2 stored home PL meetings.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 64,
+          "evidence": {
+            "boundary": "available history/window or evidence gap",
+            "count": 2,
+            "fact": "Brentford: unbeaten across the last 2 stored home PL meetings.",
+            "lower_bound": true,
+            "metric": "UNBEATEN"
+          },
+          "family": "HISTORY",
+          "id": "801:history:VENUE_H2H_UNBEATEN_RUN:551fbeb30a6527db",
+          "provenance": {
+            "external_event_ids": [],
+            "fixtures": [
+              {
+                "away_score": 0,
+                "away_team": "Chelsea",
+                "away_team_id": 18,
+                "external_fixture_id": 19134970,
+                "external_season_id": 23614,
+                "home_score": 0,
+                "home_team": "Brentford",
+                "home_team_id": 236,
+                "kickoff": "2025-04-06T13:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 302,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 2,
+                "away_team": "Chelsea",
+                "away_team_id": 18,
+                "external_fixture_id": 19427487,
+                "external_season_id": 25583,
+                "home_score": 2,
+                "home_team": "Brentford",
+                "home_team_id": 236,
+                "kickoff": "2025-09-13T19:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 513,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-09-17T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "ca2d25887afbc7adf954bde017e8363a86898ba03ccdfc27f6b89f88a01c296e"
+          },
+          "sample": {
+            "end": "2025-09-13T19:00:00+00:00",
+            "fixture_ids": [
+              302,
+              513
+            ],
+            "size": 2,
+            "start": "2025-04-06T13:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "home",
+          "signal_type": "VENUE_H2H_UNBEATEN_RUN",
+          "subject_team": "Brentford"
+        }
+      ],
+      "committed_at": "2026-09-15T20:49:05.475785+00:00",
+      "fixture_id": 801,
+      "home": "Brentford",
+      "kickoff": "2026-09-18T19:00:00+00:00",
+      "opponent": "Brentford",
+      "packet_version": "fixture-intelligence-v3",
+      "pick_id": 1149,
+      "pick_order": 5,
+      "picked_team": "Chelsea",
+      "picked_team_venue": "away"
+    },
+    {
+      "away": "Arsenal",
+      "candidates": [
+        {
+          "claim": "Arsenal: unbeaten across the last 4 stored PL meetings.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 82,
+          "evidence": {
+            "boundary": "available history/window or evidence gap",
+            "count": 4,
+            "fact": "Arsenal: unbeaten across the last 4 stored PL meetings.",
+            "lower_bound": true,
+            "metric": "UNBEATEN"
+          },
+          "family": "HISTORY",
+          "id": "805:history:H2H_UNBEATEN_RUN:f39a56a0fdf6509d",
+          "provenance": {
+            "external_event_ids": [],
+            "fixtures": [
+              {
+                "away_score": 1,
+                "away_team": "Brighton & Hove Albion",
+                "away_team_id": 78,
+                "external_fixture_id": 19134473,
+                "external_season_id": 23614,
+                "home_score": 1,
+                "home_team": "Arsenal",
+                "home_team_id": 19,
+                "kickoff": "2024-08-31T11:30:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 21,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 1,
+                "away_team": "Arsenal",
+                "away_team_id": 19,
+                "external_fixture_id": 19134921,
+                "external_season_id": 23614,
+                "home_score": 1,
+                "home_team": "Brighton & Hove Albion",
+                "home_team_id": 78,
+                "kickoff": "2025-01-04T17:30:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 253,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 1,
+                "away_team": "Brighton & Hove Albion",
+                "away_team_id": 78,
+                "external_fixture_id": 19427626,
+                "external_season_id": 25583,
+                "home_score": 2,
+                "home_team": "Arsenal",
+                "home_team_id": 19,
+                "kickoff": "2025-12-27T15:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 650,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              },
+              {
+                "away_score": 1,
+                "away_team": "Arsenal",
+                "away_team_id": 19,
+                "external_fixture_id": 19427167,
+                "external_season_id": 25583,
+                "home_score": 0,
+                "home_team": "Brighton & Hove Albion",
+                "home_team_id": 78,
+                "kickoff": "2026-03-04T19:30:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 402,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-09-17T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "65c3025f59d72d15c2438e4c3b6476dc2911f98ce61fbb3b31381bfbc5dfb207"
+          },
+          "sample": {
+            "end": "2026-03-04T19:30:00+00:00",
+            "fixture_ids": [
+              21,
+              253,
+              650,
+              402
+            ],
+            "size": 4,
+            "start": "2024-08-31T11:30:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "H2H_UNBEATEN_RUN",
+          "subject_team": "Arsenal"
+        },
+        {
+          "claim": "Brighton & Hove Albion 0-1 Arsenal (2025/2026, same venue orientation).",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 61,
+          "evidence": {
+            "away_score": 1,
+            "fact": "Brighton & Hove Albion 0-1 Arsenal (2025/2026, same venue orientation).",
+            "home_score": 0,
+            "immediately_previous_season": true,
+            "nearest_available_prior_season": true,
+            "season": "2025/2026"
+          },
+          "family": "HISTORY",
+          "id": "805:history:EXACT_PRIOR_SEASON_FIXTURE:7065c9116eaf5aed",
+          "provenance": {
+            "external_event_ids": [],
+            "fixtures": [
+              {
+                "away_score": 1,
+                "away_team": "Arsenal",
+                "away_team_id": 19,
+                "external_fixture_id": 19427167,
+                "external_season_id": 25583,
+                "home_score": 0,
+                "home_team": "Brighton & Hove Albion",
+                "home_team_id": 78,
+                "kickoff": "2026-03-04T19:30:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 402,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-09-17T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "65c3025f59d72d15c2438e4c3b6476dc2911f98ce61fbb3b31381bfbc5dfb207"
+          },
+          "sample": {
+            "end": "2026-03-04T19:30:00+00:00",
+            "fixture_ids": [
+              402
+            ],
+            "size": 1,
+            "start": "2026-03-04T19:30:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "home",
+          "signal_type": "EXACT_PRIOR_SEASON_FIXTURE",
+          "subject_team": "Brighton Hove"
+        }
+      ],
+      "committed_at": "2026-09-15T20:17:22.739970+00:00",
+      "fixture_id": 805,
+      "home": "Brighton Hove",
+      "kickoff": "2026-09-19T14:00:00+00:00",
+      "opponent": "Brighton Hove",
+      "packet_version": "fixture-intelligence-v3",
+      "pick_id": 1141,
+      "pick_order": 1,
+      "picked_team": "Arsenal",
+      "picked_team_venue": "away"
+    },
+    {
+      "away": "Coventry City",
+      "candidates": [],
+      "committed_at": "2026-09-15T20:32:11.713983+00:00",
+      "fixture_id": 808,
+      "home": "Nottingham",
+      "kickoff": "2026-09-19T16:30:00+00:00",
+      "opponent": "Coventry City",
+      "packet_version": "fixture-intelligence-v3",
+      "pick_id": 1146,
+      "pick_order": 4,
+      "picked_team": "Nottingham",
+      "picked_team_venue": "home"
+    },
+    {
+      "away": "Crystal Palace",
+      "candidates": [
+        {
+          "claim": "Leeds United 4-1 Crystal Palace (2025/2026, same venue orientation).",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 85,
+          "evidence": {
+            "away_score": 1,
+            "fact": "Leeds United 4-1 Crystal Palace (2025/2026, same venue orientation).",
+            "home_score": 4,
+            "immediately_previous_season": true,
+            "nearest_available_prior_season": true,
+            "season": "2025/2026"
+          },
+          "family": "HISTORY",
+          "id": "804:history:EXACT_PRIOR_SEASON_FIXTURE:eb6dfc3c96bc8345",
+          "provenance": {
+            "external_event_ids": [],
+            "fixtures": [
+              {
+                "away_score": 1,
+                "away_team": "Crystal Palace",
+                "away_team_id": 51,
+                "external_fixture_id": 19427621,
+                "external_season_id": 25583,
+                "home_score": 4,
+                "home_team": "Leeds United",
+                "home_team_id": 71,
+                "kickoff": "2025-12-20T20:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 645,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-09-17T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "42265b5d951515b51402c3a2c54c900e3bde77aeda45911f2f63e43be9f10065"
+          },
+          "sample": {
+            "end": "2025-12-20T20:00:00+00:00",
+            "fixture_ids": [
+              645
+            ],
+            "size": 1,
+            "start": "2025-12-20T20:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "home",
+          "signal_type": "EXACT_PRIOR_SEASON_FIXTURE",
+          "subject_team": "Leeds United"
+        },
+        {
+          "claim": "Dominic Calvert-Lewin: 2 goals for Leeds United in the stored 2025/2026 meeting.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 63,
+          "evidence": {
+            "fact": "Dominic Calvert-Lewin: 2 goals for Leeds United in the stored 2025/2026 meeting.",
+            "goals": 2,
+            "own_goals_excluded": true,
+            "player_id": 5141,
+            "player_name": "Dominic Calvert-Lewin",
+            "roster_verified": false
+          },
+          "family": "HISTORY",
+          "id": "804:history:BRACE:606db9d96ae3303e",
+          "provenance": {
+            "external_event_ids": [
+              152405569,
+              152405658
+            ],
+            "fixtures": [
+              {
+                "away_score": 1,
+                "away_team": "Crystal Palace",
+                "away_team_id": 51,
+                "external_fixture_id": 19427621,
+                "external_season_id": 25583,
+                "home_score": 4,
+                "home_team": "Leeds United",
+                "home_team_id": 71,
+                "kickoff": "2025-12-20T20:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 645,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [
+              10305,
+              10310
+            ],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-09-17T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "42265b5d951515b51402c3a2c54c900e3bde77aeda45911f2f63e43be9f10065"
+          },
+          "sample": {
+            "end": "2025-12-20T20:00:00+00:00",
+            "fixture_ids": [
+              645
+            ],
+            "size": 1,
+            "start": "2025-12-20T20:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "BRACE",
+          "subject_team": "Leeds United"
+        }
+      ],
+      "committed_at": "2026-09-15T20:17:46.364829+00:00",
+      "fixture_id": 804,
+      "home": "Leeds United",
+      "kickoff": "2026-09-20T13:00:00+00:00",
+      "opponent": "Crystal Palace",
+      "packet_version": "fixture-intelligence-v3",
+      "pick_id": 1142,
+      "pick_order": 2,
+      "picked_team": "Leeds United",
+      "picked_team_venue": "home"
+    },
+    {
+      "away": "Man United",
+      "candidates": [
+        {
+          "claim": "Man United: late winner at 90+4 in the stored 2025/2026 meeting.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 86,
+          "evidence": {
+            "extra_minute": 4,
+            "fact": "Man United: late winner at 90+4 in the stored 2025/2026 meeting.",
+            "final_score": [
+              3,
+              2
+            ],
+            "kind": "winner",
+            "minute": 90,
+            "own_goal": false,
+            "player_id": 24818280,
+            "score_after": [
+              3,
+              2
+            ],
+            "score_before": [
+              2,
+              2
+            ],
+            "threshold_minute": 85
+          },
+          "family": "HISTORY",
+          "id": "810:history:LATE_DECISIVE_GOAL:70d548618ffb12e0",
+          "provenance": {
+            "external_event_ids": [
+              152663702,
+              152665367,
+              152666285,
+              152666504,
+              152666565
+            ],
+            "fixtures": [
+              {
+                "away_score": 2,
+                "away_team": "Fulham",
+                "away_team_id": 11,
+                "external_fixture_id": 19427691,
+                "external_season_id": 25583,
+                "home_score": 3,
+                "home_team": "Manchester United",
+                "home_team_id": 14,
+                "kickoff": "2026-02-01T14:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 715,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [
+              11360,
+              11365,
+              11371,
+              11373,
+              11375
+            ],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-09-17T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "5bd4c934d09c899f90ab8737143c296d097844937fdc563122b20508c0795fad"
+          },
+          "sample": {
+            "end": "2026-02-01T14:00:00+00:00",
+            "fixture_ids": [
+              715
+            ],
+            "size": 1,
+            "start": "2026-02-01T14:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "LATE_DECISIVE_GOAL",
+          "subject_team": "Man United"
+        },
+        {
+          "claim": "Man United: unbeaten across the last 4 stored PL meetings.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 82,
+          "evidence": {
+            "boundary": "available history/window or evidence gap",
+            "count": 4,
+            "fact": "Man United: unbeaten across the last 4 stored PL meetings.",
+            "lower_bound": true,
+            "metric": "UNBEATEN"
+          },
+          "family": "HISTORY",
+          "id": "810:history:H2H_UNBEATEN_RUN:268475efc3f6eabf",
+          "provenance": {
+            "external_event_ids": [],
+            "fixtures": [
+              {
+                "away_score": 0,
+                "away_team": "Fulham",
+                "away_team_id": 11,
+                "external_fixture_id": 19134453,
+                "external_season_id": 23614,
+                "home_score": 1,
+                "home_team": "Manchester United",
+                "home_team_id": 14,
+                "kickoff": "2024-08-16T19:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 1,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 1,
+                "away_team": "Manchester United",
+                "away_team_id": 14,
+                "external_fixture_id": 19134647,
+                "external_season_id": 23614,
+                "home_score": 0,
+                "home_team": "Fulham",
+                "home_team_id": 11,
+                "kickoff": "2025-01-26T19:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 195,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 1,
+                "away_team": "Manchester United",
+                "away_team_id": 14,
+                "external_fixture_id": 19427471,
+                "external_season_id": 25583,
+                "home_score": 1,
+                "home_team": "Fulham",
+                "home_team_id": 11,
+                "kickoff": "2025-08-24T15:30:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 497,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              },
+              {
+                "away_score": 2,
+                "away_team": "Fulham",
+                "away_team_id": 11,
+                "external_fixture_id": 19427691,
+                "external_season_id": 25583,
+                "home_score": 3,
+                "home_team": "Manchester United",
+                "home_team_id": 14,
+                "kickoff": "2026-02-01T14:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 715,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-09-17T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "5bd4c934d09c899f90ab8737143c296d097844937fdc563122b20508c0795fad"
+          },
+          "sample": {
+            "end": "2026-02-01T14:00:00+00:00",
+            "fixture_ids": [
+              1,
+              195,
+              497,
+              715
+            ],
+            "size": 4,
+            "start": "2024-08-16T19:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "H2H_UNBEATEN_RUN",
+          "subject_team": "Man United"
+        },
+        {
+          "claim": "Man United: late winner at 87 in the stored 2024/2025 meeting.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 78,
+          "evidence": {
+            "extra_minute": null,
+            "fact": "Man United: late winner at 87 in the stored 2024/2025 meeting.",
+            "final_score": [
+              1,
+              0
+            ],
+            "kind": "winner",
+            "minute": 87,
+            "own_goal": false,
+            "player_id": 9605680,
+            "score_after": [
+              1,
+              0
+            ],
+            "score_before": [
+              0,
+              0
+            ],
+            "threshold_minute": 85
+          },
+          "family": "HISTORY",
+          "id": "810:history:LATE_DECISIVE_GOAL:982e6147421575da",
+          "provenance": {
+            "external_event_ids": [
+              118266634
+            ],
+            "fixtures": [
+              {
+                "away_score": 0,
+                "away_team": "Fulham",
+                "away_team_id": 11,
+                "external_fixture_id": 19134453,
+                "external_season_id": 23614,
+                "home_score": 1,
+                "home_team": "Manchester United",
+                "home_team_id": 14,
+                "kickoff": "2024-08-16T19:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 1,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              }
+            ],
+            "reference_event_ids": [
+              3
+            ],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-09-17T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "5bd4c934d09c899f90ab8737143c296d097844937fdc563122b20508c0795fad"
+          },
+          "sample": {
+            "end": "2024-08-16T19:00:00+00:00",
+            "fixture_ids": [
+              1
+            ],
+            "size": 1,
+            "start": "2024-08-16T19:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "LATE_DECISIVE_GOAL",
+          "subject_team": "Man United"
+        }
+      ],
+      "committed_at": "2026-09-15T20:31:56.095150+00:00",
+      "fixture_id": 810,
+      "home": "Fulham",
+      "kickoff": "2026-09-20T15:30:00+00:00",
+      "opponent": "Fulham",
+      "packet_version": "fixture-intelligence-v3",
+      "pick_id": 1145,
+      "pick_order": 3,
+      "picked_team": "Man United",
+      "picked_team_venue": "away"
+    }
+  ],
+  "player": {
+    "id": 2,
+    "name": "Joe"
+  },
+  "prompt_version": "pre-match-brief-v1",
+  "season": {
+    "code": "year-2",
+    "id": 2,
+    "name": "2026–27"
+  },
+  "slate_status": "committed",
+  "versions": {
+    "fixture_intelligence": "fixture-intelligence-v3",
+    "historical_intelligence": "historical-fixture-intelligence-v2"
+  },
+  "week": {
+    "id": 43,
+    "number": 5
+  },
+  "week_first_kickoff": "2026-09-18T19:00:00+00:00"
+}

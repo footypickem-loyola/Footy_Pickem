@@ -1,0 +1,1028 @@
+{
+  "as_of": "2026-08-27T19:00:00+00:00",
+  "availability": [
+    "Persisted picks in this snapshot, created by as-of; no pick revision archive.",
+    "Official Result.updated_at must be strictly before as-of; unavailable form is not reconstructed.",
+    "Historical facts describe pre-cutoff matches in this reference snapshot, not an as-known-at-time archive.",
+    "Stored meeting samples do not establish all-time records, appearances or current player membership."
+  ],
+  "candidate_limit": 5,
+  "context_version": "pre-match-context-v1",
+  "earliest_kickoff": "2026-08-28T19:00:00+00:00",
+  "picks": [
+    {
+      "away": "Man City",
+      "candidates": [
+        {
+          "claim": "Crystal Palace 0-3 Manchester City (2025/2026, same venue orientation).",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 85,
+          "evidence": {
+            "away_score": 3,
+            "fact": "Crystal Palace 0-3 Manchester City (2025/2026, same venue orientation).",
+            "home_score": 0,
+            "immediately_previous_season": true,
+            "nearest_available_prior_season": true,
+            "season": "2025/2026"
+          },
+          "family": "HISTORY",
+          "id": "771:history:EXACT_PRIOR_SEASON_FIXTURE:70f02bae144d6748",
+          "provenance": {
+            "external_event_ids": [],
+            "fixtures": [
+              {
+                "away_score": 3,
+                "away_team": "Manchester City",
+                "away_team_id": 9,
+                "external_fixture_id": 19427610,
+                "external_season_id": 25583,
+                "home_score": 0,
+                "home_team": "Crystal Palace",
+                "home_team_id": 51,
+                "kickoff": "2025-12-14T14:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 635,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-08-27T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "81324f58e4030c80dbc8c269514c29d8a85105aef9c948715dbf7a2828a5de5f"
+          },
+          "sample": {
+            "end": "2025-12-14T14:00:00+00:00",
+            "fixture_ids": [
+              635
+            ],
+            "size": 1,
+            "start": "2025-12-14T14:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "home",
+          "signal_type": "EXACT_PRIOR_SEASON_FIXTURE",
+          "subject_team": "Crystal Palace"
+        },
+        {
+          "claim": "Man City: unbeaten across the last 4 stored PL meetings.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 82,
+          "evidence": {
+            "boundary": "available history/window or evidence gap",
+            "count": 4,
+            "fact": "Man City: unbeaten across the last 4 stored PL meetings.",
+            "lower_bound": true,
+            "metric": "UNBEATEN"
+          },
+          "family": "HISTORY",
+          "id": "771:history:H2H_UNBEATEN_RUN:264dd9405b993510",
+          "provenance": {
+            "external_event_ids": [],
+            "fixtures": [
+              {
+                "away_score": 2,
+                "away_team": "Manchester City",
+                "away_team_id": 9,
+                "external_fixture_id": 19134545,
+                "external_season_id": 23614,
+                "home_score": 2,
+                "home_team": "Crystal Palace",
+                "home_team_id": 51,
+                "kickoff": "2024-12-07T15:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 93,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 2,
+                "away_team": "Crystal Palace",
+                "away_team_id": 51,
+                "external_fixture_id": 19134984,
+                "external_season_id": 23614,
+                "home_score": 5,
+                "home_team": "Manchester City",
+                "home_team_id": 9,
+                "kickoff": "2025-04-12T11:30:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 316,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 3,
+                "away_team": "Manchester City",
+                "away_team_id": 9,
+                "external_fixture_id": 19427610,
+                "external_season_id": 25583,
+                "home_score": 0,
+                "home_team": "Crystal Palace",
+                "home_team_id": 51,
+                "kickoff": "2025-12-14T14:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 635,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              },
+              {
+                "away_score": 0,
+                "away_team": "Crystal Palace",
+                "away_team_id": 51,
+                "external_fixture_id": 19427191,
+                "external_season_id": 25583,
+                "home_score": 3,
+                "home_team": "Manchester City",
+                "home_team_id": 9,
+                "kickoff": "2026-05-13T19:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 426,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-08-27T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "81324f58e4030c80dbc8c269514c29d8a85105aef9c948715dbf7a2828a5de5f"
+          },
+          "sample": {
+            "end": "2026-05-13T19:00:00+00:00",
+            "fixture_ids": [
+              93,
+              316,
+              635,
+              426
+            ],
+            "size": 4,
+            "start": "2024-12-07T15:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "H2H_UNBEATEN_RUN",
+          "subject_team": "Man City"
+        },
+        {
+          "claim": "Erling Haaland: 2 goals for Man City in the stored 2025/2026 meeting.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 63,
+          "evidence": {
+            "fact": "Erling Haaland: 2 goals for Man City in the stored 2025/2026 meeting.",
+            "goals": 2,
+            "own_goals_excluded": true,
+            "player_id": 154421,
+            "player_name": "Erling Haaland",
+            "roster_verified": false
+          },
+          "family": "HISTORY",
+          "id": "771:history:BRACE:7495226732bbebb5",
+          "provenance": {
+            "external_event_ids": [
+              152366646,
+              152368616
+            ],
+            "fixtures": [
+              {
+                "away_score": 3,
+                "away_team": "Manchester City",
+                "away_team_id": 9,
+                "external_fixture_id": 19427610,
+                "external_season_id": 25583,
+                "home_score": 0,
+                "home_team": "Crystal Palace",
+                "home_team_id": 51,
+                "kickoff": "2025-12-14T14:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 635,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [
+              10157,
+              10164
+            ],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-08-27T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "81324f58e4030c80dbc8c269514c29d8a85105aef9c948715dbf7a2828a5de5f"
+          },
+          "sample": {
+            "end": "2025-12-14T14:00:00+00:00",
+            "fixture_ids": [
+              635
+            ],
+            "size": 1,
+            "start": "2025-12-14T14:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "BRACE",
+          "subject_team": "Man City"
+        }
+      ],
+      "committed_at": "2026-08-27T14:26:30.185917+00:00",
+      "fixture_id": 771,
+      "home": "Crystal Palace",
+      "kickoff": "2026-08-28T19:00:00+00:00",
+      "opponent": "Crystal Palace",
+      "packet_version": "fixture-intelligence-v3",
+      "pick_id": 1056,
+      "pick_order": 2,
+      "picked_team": "Man City",
+      "picked_team_venue": "away"
+    },
+    {
+      "away": "Fulham",
+      "candidates": [
+        {
+          "claim": "Raúl Jiménez: 2 goals for Fulham in the stored 2025/2026 meeting.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 63,
+          "evidence": {
+            "fact": "Raúl Jiménez: 2 goals for Fulham in the stored 2025/2026 meeting.",
+            "goals": 2,
+            "own_goals_excluded": true,
+            "player_id": 160217,
+            "player_name": "Raúl Jiménez",
+            "roster_verified": false
+          },
+          "family": "HISTORY",
+          "id": "776:history:BRACE:9fe246c35d7cce15",
+          "provenance": {
+            "external_event_ids": [
+              156032027,
+              156032269
+            ],
+            "fixtures": [
+              {
+                "away_score": 3,
+                "away_team": "Fulham",
+                "away_team_id": 11,
+                "external_fixture_id": 19427152,
+                "external_season_id": 25583,
+                "home_score": 1,
+                "home_team": "Sunderland",
+                "home_team_id": 3,
+                "kickoff": "2026-02-22T14:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 387,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [
+              6277,
+              6281
+            ],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-08-27T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "7504db3b61a3570ef09067bc60ebbaa8e66d0a6c72e1d1c46e08acef642d7cc6"
+          },
+          "sample": {
+            "end": "2026-02-22T14:00:00+00:00",
+            "fixture_ids": [
+              387
+            ],
+            "size": 1,
+            "start": "2026-02-22T14:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "BRACE",
+          "subject_team": "Fulham"
+        }
+      ],
+      "committed_at": "2026-08-27T16:09:57.616066+00:00",
+      "fixture_id": 776,
+      "home": "Sunderland",
+      "kickoff": "2026-08-30T13:00:00+00:00",
+      "opponent": "Fulham",
+      "packet_version": "fixture-intelligence-v3",
+      "pick_id": 1061,
+      "pick_order": 5,
+      "picked_team": "Sunderland",
+      "picked_team_venue": "home"
+    },
+    {
+      "away": "Brighton Hove",
+      "candidates": [
+        {
+          "claim": "Cole Palmer: 4 goals for Chelsea in the stored 2024/2025 meeting.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 96,
+          "evidence": {
+            "fact": "Cole Palmer: 4 goals for Chelsea in the stored 2024/2025 meeting.",
+            "goals": 4,
+            "own_goals_excluded": true,
+            "player_id": 28912747,
+            "player_name": "Cole Palmer",
+            "roster_verified": false
+          },
+          "family": "HISTORY",
+          "id": "777:history:HAT_TRICK:7ff34f2edd9be522",
+          "provenance": {
+            "external_event_ids": [
+              120919470,
+              120920450,
+              120920762,
+              120922386
+            ],
+            "fixtures": [
+              {
+                "away_score": 2,
+                "away_team": "Brighton & Hove Albion",
+                "away_team_id": 78,
+                "external_fixture_id": 19134496,
+                "external_season_id": 23614,
+                "home_score": 4,
+                "home_team": "Chelsea",
+                "home_team_id": 18,
+                "kickoff": "2024-09-28T14:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 44,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              }
+            ],
+            "reference_event_ids": [
+              755,
+              759,
+              762,
+              768
+            ],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-08-27T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "1eea31079a5bf231de9ce60dde873b8e8d3bebf999111a3d5e516136977bc54e"
+          },
+          "sample": {
+            "end": "2024-09-28T14:00:00+00:00",
+            "fixture_ids": [
+              44
+            ],
+            "size": 1,
+            "start": "2024-09-28T14:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "HAT_TRICK",
+          "subject_team": "Chelsea"
+        },
+        {
+          "claim": "Brighton Hove: late winner at 90+2 in the stored 2025/2026 meeting.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 94,
+          "evidence": {
+            "extra_minute": 2,
+            "fact": "Brighton Hove: late winner at 90+2 in the stored 2025/2026 meeting.",
+            "final_score": [
+              1,
+              3
+            ],
+            "kind": "winner",
+            "minute": 90,
+            "own_goal": false,
+            "player_id": 23269659,
+            "score_after": [
+              1,
+              2
+            ],
+            "score_before": [
+              1,
+              1
+            ],
+            "threshold_minute": 85
+          },
+          "family": "HISTORY",
+          "id": "777:history:LATE_DECISIVE_GOAL:922862b188966bf6",
+          "provenance": {
+            "external_event_ids": [
+              151364842,
+              151398777,
+              151418204,
+              151426935
+            ],
+            "fixtures": [
+              {
+                "away_score": 3,
+                "away_team": "Brighton & Hove Albion",
+                "away_team_id": 78,
+                "external_fixture_id": 19427507,
+                "external_season_id": 25583,
+                "home_score": 1,
+                "home_team": "Chelsea",
+                "home_team_id": 18,
+                "kickoff": "2025-09-27T14:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 533,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [
+              8536,
+              8542,
+              8545,
+              8548
+            ],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-08-27T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "1eea31079a5bf231de9ce60dde873b8e8d3bebf999111a3d5e516136977bc54e"
+          },
+          "sample": {
+            "end": "2025-09-27T14:00:00+00:00",
+            "fixture_ids": [
+              533
+            ],
+            "size": 1,
+            "start": "2025-09-27T14:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "LATE_DECISIVE_GOAL",
+          "subject_team": "Brighton Hove"
+        },
+        {
+          "claim": "Brighton Hove scored exactly 3 goals in each of the last 3 stored PL meetings between these clubs.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 82,
+          "evidence": {
+            "boundary": "preceding different total",
+            "count": 3,
+            "fact": "Brighton Hove scored exactly 3 goals in each of the last 3 stored PL meetings between these clubs.",
+            "goals_each": 3,
+            "lower_bound": false
+          },
+          "family": "HISTORY",
+          "id": "777:history:H2H_EXACT_GOALS_SEQUENCE:a8bf0762ad0c0bf5",
+          "provenance": {
+            "external_event_ids": [],
+            "fixtures": [
+              {
+                "away_score": 0,
+                "away_team": "Chelsea",
+                "away_team_id": 18,
+                "external_fixture_id": 19134574,
+                "external_season_id": 23614,
+                "home_score": 3,
+                "home_team": "Brighton & Hove Albion",
+                "home_team_id": 78,
+                "kickoff": "2025-02-14T20:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 122,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 3,
+                "away_team": "Brighton & Hove Albion",
+                "away_team_id": 78,
+                "external_fixture_id": 19427507,
+                "external_season_id": 25583,
+                "home_score": 1,
+                "home_team": "Chelsea",
+                "home_team_id": 18,
+                "kickoff": "2025-09-27T14:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 533,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              },
+              {
+                "away_score": 0,
+                "away_team": "Chelsea",
+                "away_team_id": 18,
+                "external_fixture_id": 19427198,
+                "external_season_id": 25583,
+                "home_score": 3,
+                "home_team": "Brighton & Hove Albion",
+                "home_team_id": 78,
+                "kickoff": "2026-04-21T19:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 433,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-08-27T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "1eea31079a5bf231de9ce60dde873b8e8d3bebf999111a3d5e516136977bc54e"
+          },
+          "sample": {
+            "end": "2026-04-21T19:00:00+00:00",
+            "fixture_ids": [
+              122,
+              533,
+              433
+            ],
+            "size": 3,
+            "start": "2025-02-14T20:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "H2H_EXACT_GOALS_SEQUENCE",
+          "subject_team": "Brighton Hove"
+        },
+        {
+          "claim": "Brighton Hove: winning across the last 3 stored PL meetings.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 73,
+          "evidence": {
+            "boundary": "preceding contrary result",
+            "count": 3,
+            "fact": "Brighton Hove: winning across the last 3 stored PL meetings.",
+            "lower_bound": false,
+            "metric": "WINNING"
+          },
+          "family": "HISTORY",
+          "id": "777:history:H2H_WINNING_RUN:582755b35c27151f",
+          "provenance": {
+            "external_event_ids": [],
+            "fixtures": [
+              {
+                "away_score": 0,
+                "away_team": "Chelsea",
+                "away_team_id": 18,
+                "external_fixture_id": 19134574,
+                "external_season_id": 23614,
+                "home_score": 3,
+                "home_team": "Brighton & Hove Albion",
+                "home_team_id": 78,
+                "kickoff": "2025-02-14T20:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 122,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 3,
+                "away_team": "Brighton & Hove Albion",
+                "away_team_id": 78,
+                "external_fixture_id": 19427507,
+                "external_season_id": 25583,
+                "home_score": 1,
+                "home_team": "Chelsea",
+                "home_team_id": 18,
+                "kickoff": "2025-09-27T14:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 533,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              },
+              {
+                "away_score": 0,
+                "away_team": "Chelsea",
+                "away_team_id": 18,
+                "external_fixture_id": 19427198,
+                "external_season_id": 25583,
+                "home_score": 3,
+                "home_team": "Brighton & Hove Albion",
+                "home_team_id": 78,
+                "kickoff": "2026-04-21T19:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 433,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-08-27T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "1eea31079a5bf231de9ce60dde873b8e8d3bebf999111a3d5e516136977bc54e"
+          },
+          "sample": {
+            "end": "2026-04-21T19:00:00+00:00",
+            "fixture_ids": [
+              122,
+              533,
+              433
+            ],
+            "size": 3,
+            "start": "2025-02-14T20:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "H2H_WINNING_RUN",
+          "subject_team": "Brighton Hove"
+        },
+        {
+          "claim": "Danny Welbeck: 2 goals for Brighton Hove in the stored 2025/2026 meeting.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 63,
+          "evidence": {
+            "fact": "Danny Welbeck: 2 goals for Brighton Hove in the stored 2025/2026 meeting.",
+            "goals": 2,
+            "own_goals_excluded": true,
+            "player_id": 627,
+            "player_name": "Danny Welbeck",
+            "roster_verified": false
+          },
+          "family": "HISTORY",
+          "id": "777:history:BRACE:4f3cf7eca937fcd2",
+          "provenance": {
+            "external_event_ids": [
+              151398777,
+              151426935
+            ],
+            "fixtures": [
+              {
+                "away_score": 3,
+                "away_team": "Brighton & Hove Albion",
+                "away_team_id": 78,
+                "external_fixture_id": 19427507,
+                "external_season_id": 25583,
+                "home_score": 1,
+                "home_team": "Chelsea",
+                "home_team_id": 18,
+                "kickoff": "2025-09-27T14:00:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 533,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [
+              8542,
+              8548
+            ],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-08-27T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "1eea31079a5bf231de9ce60dde873b8e8d3bebf999111a3d5e516136977bc54e"
+          },
+          "sample": {
+            "end": "2025-09-27T14:00:00+00:00",
+            "fixture_ids": [
+              533
+            ],
+            "size": 1,
+            "start": "2025-09-27T14:00:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "BRACE",
+          "subject_team": "Brighton Hove"
+        }
+      ],
+      "committed_at": "2026-08-27T15:26:13.854769+00:00",
+      "fixture_id": 777,
+      "home": "Chelsea",
+      "kickoff": "2026-08-30T13:00:00+00:00",
+      "opponent": "Brighton Hove",
+      "packet_version": "fixture-intelligence-v3",
+      "pick_id": 1057,
+      "pick_order": 3,
+      "picked_team": "Chelsea",
+      "picked_team_venue": "home"
+    },
+    {
+      "away": "Brentford",
+      "candidates": [],
+      "committed_at": "2026-08-27T16:09:50.804502+00:00",
+      "fixture_id": 778,
+      "home": "Leeds United",
+      "kickoff": "2026-08-30T13:00:00+00:00",
+      "opponent": "Leeds United",
+      "packet_version": "fixture-intelligence-v3",
+      "pick_id": 1060,
+      "pick_order": 4,
+      "picked_team": "Brentford",
+      "picked_team_venue": "away"
+    },
+    {
+      "away": "Arsenal",
+      "candidates": [
+        {
+          "claim": "Aston Villa: late winner at 90+5 in the stored 2025/2026 meeting.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 94,
+          "evidence": {
+            "extra_minute": 5,
+            "fact": "Aston Villa: late winner at 90+5 in the stored 2025/2026 meeting.",
+            "final_score": [
+              2,
+              1
+            ],
+            "kind": "winner",
+            "minute": 90,
+            "own_goal": false,
+            "player_id": 186660,
+            "score_after": [
+              2,
+              1
+            ],
+            "score_before": [
+              1,
+              1
+            ],
+            "threshold_minute": 85
+          },
+          "family": "HISTORY",
+          "id": "780:history:LATE_DECISIVE_GOAL:33a4de485e43bfb1",
+          "provenance": {
+            "external_event_ids": [
+              152292182,
+              152293083,
+              152294246
+            ],
+            "fixtures": [
+              {
+                "away_score": 1,
+                "away_team": "Arsenal",
+                "away_team_id": 19,
+                "external_fixture_id": 19427596,
+                "external_season_id": 25583,
+                "home_score": 2,
+                "home_team": "Aston Villa",
+                "home_team_id": 15,
+                "kickoff": "2025-12-06T12:30:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 621,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [
+              9934,
+              9938,
+              9941
+            ],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-08-27T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "63a9fe578cc4c961205d81b13efe93c4f88785a9701c6509227d108e6bb58869"
+          },
+          "sample": {
+            "end": "2025-12-06T12:30:00+00:00",
+            "fixture_ids": [
+              621
+            ],
+            "size": 1,
+            "start": "2025-12-06T12:30:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "LATE_DECISIVE_GOAL",
+          "subject_team": "Aston Villa"
+        },
+        {
+          "claim": "Leandro Trossard: 3 goals for Arsenal across the last 4 stored PL meetings between these clubs.",
+          "confidence": {
+            "basis": "stored completed PL fixtures and active provider events",
+            "level": "reference_snapshot"
+          },
+          "editorial_score": 78,
+          "evidence": {
+            "appearance_count": null,
+            "fact": "Leandro Trossard: 3 goals for Arsenal across the last 4 stored PL meetings between these clubs.",
+            "goals": 3,
+            "meetings": 4,
+            "own_goals_excluded": true,
+            "player_id": 61780,
+            "player_name": "Leandro Trossard",
+            "roster_verified": false,
+            "scoring_meetings": 3
+          },
+          "family": "HISTORY",
+          "id": "780:history:PLAYER_VS_OPPONENT:39851cdf538481e4",
+          "provenance": {
+            "external_event_ids": [
+              152446628,
+              152293083,
+              118734202
+            ],
+            "fixtures": [
+              {
+                "away_score": 2,
+                "away_team": "Arsenal",
+                "away_team_id": 19,
+                "external_fixture_id": 19134464,
+                "external_season_id": 23614,
+                "home_score": 0,
+                "home_team": "Aston Villa",
+                "home_team_id": 15,
+                "kickoff": "2024-08-24T16:30:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 12,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 2,
+                "away_team": "Aston Villa",
+                "away_team_id": 15,
+                "external_fixture_id": 19134613,
+                "external_season_id": 23614,
+                "home_score": 2,
+                "home_team": "Arsenal",
+                "home_team_id": 19,
+                "kickoff": "2025-01-18T17:30:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 161,
+                "reference_season_id": 1,
+                "season": "2024/2025",
+                "season_start": 2024,
+                "snapshot_synced_at": "2026-10-05T02:28:19.540324+00:00"
+              },
+              {
+                "away_score": 1,
+                "away_team": "Arsenal",
+                "away_team_id": 19,
+                "external_fixture_id": 19427596,
+                "external_season_id": 25583,
+                "home_score": 2,
+                "home_team": "Aston Villa",
+                "home_team_id": 15,
+                "kickoff": "2025-12-06T12:30:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 621,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              },
+              {
+                "away_score": 1,
+                "away_team": "Aston Villa",
+                "away_team_id": 15,
+                "external_fixture_id": 19427636,
+                "external_season_id": 25583,
+                "home_score": 4,
+                "home_team": "Arsenal",
+                "home_team_id": 19,
+                "kickoff": "2025-12-30T20:15:00+00:00",
+                "provider_updated_at": null,
+                "reference_fixture_id": 660,
+                "reference_season_id": 2,
+                "season": "2025/2026",
+                "season_start": 2025,
+                "snapshot_synced_at": "2026-10-05T02:30:30.890436+00:00"
+              }
+            ],
+            "reference_event_ids": [
+              10539,
+              9938,
+              173
+            ],
+            "source": "Sportmonks reference"
+          },
+          "recomputability": {
+            "availability_semantics": "results in this reference snapshot, not an as-known-at-the-time archive",
+            "cutoff": "2026-08-27T19:00:00+00:00",
+            "engine_version": "historical-fixture-intelligence-v2",
+            "snapshot_sha256": "63a9fe578cc4c961205d81b13efe93c4f88785a9701c6509227d108e6bb58869"
+          },
+          "sample": {
+            "end": "2025-12-30T20:15:00+00:00",
+            "fixture_ids": [
+              12,
+              161,
+              621,
+              660
+            ],
+            "size": 4,
+            "start": "2024-08-24T16:30:00+00:00",
+            "window": "stored_PL_history"
+          },
+          "scope": "overall",
+          "signal_type": "PLAYER_VS_OPPONENT",
+          "subject_team": "Arsenal"
+        }
+      ],
+      "committed_at": "2026-08-26T19:59:47.029205+00:00",
+      "fixture_id": 780,
+      "home": "Aston Villa",
+      "kickoff": "2026-08-31T19:00:00+00:00",
+      "opponent": "Aston Villa",
+      "packet_version": "fixture-intelligence-v3",
+      "pick_id": 1041,
+      "pick_order": 1,
+      "picked_team": "Arsenal",
+      "picked_team_venue": "away"
+    }
+  ],
+  "player": {
+    "id": 3,
+    "name": "Marc"
+  },
+  "prompt_version": "pre-match-brief-v1",
+  "season": {
+    "code": "year-2",
+    "id": 2,
+    "name": "2026–27"
+  },
+  "slate_status": "committed",
+  "versions": {
+    "fixture_intelligence": "fixture-intelligence-v3",
+    "historical_intelligence": "historical-fixture-intelligence-v2"
+  },
+  "week": {
+    "id": 40,
+    "number": 2
+  },
+  "week_first_kickoff": "2026-08-28T19:00:00+00:00"
+}

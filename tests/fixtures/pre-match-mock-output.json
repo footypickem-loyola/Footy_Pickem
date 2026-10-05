@@ -1,0 +1,53 @@
+{
+  "status": "ILLUSTRATIVE MOCK — no OpenAI call; validation example, not a writing-quality benchmark",
+  "context_file": "pre-match-week2-context.json",
+  "output": {
+    "title": "Your five selected fixtures",
+    "intro": "A look at your committed slate.",
+    "fixtures": [
+      {
+        "fixture_id": 771,
+        "picked_team": "Man City",
+        "heading": "Crystal Palace vs Man City",
+        "body": "Crystal Palace 0-3 Manchester City (2025/2026, same venue orientation).",
+        "used_candidate_ids": [
+          "771:history:EXACT_PRIOR_SEASON_FIXTURE:70f02bae144d6748"
+        ]
+      },
+      {
+        "fixture_id": 776,
+        "picked_team": "Sunderland",
+        "heading": "Sunderland vs Fulham",
+        "body": "Raúl Jiménez: 2 goals for Fulham in the stored 2025/2026 meeting.",
+        "used_candidate_ids": [
+          "776:history:BRACE:9fe246c35d7cce15"
+        ]
+      },
+      {
+        "fixture_id": 777,
+        "picked_team": "Chelsea",
+        "heading": "Chelsea vs Brighton Hove",
+        "body": "Cole Palmer: 4 goals for Chelsea in the stored 2024/2025 meeting.",
+        "used_candidate_ids": [
+          "777:history:HAT_TRICK:7ff34f2edd9be522"
+        ]
+      },
+      {
+        "fixture_id": 778,
+        "picked_team": "Brentford",
+        "heading": "Leeds United vs Brentford",
+        "body": "Your selection is Brentford.",
+        "used_candidate_ids": []
+      },
+      {
+        "fixture_id": 780,
+        "picked_team": "Arsenal",
+        "heading": "Aston Villa vs Arsenal",
+        "body": "Aston Villa: late winner at 90+5 in the stored 2025/2026 meeting.",
+        "used_candidate_ids": [
+          "780:history:LATE_DECISIVE_GOAL:33a4de485e43bfb1"
+        ]
+      }
+    ]
+  }
+}
