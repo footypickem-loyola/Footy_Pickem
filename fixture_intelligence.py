@@ -8,7 +8,7 @@ from datetime import timezone
 from hashlib import sha256
 import json
 
-VERSION = "fixture-intelligence-v1"
+VERSION = "fixture-intelligence-v2"
 MIN_SCORE = 60
 
 
@@ -55,7 +55,7 @@ LABELS = {"WINNING": "wins", "UNBEATEN": "unbeaten matches", "LOSING": "defeats"
 GOAL_TYPES = set(list(PREDICATES)[4:])
 
 
-def build_fixture_intelligence(*, fixture, fixtures, results, weeks, season_id, as_of):
+def build_fixture_intelligence(*, fixture, fixtures, results, weeks, season_id, as_of, reference_history=None):
     """Build a JSON-ready packet. Caller supplies the entire season schedule.
 
     Both fixture kickoff and result.updated_at must be strictly before the cutoff
@@ -258,20 +258,30 @@ def build_fixture_intelligence(*, fixture, fixtures, results, weeks, season_id, 
                             dict(goals_against=extreme, tied_teams=peers, comparison="current season totals",
                                  league={t: dict(played=len(histories[t]), goals_against=totals[t], rows=histories[t]) for t in sorted(histories)}), 80)
 
+    from fixture_history import empty_history
+    from historical_fixture_intelligence import build_historical_candidates
+    history = reference_history if reference_history is not None else empty_history(cutoff)
+    if history["cutoff"] != cutoff.isoformat():
+        raise ValueError("Reference history cutoff must match the packet cutoff")
+    raw.extend(build_historical_candidates(reference, history))
     ranked, decisions = rank_candidates(raw, fixture)
     return dict(engine_version=VERSION, fixture=reference, cutoff=cutoff.isoformat(),
                 candidates=[asdict(c) for c in sorted(raw, key=lambda c: c.id)],
                 ranked_candidates=[asdict(c) for c in ranked], ranking_decisions=decisions,
+                history=history,
                 diagnostics=dict(exclusions=exclusions, league_comparison_eligible=bool(league_ready),
                                  unknown_date_teams=sorted(unknown_dates)),
-                limitations=["Current season only; no historical or H2H comparisons.",
+                limitations=["Historical comparisons are limited to stored PL reference fixtures; no all-time claims.",
+                             "Historical event data does not establish player appearances or current club membership.",
                              "Result updated_at is availability evidence, not a revision archive.",
                              "Season-start claims assume the supplied schedule covers the season from its start."])
 
 
 def rank_candidates(candidates, fixture):
     """Keep raw facts intact; disclose threshold and semantic suppression reasons."""
-    ordered = sorted(candidates, key=lambda c: (-c.editorial_score, -len(c.components), c.scope != "overall", c.id))
+    ordered = sorted(candidates, key=lambda c: (-c.editorial_score, -len(c.components), c.scope != "overall",
+        {"WINNING": 0, "LOSING": 1, "UNBEATEN": 2, "WINLESS": 3}.get(c.evidence.get("metric"), 0)
+        if c.family == "HISTORY" else 0, c.id))
     kept, decisions = [], []
     for c in ordered:
         reason, winner = None, None
@@ -281,9 +291,30 @@ def rank_candidates(candidates, fixture):
             reason = "continuation_not_applicable_at_fixture_venue"
         if reason is None:
             for k in kept:
+                if c.family == k.family == "HISTORY" and c.sample["fixture_ids"] == k.sample["fixture_ids"]:
+                    if c.signal_type == "EXACT_PRIOR_SEASON_FIXTURE" and k.signal_type in ("HAT_TRICK", "BRACE", "LATE_DECISIVE_GOAL"):
+                        reason, winner = "historical_anchor_covered_by_event", k.id
+                        break
+                    if c.subject_team != k.subject_team and {c.evidence.get("metric"), k.evidence.get("metric")} in ({"WINNING", "LOSING"}, {"UNBEATEN", "WINLESS"}):
+                        reason, winner = "mirrored_historical_run", k.id
+                        break
+                    if c.subject_team != k.subject_team and (c.evidence.get("metric"), k.evidence.get("metric")) in (("WINLESS", "WINNING"), ("UNBEATEN", "LOSING")):
+                        reason, winner = "implied_by_opponent_historical_run", k.id
+                        break
                 if c.subject_team != k.subject_team:
                     continue
+                if c.provenance["source"] != k.provenance["source"]:
+                    continue  # Footy IDs and reference IDs are separate namespaces.
                 same_rows = c.sample["fixture_ids"] == k.sample["fixture_ids"]
+                if c.family == k.family == "HISTORY":
+                    if (c.signal_type == "PLAYER_VS_OPPONENT" and k.signal_type in ("HAT_TRICK", "BRACE")
+                            and c.evidence["player_id"] == k.evidence["player_id"]
+                            and set(c.provenance["external_event_ids"]) == set(k.provenance["external_event_ids"])):
+                        reason, winner = "same_player_goal_evidence", k.id
+                        break
+                    if same_rows and {c.evidence.get("metric"), k.evidence.get("metric")} in ({"WINNING", "UNBEATEN"}, {"LOSING", "WINLESS"}):
+                        reason, winner = "equivalent_historical_run", k.id
+                        break
                 same_metric = c.evidence.get("metric") is not None and c.evidence.get("metric") == k.evidence.get("metric")
                 equivalent_run = c.family == k.family == "RUN" and {c.evidence.get("metric"), k.evidence.get("metric")} in ({"WINNING", "UNBEATEN"}, {"LOSING", "WINLESS"})
                 form_types = {"ROLLING_FORM", "SEASON_START_RECORD", "WINNING_LAST_5"}
