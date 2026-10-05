@@ -61,7 +61,8 @@ controls inclusion. This evaluation makes that limitation explicit.
 
 ## Reproduce and inspect
 
-After making a disposable SQLite backup of the local source:
+After making a disposable SQLite backup of the local source, generate the full
+raw report locally (the output path is ignored by Git):
 
 ```powershell
 .venv\Scripts\python.exe scripts/evaluate_fixture_intelligence.py `
@@ -72,6 +73,11 @@ After making a disposable SQLite backup of the local source:
   --reviews docs/pr23_candidate_reviews.json `
   --output docs/pr23_retrospective_eval.json
 ```
+
+The complete candidate/evidence JSON is intentionally not committed. The
+evaluation script, both gold seeds, candidate-review metadata and this findings
+summary remain versioned. `docs/.gitignore` excludes only the generated raw
+report, so rerunning this command does not add it to the PR.
 
 Alternatively select repeated `--fixture-id`, or `--start` / `--end` (exclusive).
 `--season` is the official SQLite season ID, not Sportmonks season 28083.
