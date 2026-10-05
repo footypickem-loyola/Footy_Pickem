@@ -5076,6 +5076,39 @@ def scheduled_sync_pick_insight():
         return jsonify(ok=False, error="Pick Insight sync failed; retry later"), 502
 
 
+@app.post("/tasks/sync-football-reference")
+def scheduled_sync_football_reference():
+    """One fixed current-season refresh against this service's SQLite volume."""
+    def reply(payload, status):
+        response = jsonify(payload)
+        response.status_code = status
+        response.headers['Cache-Control'] = 'no-store'
+        if payload.get('retry_after'):
+            response.headers['Retry-After'] = str(payload['retry_after'])
+        return response
+
+    expected = os.environ.get('SYNC_SECRET', '').strip()
+    if not expected:
+        return reply(dict(ok=False, error_code='not_configured'), 503)
+    supplied = request.headers.get('X-Sync-Secret', '')
+    if not hmac.compare_digest(supplied.encode('utf-8'), expected.encode('utf-8')):
+        return reply(dict(ok=False, error_code='forbidden'), 403)
+    if request.content_length is not None and request.content_length > 1024:
+        return reply(dict(ok=False, error_code='invalid_request'), 400)
+    body = request.stream.read(1025)
+    try:
+        payload = json.loads(body) if body else {}
+        if len(body) > 1024 or payload != {}:
+            raise ValueError()
+    except (ValueError, UnicodeError):
+        return reply(dict(ok=False, error_code='invalid_request'), 400)
+    if engine.dialect.name != 'sqlite':
+        return reply(dict(ok=False, error_code='unsupported_database'), 503)
+    from football_reference_tasks import run_reference_task
+    payload, status = run_reference_task(engine.url.database)
+    return reply(payload, status)
+
+
 @app.post("/tasks/sync-results")
 def scheduled_sync_results():
     """Run one score sync from a scheduler without exposing admin credentials."""
