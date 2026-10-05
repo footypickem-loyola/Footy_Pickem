@@ -1,0 +1,740 @@
+{
+  "schema_version": 1,
+  "provenance": "Locally curated from supplied snapshot; original external preview examples were not supplied. This is a seed diagnostic set, not an independent external benchmark.",
+  "items": [
+    {
+      "id": "palmer-four",
+      "fixture_id": 777,
+      "fixture": {
+        "home": "Chelsea",
+        "away": "Brighton Hove",
+        "kickoff_utc": "2026-08-30T13:00:00+00:00"
+      },
+      "claim": "Palmer scored four against Brighton in their September 2024 league meeting.",
+      "category": "brace_hat_trick",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "HAT_TRICK"
+            ],
+            "subject_team": "Chelsea",
+            "evidence": {
+              "player_id": 28912747,
+              "goals": 4
+            },
+            "external_fixture_ids": [
+              19134496
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "kluivert-three",
+      "fixture_id": 782,
+      "fixture": {
+        "home": "Newcastle",
+        "away": "Bournemouth",
+        "kickoff_utc": "2026-09-05T11:30:00+00:00"
+      },
+      "claim": "Kluivert hit a hat-trick on the previous Newcastle visit in the 2024/25 sample.",
+      "category": "brace_hat_trick",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "HAT_TRICK"
+            ],
+            "subject_team": "Bournemouth",
+            "evidence": {
+              "player_id": 26803,
+              "goals": 3
+            },
+            "external_fixture_ids": [
+              19134620
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "schade-three",
+      "fixture_id": 794,
+      "fixture": {
+        "home": "Bournemouth",
+        "away": "Brentford",
+        "kickoff_utc": "2026-09-12T14:00:00+00:00"
+      },
+      "claim": "Schade scored three for Brentford against Bournemouth in 2025/26.",
+      "category": "brace_hat_trick",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "HAT_TRICK"
+            ],
+            "subject_team": "Brentford",
+            "evidence": {
+              "player_id": 27067062,
+              "goals": 3
+            },
+            "external_fixture_ids": [
+              19427627
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "haaland-palace-brace",
+      "fixture_id": 771,
+      "fixture": {
+        "home": "Crystal Palace",
+        "away": "Man City",
+        "kickoff_utc": "2026-08-28T19:00:00+00:00"
+      },
+      "claim": "Haaland struck twice in the 3-0 away league win at Palace in 2025/26.",
+      "category": "brace_hat_trick",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "BRACE"
+            ],
+            "subject_team": "Man City",
+            "evidence": {
+              "player_id": 154421,
+              "goals": 2
+            },
+            "external_fixture_ids": [
+              19427610
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "villa-arsenal-late",
+      "fixture_id": 780,
+      "fixture": {
+        "home": "Aston Villa",
+        "away": "Arsenal",
+        "kickoff_utc": "2026-08-31T19:00:00+00:00"
+      },
+      "claim": "Villa won their 2025/26 home league meeting with Arsenal with a goal at 90+5.",
+      "category": "late_decisive",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "LATE_DECISIVE_GOAL"
+            ],
+            "subject_team": "Aston Villa",
+            "evidence": {
+              "kind": "winner",
+              "minute": 90,
+              "extra_minute": 5,
+              "final_score": [
+                2,
+                1
+              ]
+            },
+            "external_fixture_ids": [
+              19427596
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "arsenal-chelsea-score",
+      "fixture_id": 790,
+      "fixture": {
+        "home": "Arsenal",
+        "away": "Chelsea",
+        "kickoff_utc": "2026-09-06T15:30:00+00:00"
+      },
+      "claim": "Arsenal beat Chelsea 2-1 in the equivalent home league fixture last season.",
+      "category": "exact_prior_season",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "EXACT_PRIOR_SEASON_FIXTURE"
+            ],
+            "evidence": {
+              "home_score": 2,
+              "away_score": 1,
+              "season": "2025/2026"
+            },
+            "external_fixture_ids": [
+              19427155
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "arsenal-chelsea-run",
+      "fixture_id": 790,
+      "fixture": {
+        "home": "Arsenal",
+        "away": "Chelsea",
+        "kickoff_utc": "2026-09-06T15:30:00+00:00"
+      },
+      "claim": "Arsenal avoided defeat in all four league meetings in the stored two-season sample.",
+      "category": "h2h_runs",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "H2H_UNBEATEN_RUN"
+            ],
+            "subject_team": "Arsenal",
+            "evidence": {
+              "metric": "UNBEATEN",
+              "count": 4
+            }
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "chelsea-red-context",
+      "fixture_id": 790,
+      "fixture": {
+        "home": "Arsenal",
+        "away": "Chelsea",
+        "kickoff_utc": "2026-09-06T15:30:00+00:00"
+      },
+      "claim": "Chelsea received a second-yellow red-card event in the most recent stored Arsenal meeting.",
+      "category": "red_card",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "PREVIOUS_MEETING_RED_CARD"
+            ],
+            "subject_team": "Chelsea",
+            "evidence": {
+              "event_types": [
+                21
+              ]
+            },
+            "external_fixture_ids": [
+              19427155
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "brighton-stamford-result",
+      "fixture_id": 777,
+      "fixture": {
+        "home": "Chelsea",
+        "away": "Brighton Hove",
+        "kickoff_utc": "2026-08-30T13:00:00+00:00"
+      },
+      "claim": "Brighton won 3-1 away at Chelsea in the 2025/26 league fixture.",
+      "category": "exact_prior_season",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "EXACT_PRIOR_SEASON_FIXTURE"
+            ],
+            "evidence": {
+              "home_score": 1,
+              "away_score": 3,
+              "season": "2025/2026"
+            },
+            "external_fixture_ids": [
+              19427507
+            ]
+          }
+        ],
+        [
+          {
+            "signal_types": [
+              "LATE_DECISIVE_GOAL"
+            ],
+            "subject_team": "Brighton Hove",
+            "evidence": {
+              "final_score": [
+                1,
+                3
+              ]
+            },
+            "external_fixture_ids": [
+              19427507
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "solanke-villa-brace",
+      "fixture_id": 802,
+      "fixture": {
+        "home": "Tottenham",
+        "away": "Aston Villa",
+        "kickoff_utc": "2026-09-19T11:30:00+00:00"
+      },
+      "claim": "Solanke scored twice for Spurs in their 2024/25 home league meeting with Villa.",
+      "category": "brace_hat_trick",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "BRACE"
+            ],
+            "subject_team": "Tottenham",
+            "evidence": {
+              "player_id": 4203,
+              "goals": 2
+            },
+            "external_fixture_ids": [
+              19134877
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "trossard-villa-total",
+      "fixture_id": 780,
+      "fixture": {
+        "home": "Aston Villa",
+        "away": "Arsenal",
+        "kickoff_utc": "2026-08-31T19:00:00+00:00"
+      },
+      "claim": "Trossard scored three times in three separate matches across the four stored Villa-Arsenal meetings.",
+      "category": "player_opponent",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "PLAYER_VS_OPPONENT"
+            ],
+            "subject_team": "Arsenal",
+            "evidence": {
+              "player_id": 61780,
+              "goals": 3,
+              "meetings": 4,
+              "scoring_meetings": 3
+            }
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "haaland-palace-total",
+      "fixture_id": 771,
+      "fixture": {
+        "home": "Crystal Palace",
+        "away": "Man City",
+        "kickoff_utc": "2026-08-28T19:00:00+00:00"
+      },
+      "claim": "Haaland scored three goals across the four stored Palace-City league meetings.",
+      "category": "player_opponent",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "PLAYER_VS_OPPONENT"
+            ],
+            "subject_team": "Man City",
+            "evidence": {
+              "player_id": 154421,
+              "goals": 3,
+              "meetings": 4
+            }
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "brentford-chelsea-two-draws",
+      "fixture_id": 801,
+      "fixture": {
+        "home": "Brentford",
+        "away": "Chelsea",
+        "kickoff_utc": "2026-09-18T19:00:00+00:00"
+      },
+      "claim": "Both stored league meetings at Brentford ended in draws (0-0 and 2-2).",
+      "category": "venue_h2h",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "VENUE_H2H_UNBEATEN_RUN"
+            ],
+            "subject_team": "Brentford",
+            "evidence": {
+              "count": 2
+            },
+            "external_fixture_ids": [
+              19134970,
+              19427487
+            ]
+          },
+          {
+            "signal_types": [
+              "VENUE_H2H_WINLESS_RUN"
+            ],
+            "subject_team": "Brentford",
+            "evidence": {
+              "count": 2
+            },
+            "external_fixture_ids": [
+              19134970,
+              19427487
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Stored pre-cutoff reference results/events support the fact; investigate detector coverage if absent."
+    },
+    {
+      "id": "arsenal-four-wins",
+      "fixture_id": 805,
+      "fixture": {
+        "home": "Brighton Hove",
+        "away": "Arsenal",
+        "kickoff_utc": "2026-09-19T14:00:00+00:00"
+      },
+      "claim": "Arsenal won each of their first four league games before visiting Brighton.",
+      "category": "result_runs",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "WINNING_RUN"
+            ],
+            "subject_team": "Arsenal",
+            "scope": "overall",
+            "evidence": {
+              "metric": "WINNING",
+              "count": 4
+            }
+          }
+        ],
+        [
+          {
+            "signal_types": [
+              "WINNING_SEASON_START"
+            ],
+            "subject_team": "Arsenal",
+            "scope": "overall",
+            "evidence": {
+              "metric": "WINNING",
+              "count": 4
+            }
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Official fixtures [761, 780, 790, 797] support the result sequence in this snapshot, but all results.updated_at values are October 5, after this slate cutoff. Do not backdate them.",
+      "requires_official_history_for": [
+        "Arsenal"
+      ]
+    },
+    {
+      "id": "spurs-four-scoreless",
+      "fixture_id": 802,
+      "fixture": {
+        "home": "Tottenham",
+        "away": "Aston Villa",
+        "kickoff_utc": "2026-09-19T11:30:00+00:00"
+      },
+      "claim": "Spurs failed to score in all four opening league games before hosting Villa.",
+      "category": "scoring_runs",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "NO_SCORING_RUN"
+            ],
+            "subject_team": "Tottenham",
+            "scope": "overall",
+            "evidence": {
+              "metric": "NO_SCORING",
+              "count": 4
+            }
+          }
+        ],
+        [
+          {
+            "signal_types": [
+              "NO_SCORING_SEASON_START"
+            ],
+            "subject_team": "Tottenham",
+            "scope": "overall",
+            "evidence": {
+              "metric": "NO_SCORING",
+              "count": 4
+            }
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Official fixtures [766, 775, 783, 796] support the result sequence in this snapshot, but all results.updated_at values are October 5, after this slate cutoff. Do not backdate them.",
+      "requires_official_history_for": [
+        "Tottenham"
+      ]
+    },
+    {
+      "id": "coventry-three-scoreless",
+      "fixture_id": 798,
+      "fixture": {
+        "home": "Coventry City",
+        "away": "Brighton Hove",
+        "kickoff_utc": "2026-09-13T13:00:00+00:00"
+      },
+      "claim": "Coventry failed to score in their first three league matches before hosting Brighton.",
+      "category": "scoring_runs",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "NO_SCORING_RUN"
+            ],
+            "subject_team": "Coventry City",
+            "scope": "overall",
+            "evidence": {
+              "metric": "NO_SCORING",
+              "count": 3
+            }
+          }
+        ],
+        [
+          {
+            "signal_types": [
+              "NO_SCORING_SEASON_START"
+            ],
+            "subject_team": "Coventry City",
+            "scope": "overall",
+            "evidence": {
+              "metric": "NO_SCORING",
+              "count": 3
+            }
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Official fixtures [761, 774, 784] support the result sequence in this snapshot, but all results.updated_at values are October 5, after this slate cutoff. Do not backdate them.",
+      "requires_official_history_for": [
+        "Coventry City"
+      ]
+    },
+    {
+      "id": "city-four-wins",
+      "fixture_id": 807,
+      "fixture": {
+        "home": "Man City",
+        "away": "Sunderland",
+        "kickoff_utc": "2026-09-20T13:00:00+00:00"
+      },
+      "claim": "City won all four opening league matches before hosting Sunderland.",
+      "category": "result_runs",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "WINNING_RUN"
+            ],
+            "subject_team": "Man City",
+            "scope": "overall",
+            "evidence": {
+              "metric": "WINNING",
+              "count": 4
+            }
+          }
+        ],
+        [
+          {
+            "signal_types": [
+              "WINNING_SEASON_START"
+            ],
+            "subject_team": "Man City",
+            "scope": "overall",
+            "evidence": {
+              "metric": "WINNING",
+              "count": 4
+            }
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Official fixtures [767, 771, 784, 799] support the result sequence in this snapshot, but all results.updated_at values are October 5, after this slate cutoff. Do not backdate them.",
+      "requires_official_history_for": [
+        "Man City"
+      ]
+    },
+    {
+      "id": "bournemouth-four-winless",
+      "fixture_id": 809,
+      "fixture": {
+        "home": "Bournemouth",
+        "away": "Liverpool",
+        "kickoff_utc": "2026-09-20T13:00:00+00:00"
+      },
+      "claim": "Bournemouth were without a win in their opening four league matches.",
+      "category": "result_runs",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "WINLESS_RUN"
+            ],
+            "subject_team": "Bournemouth",
+            "scope": "overall",
+            "evidence": {
+              "metric": "WINLESS",
+              "count": 4
+            }
+          }
+        ],
+        [
+          {
+            "signal_types": [
+              "WINLESS_SEASON_START"
+            ],
+            "subject_team": "Bournemouth",
+            "scope": "overall",
+            "evidence": {
+              "metric": "WINLESS",
+              "count": 4
+            }
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Official fixtures [767, 773, 782, 794] support the result sequence in this snapshot, but all results.updated_at values are October 5, after this slate cutoff. Do not backdate them.",
+      "requires_official_history_for": [
+        "Bournemouth"
+      ]
+    },
+    {
+      "id": "hull-two-wins",
+      "fixture_id": 788,
+      "fixture": {
+        "home": "Hull City",
+        "away": "Aston Villa",
+        "kickoff_utc": "2026-09-05T16:30:00+00:00"
+      },
+      "claim": "Hull won both opening league games before hosting Aston Villa.",
+      "category": "result_runs",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "WINNING_RUN"
+            ],
+            "subject_team": "Hull City",
+            "scope": "overall",
+            "evidence": {
+              "metric": "WINNING",
+              "count": 2
+            }
+          }
+        ],
+        [
+          {
+            "signal_types": [
+              "WINNING_SEASON_START"
+            ],
+            "subject_team": "Hull City",
+            "scope": "overall",
+            "evidence": {
+              "metric": "WINNING",
+              "count": 2
+            }
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Official fixtures [762, 774] support the result sequence in this snapshot, but all results.updated_at values are October 5, after this slate cutoff. Do not backdate them.",
+      "requires_official_history_for": [
+        "Hull City"
+      ]
+    },
+    {
+      "id": "pair-eleven-goals",
+      "fixture_id": 809,
+      "fixture": {
+        "home": "Bournemouth",
+        "away": "Liverpool",
+        "kickoff_utc": "2026-09-20T13:00:00+00:00"
+      },
+      "claim": "The two 2025/26 Bournemouth-Liverpool league meetings produced eleven goals in total.",
+      "category": "unsupported_story",
+      "source": "PR23 snapshot-curated seed; not an attributed Squawka claim",
+      "equivalents": [
+        [
+          {
+            "signal_types": [
+              "H2H_GOALS_TOTAL"
+            ],
+            "evidence": {
+              "total_goals": 11,
+              "meetings": 2
+            },
+            "external_fixture_ids": [
+              19427455,
+              19427677
+            ]
+          }
+        ]
+      ],
+      "miss_reason_if_absent": "detector_missing",
+      "miss_rationale": "Reference finals are Liverpool 4-2 Bournemouth and Bournemouth 3-2 Liverpool. Late-winner candidates carry both scorelines, but no candidate explicitly aggregates this pair-level high-scoring trend. Classification is a review hypothesis, not an automatic semantic verdict."
+    }
+  ]
+}

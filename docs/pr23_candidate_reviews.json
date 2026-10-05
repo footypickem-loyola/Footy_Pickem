@@ -1,0 +1,836 @@
+{
+  "schema_version": 1,
+  "reviewer": "Codex-assisted provisional editorial review; not user-approved or blinded",
+  "scope": "All 88 ranked candidates plus four explicitly selected suppressed candidates. Labels are review metadata only.",
+  "items": [
+    {
+      "fixture_id": 771,
+      "candidate_id": "771:history:EXACT_PRIOR_SEASON_FIXTURE:70f02bae144d6748",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 771,
+      "candidate_id": "771:history:H2H_UNBEATEN_RUN:264dd9405b993510",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 771,
+      "candidate_id": "771:history:H2H_WINNING_RUN:bdd8cf7727c7c0e6",
+      "label": "NOISY",
+      "reason_tags": [
+        "duplicate"
+      ],
+      "note": "Adds another similar H2H angle to this packet without much new editorial value; review alongside the stronger run or event, not as a separate headline."
+    },
+    {
+      "fixture_id": 771,
+      "candidate_id": "771:history:VENUE_H2H_WINLESS_RUN:1985184f6dfcf2a5",
+      "label": "NOISY",
+      "reason_tags": [
+        "duplicate"
+      ],
+      "note": "Adds another similar H2H angle to this packet without much new editorial value; review alongside the stronger run or event, not as a separate headline."
+    },
+    {
+      "fixture_id": 771,
+      "candidate_id": "771:history:BRACE:7495226732bbebb5",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 772,
+      "candidate_id": "772:history:LATE_DECISIVE_GOAL:9dca3591e1cef944",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 772,
+      "candidate_id": "772:history:EXACT_PRIOR_SEASON_FIXTURE:334a8d414751c5d1",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 772,
+      "candidate_id": "772:history:VENUE_H2H_LOSING_RUN:0ac3309972b9c73c",
+      "label": "USEFUL",
+      "reason_tags": [
+        "venue_relevant",
+        "opponent_relevant"
+      ],
+      "note": "Forest won both stored trips to Anfield. This is the user-curated venue story, expressed inversely as Liverpool home defeats; two games can still be useful venue-specific context."
+    },
+    {
+      "fixture_id": 773,
+      "candidate_id": "773:history:EXACT_PRIOR_SEASON_FIXTURE:6856a0e325420d95",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 773,
+      "candidate_id": "773:history:LATE_DECISIVE_GOAL:ba299664c8aebe80",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 775,
+      "candidate_id": "775:history:EXACT_PRIOR_SEASON_FIXTURE:bb04a0b13333d9d5",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 775,
+      "candidate_id": "775:history:H2H_UNBEATEN_RUN:21142b565541e069",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 775,
+      "candidate_id": "775:history:LATE_DECISIVE_GOAL:c239ca8ed7427cd2",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 775,
+      "candidate_id": "775:history:VENUE_H2H_LOSING_RUN:554af8bf13086f38",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 776,
+      "candidate_id": "776:history:EXACT_PRIOR_SEASON_FIXTURE:52a68568b44c69ab",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 776,
+      "candidate_id": "776:history:BRACE:9fe246c35d7cce15",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 777,
+      "candidate_id": "777:history:HAT_TRICK:7ff34f2edd9be522",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 777,
+      "candidate_id": "777:history:LATE_DECISIVE_GOAL:922862b188966bf6",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 777,
+      "candidate_id": "777:history:H2H_WINNING_RUN:582755b35c27151f",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 777,
+      "candidate_id": "777:history:BRACE:4f3cf7eca937fcd2",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 778,
+      "candidate_id": "778:history:EXACT_PRIOR_SEASON_FIXTURE:b406cf8e9f2d2961",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 779,
+      "candidate_id": "779:history:EXACT_PRIOR_SEASON_FIXTURE:6350624930feff39",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 780,
+      "candidate_id": "780:history:LATE_DECISIVE_GOAL:33a4de485e43bfb1",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 781,
+      "candidate_id": "781:history:EXACT_PRIOR_SEASON_FIXTURE:c73c42a50954f1d9",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 782,
+      "candidate_id": "782:history:HAT_TRICK:ad7dce4edcd3e187",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 782,
+      "candidate_id": "782:history:LATE_DECISIVE_GOAL:bf2865d8b3d2079f",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 782,
+      "candidate_id": "782:history:H2H_UNBEATEN_RUN:403e5813bbb4e237",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 782,
+      "candidate_id": "782:history:VENUE_H2H_LOSING_RUN:981b87b0a438ca47",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 783,
+      "candidate_id": "783:history:EXACT_PRIOR_SEASON_FIXTURE:85e5c67f8f19a8d1",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 783,
+      "candidate_id": "783:history:H2H_WINNING_RUN:a7541f02c50fd706",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 783,
+      "candidate_id": "783:history:VENUE_H2H_WINNING_RUN:271c35c1796e8844",
+      "label": "NOISY",
+      "reason_tags": [
+        "duplicate"
+      ],
+      "note": "Adds another similar H2H angle to this packet without much new editorial value; review alongside the stronger run or event, not as a separate headline."
+    },
+    {
+      "fixture_id": 783,
+      "candidate_id": "783:history:BRACE:5754da4b61ccd31e",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 785,
+      "candidate_id": "785:history:LATE_DECISIVE_GOAL:385e0a3cc649f28a",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 785,
+      "candidate_id": "785:history:EXACT_PRIOR_SEASON_FIXTURE:6defbc9a3c11e2c2",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 785,
+      "candidate_id": "785:history:BRACE:40ff5fc9cbfd4500",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 786,
+      "candidate_id": "786:history:EXACT_PRIOR_SEASON_FIXTURE:c116630f9d73bd86",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 786,
+      "candidate_id": "786:history:LATE_DECISIVE_GOAL:efab336dcea33736",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 786,
+      "candidate_id": "786:history:BRACE:6c9bb0a1ecfbf8c5",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 787,
+      "candidate_id": "787:history:LATE_DECISIVE_GOAL:0b993f99f5ab7872",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 787,
+      "candidate_id": "787:history:H2H_UNBEATEN_RUN:a9c171cf22c300f0",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 787,
+      "candidate_id": "787:history:VENUE_H2H_LOSING_RUN:b3d45d1884de0ed9",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 789,
+      "candidate_id": "789:history:EXACT_PRIOR_SEASON_FIXTURE:a84908f6111fcfe2",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 789,
+      "candidate_id": "789:history:VENUE_H2H_WINLESS_RUN:b70896ba5610c9ae",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 790,
+      "candidate_id": "790:history:EXACT_PRIOR_SEASON_FIXTURE:58569c82e1c994d1",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 790,
+      "candidate_id": "790:history:H2H_UNBEATEN_RUN:c650e8b52ecab3ff",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 790,
+      "candidate_id": "790:history:VENUE_H2H_WINNING_RUN:07d29e10cca4ff34",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 790,
+      "candidate_id": "790:history:PREVIOUS_MEETING_RED_CARD:713ca442f6edb818",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 791,
+      "candidate_id": "791:history:EXACT_PRIOR_SEASON_FIXTURE:f9dbc1e10a8543e6",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 792,
+      "candidate_id": "792:history:EXACT_PRIOR_SEASON_FIXTURE:66548b9ca492f66a",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 792,
+      "candidate_id": "792:history:LATE_DECISIVE_GOAL:04ecb35cec52b61a",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 792,
+      "candidate_id": "792:history:LATE_DECISIVE_GOAL:7bf2a6fabaf57008",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 792,
+      "candidate_id": "792:history:VENUE_H2H_UNBEATEN_RUN:b750c263659b6b76",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 793,
+      "candidate_id": "793:history:EXACT_PRIOR_SEASON_FIXTURE:e5eb5eda192b1b81",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 793,
+      "candidate_id": "793:history:LATE_DECISIVE_GOAL:9c21ab22807e3ccd",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 793,
+      "candidate_id": "793:history:H2H_UNBEATEN_RUN:1cffab24baaf7ed1",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 793,
+      "candidate_id": "793:history:VENUE_H2H_WINNING_RUN:6e6eb84b2e89fb79",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 793,
+      "candidate_id": "793:history:BRACE:43c0db4d2c7958b9",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 794,
+      "candidate_id": "794:history:HAT_TRICK:5003e4868e3578cc",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 794,
+      "candidate_id": "794:history:EXACT_PRIOR_SEASON_FIXTURE:a90deba200f1677e",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 794,
+      "candidate_id": "794:history:H2H_UNBEATEN_RUN:0525aa8d57d49447",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 794,
+      "candidate_id": "794:history:VENUE_H2H_WINLESS_RUN:d8dc76b2f5968557",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 796,
+      "candidate_id": "796:history:EXACT_PRIOR_SEASON_FIXTURE:6b66ea3bcdc4cb8a",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 796,
+      "candidate_id": "796:history:VENUE_H2H_WINNING_RUN:7e6435251da23afa",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 797,
+      "candidate_id": "797:history:LATE_DECISIVE_GOAL:e547f25ed8f3d64d",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 799,
+      "candidate_id": "799:history:EXACT_PRIOR_SEASON_FIXTURE:1254e094d217df91",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 799,
+      "candidate_id": "799:history:LATE_DECISIVE_GOAL:829c6f89e82ff574",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 799,
+      "candidate_id": "799:history:VENUE_H2H_UNBEATEN_RUN:5fd9addbe1929318",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 800,
+      "candidate_id": "800:history:LATE_DECISIVE_GOAL:282381aacacd32fb",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 800,
+      "candidate_id": "800:history:EXACT_PRIOR_SEASON_FIXTURE:e8f53c79543fef45",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 801,
+      "candidate_id": "801:history:LATE_DECISIVE_GOAL:0536f245f6f176cc",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 801,
+      "candidate_id": "801:history:H2H_UNBEATEN_RUN:cf12599695f1a045",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 801,
+      "candidate_id": "801:history:VENUE_H2H_UNBEATEN_RUN:551fbeb30a6527db",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 801,
+      "candidate_id": "801:history:VENUE_H2H_WINLESS_RUN:89c8d1ab72b18490",
+      "label": "NOISY",
+      "reason_tags": [
+        "duplicate"
+      ],
+      "note": "Adds another similar H2H angle to this packet without much new editorial value; review alongside the stronger run or event, not as a separate headline."
+    },
+    {
+      "fixture_id": 802,
+      "candidate_id": "802:history:EXACT_PRIOR_SEASON_FIXTURE:01daf77516195e97",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 803,
+      "candidate_id": "803:history:EXACT_PRIOR_SEASON_FIXTURE:80c405370a79661a",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 805,
+      "candidate_id": "805:history:EXACT_PRIOR_SEASON_FIXTURE:7065c9116eaf5aed",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 805,
+      "candidate_id": "805:history:H2H_UNBEATEN_RUN:f39a56a0fdf6509d",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 805,
+      "candidate_id": "805:history:VENUE_H2H_WINLESS_RUN:433b2b5d4478bcd8",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 804,
+      "candidate_id": "804:history:EXACT_PRIOR_SEASON_FIXTURE:eb6dfc3c96bc8345",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 804,
+      "candidate_id": "804:history:BRACE:606db9d96ae3303e",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 807,
+      "candidate_id": "807:history:EXACT_PRIOR_SEASON_FIXTURE:0bea8eaf512573cb",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 809,
+      "candidate_id": "809:history:LATE_DECISIVE_GOAL:147ba4ad05bead1a",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 809,
+      "candidate_id": "809:history:LATE_DECISIVE_GOAL:b7c888da4ac52ee3",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 810,
+      "candidate_id": "810:history:LATE_DECISIVE_GOAL:70d548618ffb12e0",
+      "label": "EXCELLENT",
+      "reason_tags": [
+        "historically_memorable"
+      ],
+      "note": "Specific memorable scoring event; strong opponent-relevant preview material. Historical player membership is not current-roster verification."
+    },
+    {
+      "fixture_id": 810,
+      "candidate_id": "810:history:H2H_UNBEATEN_RUN:268475efc3f6eabf",
+      "label": "USEFUL",
+      "reason_tags": [
+        "opponent_relevant"
+      ],
+      "note": "Concrete prior-meeting context worth retaining, with the date, venue and stored-history limitation attached."
+    },
+    {
+      "fixture_id": 810,
+      "candidate_id": "810:history:EXACT_PRIOR_SEASON_FIXTURE:08b11190e7bb8c76",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 810,
+      "candidate_id": "810:history:LATE_DECISIVE_GOAL:982e6147421575da",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "missing_context"
+      ],
+      "note": "True context but limited as a headline: ordinary result, small stored sample, or older meeting. Prefer a more distinctive current story when available."
+    },
+    {
+      "fixture_id": 810,
+      "candidate_id": "810:history:VENUE_H2H_WINLESS_RUN:5060a364ca518415",
+      "label": "NOISY",
+      "reason_tags": [
+        "duplicate"
+      ],
+      "note": "Adds another similar H2H angle to this packet without much new editorial value; review alongside the stronger run or event, not as a separate headline."
+    },
+    {
+      "fixture_id": 780,
+      "candidate_id": "780:history:PLAYER_VS_OPPONENT:39851cdf538481e4",
+      "label": "USEFUL",
+      "reason_tags": [
+        "player_relevant"
+      ],
+      "note": "Three goals in three distinct meetings is a more specific recurring-opponent story than a one-off aggregate; score 56 excludes it."
+    },
+    {
+      "fixture_id": 771,
+      "candidate_id": "771:history:PLAYER_VS_OPPONENT:dda1a0c0ab4692d8",
+      "label": "MARGINAL",
+      "reason_tags": [
+        "duplicate"
+      ],
+      "note": "The three-goal aggregate overlaps a surfaced brace; appearances and current roster are not established."
+    },
+    {
+      "fixture_id": 802,
+      "candidate_id": "802:history:BRACE:4772674e3635abb6",
+      "label": "USEFUL",
+      "reason_tags": [
+        "player_relevant"
+      ],
+      "note": "A same-venue brace supplies a distinctive counterpoint to the ordinary prior result; older-season score 51 excludes it."
+    },
+    {
+      "fixture_id": 777,
+      "candidate_id": "777:history:PLAYER_VS_OPPONENT:beeb27601ecae33a",
+      "label": "NOISY",
+      "reason_tags": [
+        "duplicate"
+      ],
+      "note": "All four goals come from the already surfaced four-goal game; suppression correctly avoids a duplicate."
+    }
+  ]
+}
