@@ -23,9 +23,10 @@ GOAL_TYPES = {14, 15, 16}
 
 class ReferenceError(ValueError):
     """Only static, credential-free messages may cross this boundary."""
-    def __init__(self, message, retry_after=60):
+    def __init__(self, message, retry_after=60, code="validation_failed"):
         super().__init__(message)
         self.retry_after = max(60, min(retry_after, 3600))
+        self.code = code
 
 
 def season_id_checked(season_id):
@@ -42,7 +43,7 @@ class ReferenceClient:
 
     def request(self, resource, **params):
         if not self.token:
-            raise ReferenceError("Sportmonks token is not configured")
+            raise ReferenceError("Sportmonks token is not configured", code="missing_token")
         req = Request("https://api.sportmonks.com/v3/football/" + resource + "?" + urlencode(params),
                       headers={"Authorization": self.token, "Accept": "application/json"})
         try:
@@ -57,9 +58,10 @@ class ReferenceClient:
             return payload
         except HTTPError as exc:
             retry = exc.headers.get("Retry-After", "60") if exc.headers else "60"
-            raise ReferenceError(f"Sportmonks reference HTTP {exc.code}", int(retry) if retry.isdigit() else 60) from None
+            raise ReferenceError(f"Sportmonks reference HTTP {exc.code}", int(retry) if retry.isdigit() else 60,
+                                 code="rate_limited" if exc.code == 429 else "provider_http_error") from None
         except Exception:
-            raise ReferenceError("Invalid or unavailable Sportmonks reference response") from None
+            raise ReferenceError("Invalid or unavailable Sportmonks reference response", code="provider_unavailable") from None
 
     def season(self, season_id):
         return self.request(f"seasons/{season_id_checked(season_id)}")["data"]
@@ -219,6 +221,7 @@ def counts(fixtures):
     events = [e for e in retained if e["is_present"]]
     goals = [e for e in events if e["type_id"] in GOAL_TYPES]
     return dict(fixture_count=len(fixtures),
+                final_fixture_count=sum(f["state_id"] in FINAL_STATES for f in fixtures),
                 scored_fixture_count=sum(f["home_score"] is not None and f["away_score"] is not None for f in fixtures),
                 fixtures_with_events=sum(any(e["is_present"] for e in f["events"]) for f in fixtures),
                 total_event_count=len(events), goal_event_count=len(goals),
@@ -262,7 +265,8 @@ def upsert(db, table, values, keys):
                       [values[k] for k in keys]).fetchone()[0]
 
 
-def sync_reference(*, database=None, season_id, client, dry_run=False):
+def sync_reference(*, database=None, season_id, client, dry_run=False, before_write=None, before_commit=None):
+    """Optional transaction hooks fence task ownership; all fetching stays outside."""
     season_id_checked(season_id)
     path = database_path(database) if not dry_run else None
     started = datetime.now(timezone.utc).isoformat()
@@ -278,6 +282,8 @@ def sync_reference(*, database=None, season_id, client, dry_run=False):
             try:
                 create_schema(db)
                 db.set_authorizer(write_guard)
+                if before_write is not None:
+                    before_write(db)
                 sid = upsert(db, "football_reference_seasons", dict(season, sync_status="completed",
                              fixture_count=len(fixtures), last_successful_sync_at=now), ("provider", "external_season_id"))
                 prior_ids = {r[0] for r in db.execute("SELECT external_fixture_id FROM football_reference_fixtures WHERE reference_season_id=?", (sid,))}
@@ -286,10 +292,12 @@ def sync_reference(*, database=None, season_id, client, dry_run=False):
                     raise ReferenceError("Reference fixture identity set changed; manual investigation required")
                 for fixture in fixtures:
                     values = {k: v for k, v in fixture.items() if k != "events"}
-                    old = db.execute("SELECT reference_season_id FROM football_reference_fixtures WHERE provider=? AND external_fixture_id=?",
+                    old = db.execute("SELECT reference_season_id,state_id FROM football_reference_fixtures WHERE provider=? AND external_fixture_id=?",
                                      (PROVIDER, fixture["external_fixture_id"])).fetchone()
                     if old and old[0] != sid:
                         raise ReferenceError("Reference fixture belongs to another season")
+                    if old and old[1] in FINAL_STATES and fixture["state_id"] not in FINAL_STATES:
+                        raise ReferenceError("Completed reference fixture regressed; prior dataset retained")
                     fid = upsert(db, "football_reference_fixtures", dict(values, reference_season_id=sid,
                                  created_at=now, updated_at=now), ("provider", "external_fixture_id"))
                     # Complete event snapshot: missing old IDs become inactive; retained IDs update in place.
@@ -303,14 +311,19 @@ def sync_reference(*, database=None, season_id, client, dry_run=False):
                                created_at=now, updated_at=now), ("provider", "external_event_id"))
                 db.execute("INSERT INTO football_reference_syncs(reference_season_id,status,started_at,completed_at,counts_json) VALUES(?,?,?,?,?)",
                            (sid, "completed", started, now, json.dumps(report, sort_keys=True)))
+                if before_commit is not None:
+                    before_commit(db)
                 db.commit()
             except Exception:
                 db.rollback()
                 raise
     except ReferenceError:
         raise
+    except sqlite3.OperationalError as exc:
+        code = "database_busy" if getattr(exc, "sqlite_errorcode", 0) & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED) else "database_error"
+        raise ReferenceError("Reference database update failed; transaction rolled back", code=code) from None
     except Exception:
-        raise ReferenceError("Reference database update failed; transaction rolled back") from None
+        raise ReferenceError("Reference database update failed; transaction rolled back", code="database_error") from None
     return dict(season_id=season_id, dry_run=False, **report)
 
 
@@ -320,13 +333,24 @@ def inspect_reference(database):
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA query_only=ON")
         db.execute("BEGIN")
-        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='football_reference_seasons'").fetchone():
-            return []
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        tasks = {}
+        if 'football_reference_tasks' in tables:
+            for row in db.execute("SELECT provider,external_season_id,status,started_at,completed_at,lease_until,next_attempt_after,last_successful_sync_at,error_code FROM football_reference_tasks"):
+                task = dict(row)
+                tasks[(task.pop('provider'), task.pop('external_season_id'))] = task
         reports = []
-        for season in db.execute("SELECT * FROM football_reference_seasons ORDER BY provider,external_season_id"):
+        seasons = db.execute("SELECT * FROM football_reference_seasons ORDER BY provider,external_season_id") if 'football_reference_seasons' in tables else []
+        for season in seasons:
             fixtures = [dict(r) for r in db.execute("SELECT * FROM football_reference_fixtures WHERE reference_season_id=? ORDER BY external_fixture_id", (season["id"],))]
             for f in fixtures:
                 f["events"] = [dict(r) for r in db.execute("SELECT * FROM football_reference_events WHERE reference_fixture_id=? ORDER BY external_event_id", (f["id"],))]
             reports.append(dict(season_id=season["external_season_id"], provider=season["provider"], name=season["name"],
                                 sync_status=season["sync_status"], last_successful_sync_at=season["last_successful_sync_at"], **counts(fixtures)))
+            task = tasks.pop((season['provider'], season['external_season_id']), None)
+            if task:
+                reports[-1]['latest_attempt'] = task
+        for (provider, season_id), task in sorted(tasks.items()):
+            reports.append(dict(provider=provider, season_id=season_id, sync_status='not_imported',
+                                last_successful_sync_at=None, latest_attempt=task, **counts([])))
         return reports

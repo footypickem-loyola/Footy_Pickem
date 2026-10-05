@@ -1,7 +1,15 @@
 """Explicit, additive SQLite schema. Never registered with Flask/game metadata."""
 
 TABLES = frozenset({"football_reference_seasons", "football_reference_fixtures",
-                    "football_reference_events", "football_reference_syncs"})
+                    "football_reference_events", "football_reference_syncs", "football_reference_tasks"})
+
+# Created only by an explicit task invocation, never on app import/startup.
+TASK_DDL = """CREATE TABLE IF NOT EXISTS football_reference_tasks (
+    provider TEXT NOT NULL, external_season_id INTEGER NOT NULL,
+    status TEXT NOT NULL, started_at TEXT, completed_at TEXT,
+    claim_token TEXT, lease_until TEXT, next_attempt_after TEXT,
+    last_successful_sync_at TEXT, error_code TEXT,
+    PRIMARY KEY(provider, external_season_id))"""
 
 DDL = (
     """CREATE TABLE IF NOT EXISTS football_reference_seasons (
