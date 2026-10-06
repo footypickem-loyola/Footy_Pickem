@@ -13,11 +13,28 @@ from correspondent.writer import CorrespondentError
 from fixture_history import load_fixture_history
 from fixture_intelligence import build_fixture_intelligence, VERSION as FIXTURE_VERSION
 from historical_fixture_intelligence import VERSION as HISTORICAL_VERSION
+from pre_match_facts import writing_metadata, fallback_facts
 
-CONTEXT_VERSION = 'pre-match-context-v1'
-PROMPT_VERSION = 'pre-match-brief-v1'
+CONTEXT_VERSION = 'pre-match-context-v2'
+PROMPT_VERSION = 'pre-match-brief-v2'
 CANDIDATE_KEYS = {'id', 'signal_type', 'family', 'subject_team', 'claim', 'editorial_score',
-                  'scope', 'evidence', 'sample', 'provenance', 'confidence', 'recomputability'}
+                  'scope', 'evidence', 'sample', 'provenance', 'confidence', 'recomputability', 'writing'}
+
+
+def all_facts(pick):
+    return pick['candidates'] + pick['fallback_facts']
+
+
+def validate_writing(fact):
+    writing = fact.get('writing')
+    _keys(writing, ('role', 'scorers', 'comparison_scope', 'specific_goal_story', 'scoring_meetings', 'instruction'), 'writing metadata')
+    require(writing['role'] in ('editorial', 'fallback') and type(writing['specific_goal_story']) is bool, 'Invalid fact role')
+    require(writing['comparison_scope'] is None or isinstance(writing['comparison_scope'], dict), 'Invalid comparison scope')
+    require(isinstance(writing['scorers'], list), 'Invalid scorer list')
+    for scorer in writing['scorers']:
+        require(isinstance(scorer, dict) and _id(scorer.get('player_id')) and _text(scorer.get('name'))
+                and isinstance(scorer.get('event_ids'), list) and scorer['event_ids'], 'Missing authoritative scorer identity')
+    require(not writing['specific_goal_story'] or writing['scorers'], 'Anonymous goal story is ineligible')
 
 
 class BriefNotReady(CorrespondentError):
@@ -85,7 +102,7 @@ def validate_context(context):
     fixture_ids, pick_ids, candidate_ids, orders, ordering = set(), set(), set(), set(), []
     for pick in picks:
         _keys(pick, ('pick_id', 'committed_at', 'pick_order', 'fixture_id', 'home', 'away', 'kickoff',
-            'picked_team', 'opponent', 'picked_team_venue', 'packet_version', 'candidates'), 'pick')
+            'picked_team', 'opponent', 'picked_team_venue', 'packet_version', 'candidates', 'fallback_facts'), 'pick')
         require(_id(pick['fixture_id']) and pick['fixture_id'] not in fixture_ids, 'Duplicate/invalid fixture')
         require(_id(pick['pick_id']) and pick['pick_id'] not in pick_ids, 'Duplicate/invalid pick')
         fixture_ids.add(pick['fixture_id'])
@@ -104,6 +121,8 @@ def validate_context(context):
         require(isinstance(candidates, list) and len(candidates) <= context['candidate_limit'], 'Invalid candidate list/cap')
         for c in candidates:
             _keys(c, CANDIDATE_KEYS, 'candidate')
+            validate_writing(c)
+            require(c['writing']['role'] == 'editorial', 'Candidate role mismatch')
             require(all(_text(c[k]) for k in ('id', 'signal_type', 'family', 'subject_team', 'claim', 'scope')), 'Missing candidate fields')
             require(c['id'].startswith(f"{pick['fixture_id']}:") and c['id'] not in candidate_ids, 'Duplicate/cross-fixture candidate')
             candidate_ids.add(c['id'])
@@ -123,6 +142,20 @@ def validate_context(context):
             rows = provenance.get('fixtures', provenance.get('rows'))
             require(isinstance(rows, list) and rows and all(isinstance(r, dict) for r in rows), 'Missing evidence rows')
             require(all(utc(r.get('kickoff')) < cutoff for r in rows), 'Future provenance fixture')
+        fallback = pick['fallback_facts']
+        require(isinstance(fallback, list) and len(fallback) <= 2, 'Invalid fallback list')
+        for fact in fallback:
+            _keys(fact, ('id', 'signal_type', 'claim', 'evidence', 'provenance', 'writing', 'cutoff'), 'fallback fact')
+            require(_text(fact['id']) and fact['id'].startswith(f"{pick['fixture_id']}:fallback:")
+                    and fact['id'] not in candidate_ids, 'Duplicate/cross-fixture fallback fact')
+            candidate_ids.add(fact['id'])
+            require(_text(fact['signal_type']) and _text(fact['claim']) and isinstance(fact['evidence'], dict), 'Invalid fallback evidence')
+            require(utc(fact['cutoff']) == cutoff and isinstance(fact['provenance'], dict), 'Fallback cutoff mismatch')
+            rows = fact['provenance'].get('fixtures')
+            require(isinstance(rows, list) and rows and all(isinstance(r, dict) and utc(r.get('kickoff')) < cutoff for r in rows), 'Future/missing fallback evidence')
+            validate_writing(fact)
+            require(fact['writing']['role'] == 'fallback', 'Fallback role mismatch')
+        require(bool(all_facts(pick)), 'No supported football context for fixture')
     require(orders == set(range(1, 6)), 'Duplicate pick order')
     require(ordering == sorted(ordering), 'Fixtures must be ordered by kickoff then ID')
     require(utc(context['earliest_kickoff']) == ordering[0][0], 'Earliest kickoff mismatch')
@@ -192,15 +225,23 @@ def build_pre_match_context(database, *, season, week, player_id, as_of, candida
                     season_id=season, as_of=cutoff, reference_history=history)
                 candidates = []
                 for c in packet['ranked_candidates'][:candidate_limit]:
-                    candidate = {key: c[key] for key in CANDIDATE_KEYS}
+                    writing = writing_metadata(c)
+                    if writing is None:
+                        continue
+                    candidate = {key: c[key] for key in CANDIDATE_KEYS - {'writing'}}
+                    candidate['writing'] = writing
                     # Keep factual rows and event IDs, not provider annotation blobs.
                     candidate['provenance'] = {k: v for k, v in c['provenance'].items()
                                                if k in ('source', 'fixtures', 'rows', 'reference_event_ids', 'external_event_ids')}
                     candidates.append(candidate)
+                fallback = fallback_facts(db, fixture=f, picked_team=p['team'], history=history, candidates=candidates,
+                                          schedule=schedule, results=results, cutoff=cutoff)
+                if not candidates and not fallback:
+                    raise BriefNotReady(f'No supported football context for fixture {f.id}; cannot generate an empty entry')
                 entries.append(dict(pick_id=p['id'], committed_at=utc(p['created_at']).isoformat(), pick_order=pick_order[p['id']],
                     fixture_id=f.id, home=f.home, away=f.away, kickoff=f.kickoff_utc.isoformat(), picked_team=p['team'],
                     opponent=f.away if p['team'] == f.home else f.home, picked_team_venue='home' if p['team'] == f.home else 'away',
-                    packet_version=packet['engine_version'], candidates=candidates))
+                    packet_version=packet['engine_version'], candidates=candidates, fallback_facts=fallback))
             return validate_context(dict(context_version=CONTEXT_VERSION, prompt_version=PROMPT_VERSION,
                 season=season_row, week=week_row, player=player, as_of=cutoff.isoformat(), earliest_kickoff=entries[0]['kickoff'],
                 week_first_kickoff=first.isoformat(), candidate_limit=candidate_limit,

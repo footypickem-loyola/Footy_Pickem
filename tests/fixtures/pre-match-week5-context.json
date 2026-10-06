@@ -7,7 +7,7 @@
     "Stored meeting samples do not establish all-time records, appearances or current player membership."
   ],
   "candidate_limit": 5,
-  "context_version": "pre-match-context-v1",
+  "context_version": "pre-match-context-v2",
   "earliest_kickoff": "2026-09-18T19:00:00+00:00",
   "picks": [
     {
@@ -94,7 +94,27 @@
           },
           "scope": "overall",
           "signal_type": "LATE_DECISIVE_GOAL",
-          "subject_team": "Brentford"
+          "subject_team": "Brentford",
+          "writing": {
+            "comparison_scope": null,
+            "instruction": "Use the supplied dates/season; not automatically the latest overall meeting.",
+            "role": "editorial",
+            "scorers": [
+              {
+                "event_ids": [
+                  151202175
+                ],
+                "extra_minute": 3,
+                "goals": null,
+                "minute": 90,
+                "name": "Fábio Carvalho",
+                "own_goal": false,
+                "player_id": 21412957
+              }
+            ],
+            "scoring_meetings": null,
+            "specific_goal_story": true
+          }
         },
         {
           "claim": "Chelsea: unbeaten across the last 4 stored PL meetings.",
@@ -207,7 +227,22 @@
           },
           "scope": "overall",
           "signal_type": "H2H_UNBEATEN_RUN",
-          "subject_team": "Chelsea"
+          "subject_team": "Chelsea",
+          "writing": {
+            "comparison_scope": {
+              "count": 4,
+              "end": "2026-01-17T15:00:00+00:00",
+              "kind": "bounded_h2h_sequence",
+              "lower_bound": true,
+              "start": "2024-12-15T19:00:00+00:00",
+              "venue": "both"
+            },
+            "instruction": "Use the supplied dates/season; not automatically the latest overall meeting.",
+            "role": "editorial",
+            "scorers": [],
+            "scoring_meetings": null,
+            "specific_goal_story": false
+          }
         },
         {
           "claim": "Brentford: unbeaten across the last 2 stored home PL meetings.",
@@ -284,10 +319,26 @@
           },
           "scope": "home",
           "signal_type": "VENUE_H2H_UNBEATEN_RUN",
-          "subject_team": "Brentford"
+          "subject_team": "Brentford",
+          "writing": {
+            "comparison_scope": {
+              "count": 2,
+              "end": "2025-09-13T19:00:00+00:00",
+              "kind": "bounded_h2h_sequence",
+              "lower_bound": true,
+              "start": "2025-04-06T13:00:00+00:00",
+              "venue": "home"
+            },
+            "instruction": "Use the supplied dates/season; not automatically the latest overall meeting.",
+            "role": "editorial",
+            "scorers": [],
+            "scoring_meetings": null,
+            "specific_goal_story": false
+          }
         }
       ],
       "committed_at": "2026-09-15T20:49:05.475785+00:00",
+      "fallback_facts": [],
       "fixture_id": 801,
       "home": "Brentford",
       "kickoff": "2026-09-18T19:00:00+00:00",
@@ -412,7 +463,22 @@
           },
           "scope": "overall",
           "signal_type": "H2H_UNBEATEN_RUN",
-          "subject_team": "Arsenal"
+          "subject_team": "Arsenal",
+          "writing": {
+            "comparison_scope": {
+              "count": 4,
+              "end": "2026-03-04T19:30:00+00:00",
+              "kind": "bounded_h2h_sequence",
+              "lower_bound": true,
+              "start": "2024-08-31T11:30:00+00:00",
+              "venue": "both"
+            },
+            "instruction": "Use the supplied dates/season; not automatically the latest overall meeting.",
+            "role": "editorial",
+            "scorers": [],
+            "scoring_meetings": null,
+            "specific_goal_story": false
+          }
         },
         {
           "claim": "Brighton & Hove Albion 0-1 Arsenal (2025/2026, same venue orientation).",
@@ -472,10 +538,19 @@
           },
           "scope": "home",
           "signal_type": "EXACT_PRIOR_SEASON_FIXTURE",
-          "subject_team": "Brighton Hove"
+          "subject_team": "Brighton Hove",
+          "writing": {
+            "comparison_scope": null,
+            "instruction": "Use the supplied dates/season; not automatically the latest overall meeting.",
+            "role": "editorial",
+            "scorers": [],
+            "scoring_meetings": null,
+            "specific_goal_story": false
+          }
         }
       ],
       "committed_at": "2026-09-15T20:17:22.739970+00:00",
+      "fallback_facts": [],
       "fixture_id": 805,
       "home": "Brighton Hove",
       "kickoff": "2026-09-19T14:00:00+00:00",
@@ -490,6 +565,78 @@
       "away": "Coventry City",
       "candidates": [],
       "committed_at": "2026-09-15T20:32:11.713983+00:00",
+      "fallback_facts": [
+        {
+          "claim": "Nottingham Forest 1-1 AFC Bournemouth on 2026-05-24.",
+          "cutoff": "2026-09-17T19:00:00+00:00",
+          "evidence": {
+            "away": "AFC Bournemouth",
+            "away_score": 1,
+            "date": "2026-05-24T15:00:00+00:00",
+            "home": "Nottingham Forest",
+            "home_score": 1,
+            "season": "2025/2026"
+          },
+          "id": "808:fallback:PICKED_TEAM_RESULT:d2fc902e06b5aa7e",
+          "provenance": {
+            "fixtures": [
+              {
+                "away_score": 1,
+                "away_team": "AFC Bournemouth",
+                "away_team_id": 52,
+                "external_fixture_id": 19427242,
+                "home_score": 1,
+                "home_team": "Nottingham Forest",
+                "home_team_id": 63,
+                "kickoff": "2026-05-24T15:00:00+00:00",
+                "reference_fixture_id": 477,
+                "season": "2025/2026",
+                "state_id": 5,
+                "sync_status": "completed"
+              }
+            ],
+            "source": "Sportmonks reference"
+          },
+          "signal_type": "PICKED_TEAM_RESULT",
+          "writing": {
+            "comparison_scope": {
+              "before": "2026-09-17T19:00:00+00:00",
+              "kind": "most_recent_available_team_result",
+              "team": "Nottingham"
+            },
+            "instruction": "Result context, not a promoted editorial candidate. Name any scorer used; never invent missing scorers.",
+            "role": "fallback",
+            "scorers": [
+              {
+                "event_ids": [
+                  157034902
+                ],
+                "extra_minute": null,
+                "goals": 1,
+                "minute": null,
+                "name": "Marcus Tavernier",
+                "own_goal": false,
+                "player_id": 537493,
+                "team_id": 52
+              },
+              {
+                "event_ids": [
+                  157034113
+                ],
+                "extra_minute": null,
+                "goals": 1,
+                "minute": null,
+                "name": "Morgan Gibbs-White",
+                "own_goal": false,
+                "player_id": 7926,
+                "team_id": 63
+              }
+            ],
+            "scoring_meetings": null,
+            "specific_goal_story": false
+          }
+        }
+      ],
       "fixture_id": 808,
       "home": "Nottingham",
       "kickoff": "2026-09-19T16:30:00+00:00",
@@ -561,7 +708,15 @@
           },
           "scope": "home",
           "signal_type": "EXACT_PRIOR_SEASON_FIXTURE",
-          "subject_team": "Leeds United"
+          "subject_team": "Leeds United",
+          "writing": {
+            "comparison_scope": null,
+            "instruction": "Use the supplied dates/season; not automatically the latest overall meeting.",
+            "role": "editorial",
+            "scorers": [],
+            "scoring_meetings": null,
+            "specific_goal_story": false
+          }
         },
         {
           "claim": "Dominic Calvert-Lewin: 2 goals for Leeds United in the stored 2025/2026 meeting.",
@@ -627,10 +782,32 @@
           },
           "scope": "overall",
           "signal_type": "BRACE",
-          "subject_team": "Leeds United"
+          "subject_team": "Leeds United",
+          "writing": {
+            "comparison_scope": null,
+            "instruction": "Use the supplied dates/season; not automatically the latest overall meeting.",
+            "role": "editorial",
+            "scorers": [
+              {
+                "event_ids": [
+                  152405569,
+                  152405658
+                ],
+                "extra_minute": null,
+                "goals": 2,
+                "minute": null,
+                "name": "Dominic Calvert-Lewin",
+                "own_goal": false,
+                "player_id": 5141
+              }
+            ],
+            "scoring_meetings": null,
+            "specific_goal_story": true
+          }
         }
       ],
       "committed_at": "2026-09-15T20:17:46.364829+00:00",
+      "fallback_facts": [],
       "fixture_id": 804,
       "home": "Leeds United",
       "kickoff": "2026-09-20T13:00:00+00:00",
@@ -727,7 +904,27 @@
           },
           "scope": "overall",
           "signal_type": "LATE_DECISIVE_GOAL",
-          "subject_team": "Man United"
+          "subject_team": "Man United",
+          "writing": {
+            "comparison_scope": null,
+            "instruction": "Use the supplied dates/season; not automatically the latest overall meeting.",
+            "role": "editorial",
+            "scorers": [
+              {
+                "event_ids": [
+                  152666565
+                ],
+                "extra_minute": 4,
+                "goals": null,
+                "minute": 90,
+                "name": "Benjamin Sesko",
+                "own_goal": false,
+                "player_id": 24818280
+              }
+            ],
+            "scoring_meetings": null,
+            "specific_goal_story": true
+          }
         },
         {
           "claim": "Man United: unbeaten across the last 4 stored PL meetings.",
@@ -840,7 +1037,22 @@
           },
           "scope": "overall",
           "signal_type": "H2H_UNBEATEN_RUN",
-          "subject_team": "Man United"
+          "subject_team": "Man United",
+          "writing": {
+            "comparison_scope": {
+              "count": 4,
+              "end": "2026-02-01T14:00:00+00:00",
+              "kind": "bounded_h2h_sequence",
+              "lower_bound": true,
+              "start": "2024-08-16T19:00:00+00:00",
+              "venue": "both"
+            },
+            "instruction": "Use the supplied dates/season; not automatically the latest overall meeting.",
+            "role": "editorial",
+            "scorers": [],
+            "scoring_meetings": null,
+            "specific_goal_story": false
+          }
         },
         {
           "claim": "Man United: late winner at 87 in the stored 2024/2025 meeting.",
@@ -917,10 +1129,31 @@
           },
           "scope": "overall",
           "signal_type": "LATE_DECISIVE_GOAL",
-          "subject_team": "Man United"
+          "subject_team": "Man United",
+          "writing": {
+            "comparison_scope": null,
+            "instruction": "Use the supplied dates/season; not automatically the latest overall meeting.",
+            "role": "editorial",
+            "scorers": [
+              {
+                "event_ids": [
+                  118266634
+                ],
+                "extra_minute": null,
+                "goals": null,
+                "minute": 87,
+                "name": "Joshua Zirkzee",
+                "own_goal": false,
+                "player_id": 9605680
+              }
+            ],
+            "scoring_meetings": null,
+            "specific_goal_story": true
+          }
         }
       ],
       "committed_at": "2026-09-15T20:31:56.095150+00:00",
+      "fallback_facts": [],
       "fixture_id": 810,
       "home": "Fulham",
       "kickoff": "2026-09-20T15:30:00+00:00",
@@ -936,7 +1169,7 @@
     "id": 2,
     "name": "Joe"
   },
-  "prompt_version": "pre-match-brief-v1",
+  "prompt_version": "pre-match-brief-v2",
   "season": {
     "code": "year-2",
     "id": 2,
