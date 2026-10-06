@@ -1,0 +1,75 @@
+{
+  "status": "ILLUSTRATIVE MOCK — no OpenAI call; validation example, not a writing-quality benchmark",
+  "context_file": "pre-match-week2-context.json",
+  "output": {
+    "title": "Marc’s Week 2 Pre-Match Brief",
+    "intro": "Your five selections for Week 2.",
+    "fixtures": [
+      {
+        "fixture_id": 771,
+        "picked_team": "Man City",
+        "heading": "Crystal Palace vs Man City",
+        "sentences": [
+          {
+            "text": "Crystal Palace 0-3 Manchester City (2025/2026, same venue orientation).",
+            "used_fact_ids": [
+              "771:history:EXACT_PRIOR_SEASON_FIXTURE:70f02bae144d6748"
+            ]
+          }
+        ]
+      },
+      {
+        "fixture_id": 776,
+        "picked_team": "Sunderland",
+        "heading": "Sunderland vs Fulham",
+        "sentences": [
+          {
+            "text": "Raúl Jiménez: 2 goals for Fulham in the 2025/2026 meeting.",
+            "used_fact_ids": [
+              "776:history:BRACE:9fe246c35d7cce15"
+            ]
+          }
+        ]
+      },
+      {
+        "fixture_id": 777,
+        "picked_team": "Chelsea",
+        "heading": "Chelsea vs Brighton Hove",
+        "sentences": [
+          {
+            "text": "Cole Palmer: 4 goals for Chelsea in the 2024/2025 meeting.",
+            "used_fact_ids": [
+              "777:history:HAT_TRICK:7ff34f2edd9be522"
+            ]
+          }
+        ]
+      },
+      {
+        "fixture_id": 778,
+        "picked_team": "Brentford",
+        "heading": "Leeds United vs Brentford",
+        "sentences": [
+          {
+            "text": "Leeds United 0-0 Brentford on 2026-03-21.",
+            "used_fact_ids": [
+              "778:fallback:H2H_RESULT:6443ad5fd05dbf51"
+            ]
+          }
+        ]
+      },
+      {
+        "fixture_id": 780,
+        "picked_team": "Arsenal",
+        "heading": "Aston Villa vs Arsenal",
+        "sentences": [
+          {
+            "text": "Emiliano Buendía scored the winner at 90+5.",
+            "used_fact_ids": [
+              "780:history:LATE_DECISIVE_GOAL:33a4de485e43bfb1"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
