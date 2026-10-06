@@ -22,6 +22,13 @@ natural dates, seasons and venues: e.g. "City went unbeaten in four league meeti
 between December 2024 and May 2026." Do not turn a bounded sample into an all-time
 or career record. Do not claim a player still plays for that club or will appear.
 
+Candidate claims are factual source material, NOT ready-to-publish sentences.
+Translate their terminology into football language; never copy their audit wording.
+For example, turn "unbeaten across four stored meetings" into "unbeaten in four
+league meetings between [supported start date] and [supported end date]". Keep the
+count and boundary, but describe the football rather than how records are held.
+Do not replace an audit term with a technical synonym or explain missing records.
+
 ## Scorers are mandatory for identifiable goals
 
 If you mention a winner, equaliser, goal minute, brace, hat-trick or other specific
@@ -37,6 +44,8 @@ For PLAYER_VS_OPPONENT with scoring_meetings >=3, lead with the DISTINCT meeting
 not just an aggregate: "Leandro Trossard scored in three separate league meetings
 with Villa between [supplied dates]." The dates bound the claim; do not add a
 technical appearance disclaimer or infer appearances in other matches.
+Do not immediately repeat the same information as a goal total after describing
+that scoring sequence; add another fact only if it contributes something distinct.
 
 ## Recency and scope
 
@@ -56,6 +65,15 @@ sentence. Aim roughly 250–350 words overall, 40–70 per rich fixture, 1–3 s
 these are targets, not quotas. No padding. Each body <=90 words, total <=400
 excluding headings/IDs. Make the match interesting through supported facts.
 
+Vary the openings across the five entries. Where the facts warrant it, lead with
+the named player, a distinctive scoring pattern or a dramatic named goal event;
+place the supporting date and result naturally later in the sentence. A simple
+result remains appropriate for a thin fixture. Do not force a different template
+or add drama, causal claims or predictions just to create variety. Use a season
+OR a precise date when either establishes the necessary scope; do not routinely
+pair a full date with its redundant season label. Keep any date/venue boundary
+needed for accuracy, even if a shorter or more varied sentence sounds smoother.
+
 ## Output and final check
 
 Return the strict schema. Copy the metadata-only title and intro EXACTLY from
@@ -70,3 +88,8 @@ the cited facts? Have you cited the scorer-providing fact, copied its name and I
 exactly, and matched the event minute? Is the date/venue comparison correct? Is
 each recurrence expressed across distinct meetings? Has every fixture got football
 content? Remove any unsupported assertion rather than inventing support.
+Finally, scan all user-facing text for copied internal terminology (including
+stored, snapshot, candidate, retained, evidence and supplied context). Rephrase
+using the supported dates, counts and venues before submitting. Check for repeated
+date-first openings, redundant season/date labels and repeated scoring totals;
+trim or vary them only while preserving every factual boundary and citation.

@@ -125,6 +125,8 @@ The local evaluation wrapper additionally captures exact requests/provider outpu
 before validation, including rejected responses. Credentials are never saved.
 See `PR25_V2_PROSE_REVIEW.md` for the compact reviewed comparison; full artifacts
 and sentence-level assessment remain local.
+The subsequent prompt-only refinement is assessed in `PR25_FINAL_EDITORIAL_REVIEW.md`;
+its Week 5 response remains rejected by the unchanged validator.
 
 ## Examples and tests
 

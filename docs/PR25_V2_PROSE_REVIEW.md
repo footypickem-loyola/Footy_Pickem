@@ -1,5 +1,8 @@
 # PR25 v2 controlled live review
 
+This records the initial v2 run. The subsequent prompt-only refinement and its
+one-call-per-slate evaluation are recorded in `PR25_FINAL_EDITORIAL_REVIEW.md`.
+
 Two real calls on 2026-10-06, one per required context, using `gpt-5.6-luna`,
 `pre-match-brief-v2` and `pre-match-context-v2`. No AI repair pass or selective
 regeneration. The local `.env` was loaded into the evaluation process only;
