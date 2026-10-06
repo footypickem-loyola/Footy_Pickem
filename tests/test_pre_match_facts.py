@@ -110,6 +110,51 @@ class SentenceGroundingTests(unittest.TestCase):
         self.check('In December 2025, Emiliano Buendía scored the winner at 90+5.')
         self.assertIn('unless `writing.comparison_scope` explicitly establishes', load_system_prompt())
 
+    def test_stoppage_time_at_notation_preserves_named_event_citations(self):
+        context = example(5)
+        for fid, player, club, extra, kind in ((801, 'Fábio Carvalho', 'Brentford', 3, 'equaliser'),
+                                             (810, 'Benjamin Sesko', 'Manchester United', 4, 'winner')):
+            pick = next(p for p in context['picks'] if p['fixture_id'] == fid)
+            fact = next(f for f in pick['candidates'] if f['signal_type'] == 'LATE_DECISIVE_GOAL'
+                        and f['evidence']['extra_minute'] == extra)
+            validate_sentence(f'{player} scored the {kind} for {club} at 90+{extra}.',
+                              [fact], pick['candidates'], pick)
+        self.assertIn('Write stoppage-time goals as "at 90+3"', load_system_prompt())
+
+    def test_ordinal_stoppage_time_remains_rejected_by_unchanged_validator(self):
+        context = example(5)
+        for fid, extra, phrase in ((801, 3, 'in the 90+3rd minute'), (810, 4, 'at the 90+4th-minute')):
+            pick = next(p for p in context['picks'] if p['fixture_id'] == fid)
+            fact = next(f for f in pick['candidates'] if f['signal_type'] == 'LATE_DECISIVE_GOAL'
+                        and f['evidence']['extra_minute'] == extra)
+            name = fact['writing']['scorers'][0]['name']
+            with self.assertRaisesRegex(CorrespondentError, 'Goal minute'):
+                validate_sentence(f'{name} scored for {fact["subject_team"]} {phrase}.',
+                                  [fact], pick['candidates'], pick)
+
+    def test_mixed_club_and_opponent_scorers_have_explicit_supported_attribution(self):
+        pick = next(p for p in example()['picks'] if p['fixture_id'] == 776)
+        fact = pick['fallback_facts'][0]
+        row = fact['provenance']['fixtures'][0]
+        scorers = {s['name']: s for s in fact['writing']['scorers']}
+        self.assertEqual(row['home_team'], 'Sunderland')
+        self.assertEqual(row['away_team'], 'Chelsea')
+        self.assertEqual(scorers['Trai Hume']['team_id'], row['home_team_id'])
+        self.assertEqual(scorers['Cole Palmer']['team_id'], row['away_team_id'])
+        self.assertNotEqual(scorers['Cole Palmer']['team_id'], row['home_team_id'])
+        validate_sentence('Trai Hume scored for Sunderland; Cole Palmer scored for Chelsea in Sunderland’s 2-1 win on 24 May 2026.',
+                          [fact], pick['fallback_facts'], pick)
+        brace = next(f for f in pick['candidates'] if f['signal_type'] == 'BRACE')
+        self.assertEqual(brace['subject_team'], 'Fulham')
+        validate_sentence('Raúl Jiménez scored twice for Fulham in their 3-1 win at Sunderland on 22 February 2026.',
+                          [brace], pick['candidates'], pick)
+        # Club attribution is a prompt obligation reviewed semantically in live
+        # output; these checks do not pretend the lexical validator proves it.
+        prompt = load_system_prompt()
+        self.assertIn('explicitly name the player AND the', prompt)
+        self.assertIn('club they scored for', prompt)
+        self.assertIn('attribute each separately', prompt)
+
     def test_internal_words_fail_and_own_goal_is_explicit(self):
         with self.assertRaises(CorrespondentError):
             self.check('The stored evidence shows Emiliano Buendía scored the winner at 90+5.')

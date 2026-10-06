@@ -125,8 +125,9 @@ The local evaluation wrapper additionally captures exact requests/provider outpu
 before validation, including rejected responses. Credentials are never saved.
 See `PR25_V2_PROSE_REVIEW.md` for the compact reviewed comparison; full artifacts
 and sentence-level assessment remain local.
-The subsequent prompt-only refinement is assessed in `PR25_FINAL_EDITORIAL_REVIEW.md`;
-its Week 5 response remains rejected by the unchanged validator.
+The subsequent prompt-only refinement is assessed in `PR25_FINAL_EDITORIAL_REVIEW.md`.
+The latest targeted minute/club-attribution correction and both passing responses
+are assessed in `PR25_READY_REVIEW.md`; earlier rejected outputs remain preserved.
 
 ## Examples and tests
 
@@ -148,7 +149,7 @@ incomplete season totals, citations, wrong scorers/minutes, recency scope,
 metadata intros, possessive names, no repair calls, read-only SQLite and CLI errors.
 The complete PR19–PR24 suites are included.
 
-Final revision validation: **416 Python tests and 10 JavaScript tests passed**.
+Final revision validation: **419 Python tests and 10 JavaScript tests passed**.
 Both committed contexts reproduced byte-for-byte from the read-only source.
 
 Verified database SHA-256:

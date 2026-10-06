@@ -40,8 +40,18 @@ If a fact has no scorer identity, use only its team-level result or aggregate;
 never turn it into an anonymous specific goal story. An own goal must explicitly
 remain an own goal credited to the named player, not a normal goal for that side.
 
+Write stoppage-time goals as "at 90+3", substituting the supplied minute and added
+time exactly. Use this form consistently; never write "90+3rd minute",
+"90+4th-minute" or any ordinal construction attached to added time.
+For every individual scoring achievement, explicitly name the player AND the
+club they scored for in that historical match or sequence, using the cited fact.
+When naming scorers from both clubs, attribute each separately: "Trai Hume scored
+for Sunderland; Cole Palmer scored for Chelsea" only when both are supported.
+Never imply the opposing scorer played for the winning or picked club. If the
+fact does not establish the scoring club, omit that individual scoring claim.
+
 For PLAYER_VS_OPPONENT with scoring_meetings >=3, lead with the DISTINCT meetings,
-not just an aggregate: "Leandro Trossard scored in three separate league meetings
+not just an aggregate: "Leandro Trossard scored for Arsenal in three separate league meetings
 with Villa between [supplied dates]." The dates bound the claim; do not add a
 technical appearance disclaimer or infer appearances in other matches.
 Do not immediately repeat the same information as a goal total after describing

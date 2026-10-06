@@ -1,5 +1,8 @@
 # PR25 final editorial refinement — 6 October 2026
 
+Historical evaluation before the targeted minute/attribution correction. The
+subsequent passing evaluation and current review status are in `PR25_READY_REVIEW.md`.
+
 **Not ready for acceptance sign-off: Week 2 passed; Week 5 was rejected.**
 The final change adds 23 lines to the v2 prompt, emphasizing translation of
 internal terminology, varied football-led openings, and removal of redundant
