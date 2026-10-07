@@ -65,14 +65,17 @@ def round_status(store, year, week, version, fixtures, fresh, now):
     tally,entries,last=counts(store,year,week,version,now)
     report=dict(season_year=year,matchweek=week,content_version=version,successful=tally.get('succeeded',0),
                 total=20,counts=tally,entries=entries,last_successful_generation=last,first_kickoff=None,
-                eligible_at=None,target_at=None,intervention_required=False)
+                eligible_at=None,target_at=None,hard_stop_at=None,intervention_required=False,
+                readiness_target_missed=False,generation_allowed=False,blocking_reasons=[])
     valid=len(fixtures)==10 and len({t for f in fixtures.values() for t in (f['home'],f['away'])})==20
     valid=valid and all(f['kickoff_utc'] for f in fixtures.values())
     if not valid:
         return dict(report,status='invalid_schedule',intervention_required=True)
     first=min(utc(f['kickoff_utc']) for f in fixtures.values())
-    opens,deadline=first-timedelta(hours=24),first-timedelta(hours=18)
-    report.update(first_kickoff=first.isoformat(),eligible_at=opens.isoformat(),target_at=deadline.isoformat())
+    opens,target,deadline=(first-timedelta(hours=h) for h in (30,24,18))
+    missed=utc(now)>=target and (report['successful']<20 or (last and utc(last)>target))
+    report.update(first_kickoff=first.isoformat(),eligible_at=opens.isoformat(),target_at=target.isoformat(),
+                  hard_stop_at=deadline.isoformat(),readiness_target_missed=bool(missed))
     batch=store.batch(year,week,version)
     if batch:
         slots=store.frozen_slots(year,week,version)
@@ -83,20 +86,25 @@ def round_status(store, year, week, version, fixtures, fresh, now):
     if report['successful']==20:
         if first>utc(now) and not all(f['api_status'] in ('TIMED','SCHEDULED') for f in fixtures.values()):
             return dict(report,status='schedule_changed',intervention_required=True)
-        late=utc(last)>deadline
-        return dict(report,status='completed_late' if late else 'completed',intervention_required=late)
+        late=utc(last)>target
+        return dict(report,status='completed_late' if late else 'ready_on_time',intervention_required=late)
     if utc(now)>=deadline:
-        return dict(report,status='window_missed',intervention_required=True)
-    if not fresh:
-        return dict(report,status='official_data_stale',intervention_required=True)
-    if not all(f['api_status'] in ('TIMED','SCHEDULED') for f in fixtures.values()):
-        return dict(report,status='unconfirmed_schedule',intervention_required=True)
+        return dict(report,status='hard_window_missed',intervention_required=True)
+    blockers=[]
+    if not fresh: blockers.append('official_data_stale')
+    if not all(f['api_status'] in ('TIMED','SCHEDULED') for f in fixtures.values()): blockers.append('unconfirmed_schedule')
+    if blockers:
+        return dict(report,status='readiness_target_missed_recovering' if missed else blockers[0],
+                    blocking_reasons=blockers,intervention_required=True)
     if utc(now)<opens:
         return dict(report,status='waiting')
     attention=any(tally.get(k,0) for k in ('blocked','uncertain','expired')) or any(e['status']=='failed' and e['attempts']>=3 for e in entries)
     if batch and not tally.get('pending') and not any(e['status']=='failed' and e['attempts']<3 for e in entries):
-        return dict(report,status='intervention_required' if attention else 'in_progress',intervention_required=bool(attention))
-    return dict(report,status='eligible',intervention_required=bool(attention))
+        return dict(report,status='readiness_target_missed_recovering' if missed else
+                    ('intervention_required' if attention else 'generating_before_target'),
+                    intervention_required=bool(attention or missed))
+    return dict(report,status='readiness_target_missed_recovering' if missed else 'generating_before_target',
+                generation_allowed=True,intervention_required=bool(attention or missed))
 
 
 def tick(source, store_path, operations_path, *, season_year=2026, content_version, model=DEFAULT_MODEL,
@@ -113,7 +121,7 @@ def tick(source, store_path, operations_path, *, season_year=2026, content_versi
         active={w:fs for w,fs in rounds.items() if w in known or any(not f['kickoff_utc'] or utc(f['kickoff_utc'])>utc(now()) for f in fs.values())}
         require(known<=set(rounds),'Prepared matchweek missing from official schedule')
         reports=[round_status(store,season_year,w,content_version,fs,fresh,now()) for w,fs in active.items()]
-        eligible=sorted((r for r in reports if r['status']=='eligible'),key=lambda r:r['first_kickoff'])
+        eligible=sorted((r for r in reports if r['generation_allowed']),key=lambda r:r['first_kickoff'])
         if eligible:
             target=eligible[0]; week=target['matchweek']
             if not store.batch(season_year,week,content_version):
@@ -125,16 +133,16 @@ def tick(source, store_path, operations_path, *, season_year=2026, content_versi
                     frozen=utc(now())
                     snap_rounds,snap_fresh=schedule(snapshot,season_year,frozen)
                     decision=round_status(store,season_year,week,content_version,snap_rounds[week],snap_fresh,frozen)
-                    require(decision['status']=='eligible','Window or freshness changed during snapshot')
+                    require(decision['generation_allowed'],'Window or freshness changed during snapshot')
                     run_batch(snapshot,store_path,season_year=season_year,matchweek=week,
                               content_version=content_version,model=model,now=lambda:frozen)
             # Recheck the entire round and freshness after preparation, before any paid call.
             rounds,fresh=schedule(source,season_year,now())
             decision=round_status(store,season_year,week,content_version,rounds[week],fresh,now())
-            if decision['status']=='eligible':
+            if decision['generation_allowed']:
                 run_batch(source,store_path,season_year=season_year,matchweek=week,content_version=content_version,
                     model=model,generate=True,retry_failed=True,now=now,writer=writer,resume_frozen=True,
-                    max_entries=1,max_attempts=3,retry_delay_seconds=900,start_before=decision['target_at'])
+                    max_entries=1,max_attempts=3,retry_delay_seconds=900,start_before=decision['hard_stop_at'])
             rounds,fresh=schedule(source,season_year,now())
             reports=[round_status(store,season_year,w,content_version,rounds[w],fresh,now()) for w in active]
         future=[r for r in reports if r['first_kickoff'] and utc(r['first_kickoff'])>utc(now())]

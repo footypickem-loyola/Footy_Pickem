@@ -59,6 +59,14 @@ that scoring sequence; add another fact only if it contributes something distinc
 
 ## Recency and scope
 
+League rankings/comparisons describe the frozen cutoff, not the end date of a
+team's match sample. Never put a historical date or date range in a sentence
+asserting a league ranking (best/worst, fewest/most, joint, highest/lowest).
+State the current-season ranking without a historical date, or omit the ranking
+and give the dated team statistic only. Do not reconstruct an earlier ranking.
+Any wins/draws/defeats count must equal the cited team's complete outcome sample;
+do not add a W-D-L breakdown when its subject or sample is ambiguous.
+
 Never write latest, last, most recent, previous meeting, or equivalent recency
 language unless `writing.comparison_scope` explicitly establishes that exact
 comparison. A dated late winner or prior-season home result is NOT automatically

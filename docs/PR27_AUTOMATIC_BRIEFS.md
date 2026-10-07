@@ -37,7 +37,10 @@ Activation and Railway start-command changes require approval.
 ## Timing and recovery policy
 
 Poll actual official schedules every 60 seconds. Eligibility is `[first kickoff -
-24 hours, first kickoff - 18 hours)`, in UTC, for ten distinct fixtures/twenty teams.
+30 hours, first kickoff - 18 hours)`, in UTC, for ten distinct fixtures/twenty teams.
+The primary readiness deadline is **24 hours before first kickoff**. Fewer than
+twenty successes at that instant immediately flags a missed readiness target;
+safe automatic recovery continues until the separate 18-hour hard stop.
 No Saturday assumptions. Official sync must have succeeded within 15 minutes with
 no reported error or unmatched fixtures. Unknown/ambiguous schedules fail closed.
 
@@ -54,8 +57,8 @@ provider outcomes and expired entry leases never automatically retry. Successful
 entries never regenerate. Restarts resume saved work, not the original source.
 
 Any change to a prepared round's identities/kickoffs stops automatic work and
-requires intervention/new explicitly approved content version. At the 18-hour target,
-incomplete batches stop automatic generation and report a missed window; do not
+requires intervention/new explicitly approved content version. At the 18-hour hard stop,
+incomplete batches stop automatic generation and report a missed hard window; do not
 silently produce late content. Recommend operator-approved late completion only
 while still pre-kickoff, or leave unavailable. Rescheduled/Friday/midweek rounds
 use exactly the same arithmetic. A late successful response is reported as late.
@@ -107,19 +110,34 @@ and [cron overlap behavior](https://docs.railway.com/cron-jobs).
 
 `/tasks/pre-match-briefs/status` uses existing task authentication, returns `no-store`,
 and reads operational state only. It includes `upcoming_matchweek`, per-round
-`first_kickoff`, `eligible_at`, `target_at`, `successful`, `total`, `counts`, failed/
+`first_kickoff`, `eligible_at` (-30h), `target_at` (-24h), `hard_stop_at` (-18h),
+`readiness_target_missed`, `generation_allowed`, `blocking_reasons`, `successful`, `total`, `counts`, failed/
 blocked/running/uncertain entry identities, attempt counts, `last_successful_generation`,
 `intervention_required`, heartbeat and heartbeat staleness. It reports worker checks,
 not a live database freshness query on each GET. An absent/unreadable status store
 is an intervention, not false health. Tracked past rounds remain visible for missed
 windows; unprepared old rounds are not retroactively scheduled.
 
+- `generating_before_target`: within the -30h/-24h preparation window.
+- `ready_on_time`: all twenty completed at or before -24h; remains on-time later.
+- `readiness_target_missed_recovering`: incomplete at/after -24h and before -18h;
+  intervention is flagged immediately. Safe work proceeds only when
+  `generation_allowed` is true. Stale official data/unconfirmed schedules remain
+  blockers, listed in `blocking_reasons`; uncertain outcomes never auto-retry.
+- `completed_late`: all twenty completed after -24h; the missed target stays visible.
+- `hard_window_missed`: fewer than twenty ready at/after -18h; no new automatic calls.
+
+Waiting, changed schedules, invalid sources and blocked/uncertain work retain their
+fail-closed handling. Schedule errors may take status priority, but the separate
+readiness flag still reports a missed target once the first kickoff is known.
+
 Normal attempts take one entry per 60-second cycle plus provider time. Twenty
 successful entries normally require roughly 20–50 minutes (90-second provider
-request timeout), within the six-hour window; this is a capacity estimate, not a
-completion guarantee. No request starts at/after the 18-hour target. If a response
-crosses the target but remains before kickoff, existing PR26 persistence can save
-it; status explicitly reports a late completion or a missed window, never on-time
+request timeout), within the six-hour pre-target window; this is a capacity estimate,
+not a completion guarantee. There is another six-hour recovery window after -24h.
+No request starts at/after the 18-hour hard stop. If an already in-flight response
+crosses the hard stop but remains before kickoff and within its lease, existing PR26 persistence can save
+it; status explicitly reports a late completion or a missed hard window, never on-time
 success. Per-fixture kickoff and claim-token publication checks remain unchanged.
 
 - Known rejected output retries after at least 15 minutes, up to three total
@@ -134,7 +152,8 @@ success. Per-fixture kickoff and claim-token publication checks remain unchanged
 - A changed prepared schedule stops the batch and alerts. Already successful rows
   remain immutable. The read adapter hides entries whose fixture metadata changed.
   Do not change existing saved kickoff values to make old content appear current.
-- Missed 24–18-hour window: default is stop and alert. Recommended exception policy
+- Missed -24h readiness target: alert while safe recovery continues until -18h.
+- Missed -18h hard stop: default is stop and alert. Recommended exception policy
   is explicit operator approval for late pre-kickoff completion, otherwise leave
   unavailable. Do not weaken kickoff or result-update cutoffs.
 - Worker configuration/start failure does not stop Gunicorn. The supervisor retries
@@ -145,9 +164,12 @@ success. Per-fixture kickoff and claim-token publication checks remain unchanged
 
 The authorized October 7 evaluation is complete: **20 calls, 16 persisted,
 4 validation failures; 45 supported and 2 unsupported sentences**. See
-[the complete evaluation](PR27_LIVE_EVALUATION.md). PR27 is **not ready for merge
-or activation** pending the diagnosed factual and availability issues. No code or
-prompt was changed to hide failures; all raw outputs remain local. For a separately
+[the complete evaluation](PR27_LIVE_EVALUATION.md). The subsequent
+[targeted offline correction report](PR27_TARGETED_CORRECTIONS.md) records the fixes
+and unchanged-output replay: 18 accepted, two false outputs rejected, no new valid
+sentence rejections. PR27 stays draft pending review and a separately authorized
+second live evaluation; it is not approved for activation. No output was edited or
+regenerated to hide failures; all raw outputs remain local. For a separately
 authorized future evaluation, use a fresh **nonproduction** copy of the
 authoritative source and a separate local content/operational store. Keep the source
 unchanged and choose an actual upcoming ten-fixture matchweek whose kickoff is known.
@@ -185,8 +207,9 @@ Never rewrite timestamps or the clock to make production appear eligible.
 Approval is required for additional paid evaluation, production content initialization,
 enabled worker/start command, deployment and monitor configuration. The October 7
 read-only snapshot had ten mapped fixtures, fresh official sync and twenty usable
-contexts, but the live quality review found material blockers. Resolve those before
-release. Monitor delivery, volume capacity/backup policy, always-on behavior and an
+contexts, but the live quality review found material blockers. The targeted fixes
+pass offline replay; a second controlled live evaluation is recommended before
+merge. Monitor delivery, volume capacity/backup policy, always-on behavior and an
 actual in-window production-equivalent run remain unverified.
 The reference cron's fresh data is frozen at preparation; generation does not import
 or scrape anything. Future multi-service league deployments need a shared content
@@ -194,10 +217,15 @@ service/central transactional database rather than independent SQLite copies.
 
 ## Verification for this draft
 
-**463 Python tests and 10 JavaScript tests passed.** Commands:
+Latest targeted pass: **480 Python tests / 10 JavaScript tests passed**. The
+[correction report](PR27_TARGETED_CORRECTIONS.md) records the 30h/24h/18h boundaries,
+exact false-acceptance regressions, actor fixes and offline replay of all twenty
+unchanged outputs. All 45 supported sentences pass; both false sentences fail.
+
+Original implementation: **463 Python tests and 10 JavaScript tests passed.** Commands:
 `python -m unittest discover -s tests` and
 `node --test tests/bulk_picks.test.cjs tests/pick_confirm.test.cjs`.
-New coverage includes the exact 24-hour/18-hour boundaries, Friday/midweek schedule
+Original coverage included the exact 24-hour/18-hour boundaries, Friday/midweek schedule
 arithmetic, schedule changes, stale sync rejection, overlapping ticks, twenty saved
 entries reused after restart, immutable facts after source refresh, bounded known
 failure retries, uncertain outcomes, expired/fenced scheduler claims, blocked-context

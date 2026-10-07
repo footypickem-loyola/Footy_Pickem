@@ -41,16 +41,16 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(report['status'],'checked',report)
         return next(r for r in report['rounds'] if r['matchweek']==6)
 
-    def test_24_hour_boundary_and_exact_18_hour_stop(self):
+    def test_30_hour_boundary_and_exact_18_hour_stop(self):
         writer=Mock(side_effect=shared.fake_writer)
-        self.time=self.now-timedelta(seconds=1)
+        self.time=self.now-timedelta(hours=6,seconds=1); self.fresh()
         self.assertEqual(self.target(self.tick(writer))['status'],'waiting')
         writer.assert_not_called()
-        self.time=self.now
+        self.time=self.now-timedelta(hours=6); self.fresh()
         self.assertEqual(self.target(self.tick(writer))['successful'],1)
         self.time=self.now+timedelta(hours=6); self.fresh()
         r=self.target(self.tick(writer))
-        self.assertEqual(r['status'],'window_missed'); self.assertTrue(r['intervention_required'])
+        self.assertEqual(r['status'],'hard_window_missed'); self.assertTrue(r['intervention_required'])
         self.assertEqual(writer.call_count,1)
 
     def test_friday_and_midweek_are_driven_by_actual_first_kickoff(self):
@@ -61,10 +61,12 @@ class SchedulerTests(unittest.TestCase):
                     for i in range(10):
                         dt=self.now+timedelta(days=1+day_shift,hours=i)
                         db.execute('UPDATE fixtures SET kickoff_utc=? WHERE week_id=56 AND id=?',(dt.isoformat(),600+i))
-                self.time=self.now+timedelta(days=day_shift)-timedelta(seconds=1); self.fresh()
+                self.time=self.now+timedelta(days=day_shift)-timedelta(hours=6,seconds=1); self.fresh()
                 r=self.target(self.tick())
                 self.assertEqual(r['status'],'waiting')
-                self.assertEqual(r['eligible_at'],(self.now+timedelta(days=day_shift)).isoformat())
+                self.assertEqual(r['eligible_at'],(self.now+timedelta(days=day_shift,hours=-6)).isoformat())
+                self.assertEqual(r['target_at'],(self.now+timedelta(days=day_shift)).isoformat())
+                self.assertEqual(r['hard_stop_at'],(self.now+timedelta(days=day_shift,hours=6)).isoformat())
 
     def test_schedule_changes_after_partial_and_complete_require_intervention(self):
         self.tick()
@@ -78,7 +80,10 @@ class SchedulerTests(unittest.TestCase):
     def test_stale_official_data_prevents_preparation(self):
         self.time=self.now+timedelta(minutes=16)
         writer=Mock()
-        self.assertEqual(self.target(self.tick(writer))['status'],'official_data_stale')
+        r=self.target(self.tick(writer))
+        self.assertEqual(r['status'],'readiness_target_missed_recovering')
+        self.assertEqual(r['blocking_reasons'],['official_data_stale'])
+        self.assertFalse(r['generation_allowed'])
         writer.assert_not_called()
         s=BriefStore(self.store)
         try: self.assertIsNone(s.batch(2026,6,'auto-v1'))
@@ -100,7 +105,7 @@ class SchedulerTests(unittest.TestCase):
         with patch('shared_brief_workflow.build_round',side_effect=AssertionError('must use frozen context')):
             for _ in range(19): r=self.tick(writer)
             self.assertEqual(self.target(r)['successful'],20)
-            self.assertEqual(self.target(self.tick(writer))['status'],'completed')
+            self.assertEqual(self.target(self.tick(writer))['status'],'ready_on_time')
         self.assertEqual(writer.call_count,20)
         self.assertEqual(before,self.source.read_bytes())
         self.assertEqual(len({c.args[0]['as_of'] for c in writer.call_args_list}),1)
@@ -155,7 +160,7 @@ class SchedulerTests(unittest.TestCase):
     def test_deadline_alert_if_no_worker_ran_in_window_and_stale_heartbeat(self):
         self.time+=timedelta(hours=6);self.fresh()
         writer=Mock()
-        self.assertEqual(self.target(self.tick(writer))['status'],'window_missed')
+        self.assertEqual(self.target(self.tick(writer))['status'],'hard_window_missed')
         writer.assert_not_called()
         r=operations.read_status(self.ops,self.time+timedelta(minutes=6))
         self.assertTrue(r['heartbeat_stale']);self.assertTrue(r['intervention_required'])
@@ -177,7 +182,44 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(r['counts'],{'blocked':20})
         with patch('shared_brief_workflow.build_round',side_effect=AssertionError()):
             r=self.target(self.tick(writer))
-        self.assertEqual(r['status'],'intervention_required');writer.assert_not_called()
+        self.assertEqual(r['status'],'readiness_target_missed_recovering')
+        self.assertTrue(r['intervention_required']);self.assertFalse(r['generation_allowed']);writer.assert_not_called()
+
+    def test_readiness_deadline_alerts_immediately_but_allows_safe_recovery(self):
+        self.time=self.now-timedelta(seconds=1);self.fresh()
+        writer=Mock(side_effect=shared.fake_writer)
+        r=self.target(self.tick(writer))
+        self.assertEqual(r['status'],'generating_before_target')
+        self.assertFalse(r['readiness_target_missed'])
+        self.time=self.now;self.fresh()
+        r=self.target(self.tick(writer))
+        self.assertEqual(r['status'],'readiness_target_missed_recovering')
+        self.assertTrue(r['readiness_target_missed']);self.assertTrue(r['intervention_required'])
+        self.assertEqual(writer.call_count,2)
+        self.time+=timedelta(seconds=1)
+        for _ in range(18):r=self.target(self.tick(writer))
+        self.assertEqual(r['status'],'completed_late')
+        self.assertEqual(writer.call_count,20)
+        self.tick(writer);self.assertEqual(writer.call_count,20)
+
+    def test_ready_on_time_stays_ready_after_hard_stop(self):
+        for _ in range(20):self.tick()
+        self.time+=timedelta(hours=8)
+        writer=Mock()
+        r=self.target(self.tick(writer))
+        self.assertEqual(r['status'],'ready_on_time')
+        self.assertFalse(r['intervention_required']);writer.assert_not_called()
+
+    def test_known_failure_recovers_after_readiness_target_without_retrying_uncertain(self):
+        self.time=self.now-timedelta(minutes=1);self.fresh()
+        self.tick(Mock(side_effect=CorrespondentError('invalid')))
+        self.tick(Mock(side_effect=TimeoutError('unknown')))
+        self.time=self.now+timedelta(minutes=15);self.fresh()
+        writer=Mock(side_effect=shared.fake_writer)
+        for _ in range(20):r=self.target(self.tick(writer))
+        self.assertEqual(r['counts'],{'succeeded':19,'uncertain':1})
+        self.assertEqual(writer.call_count,19)
+        self.assertEqual(r['status'],'readiness_target_missed_recovering')
 
     def test_operator_store_refuses_game_database(self):
         before=self.source.read_bytes()

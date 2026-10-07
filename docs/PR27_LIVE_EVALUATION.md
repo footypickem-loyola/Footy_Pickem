@@ -1,5 +1,10 @@
 # PR27 controlled live evaluation — 7 October 2026
 
+Historical record of the original run at `52aef0b`. The subsequent
+[targeted offline correction report](PR27_TARGETED_CORRECTIONS.md) documents fixes,
+the unchanged-output replay and the revised 30h/24h/18h timing. The findings and
+timing observations below describe the original run and have not been rewritten.
+
 **NOT READY FOR MERGE. NOT READY FOR ACTIVATION.** This evaluation found two materially incorrect sentences in accepted briefs and four supported briefs rejected by lexical scorer checks. No prompt, detector, ranking, validator or application behavior was changed to improve the result.
 
 ## Outcome

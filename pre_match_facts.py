@@ -33,6 +33,9 @@ def writing_metadata(candidate):
                         minute=evidence.get('minute'), extra_minute=evidence.get('extra_minute'))]
     sample = candidate['sample']
     comparison = None
+    if kind in {'BEST_DEFENCE', 'WORST_DEFENCE', 'BEST_ATTACK', 'WORST_ATTACK'}:
+        comparison = dict(kind='league_ranking_at_cutoff',
+                          as_of=candidate['recomputability']['cutoff'])
     if kind.startswith(('H2H_', 'VENUE_H2H_')):
         comparison = dict(kind='bounded_h2h_sequence', count=evidence['count'],
             venue='home' if kind.startswith('VENUE_') else 'both', start=sample['start'], end=sample['end'],
