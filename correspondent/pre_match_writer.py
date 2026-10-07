@@ -8,6 +8,8 @@ import re
 import unicodedata
 
 from .writer import CorrespondentError, DEFAULT_MODEL
+from .football_claim_checks import aliases, mentions, team_pronoun, validate_derived_claims
+from .venue_grounding import validate_venues
 from pre_match_brief import PROMPT_VERSION, CONTEXT_VERSION, serialize, validate_context, require, all_facts
 
 PROMPT_PATH = Path(__file__).resolve().parent / 'prompts' / 'pre_match_brief_v2.md'
@@ -82,7 +84,7 @@ def _contains_name(text, name):
     return f' {normalized(name)} ' in f' {normalized(text)} '
 
 
-def validate_sentence(text, facts, available, pick):
+def validate_sentence(text, facts, available, pick, previous_text=''):
     """Conservative lexical guards plus explicit per-sentence fact/actor binding.
 
     Not a general English entailment checker; no model is called to repair output.
@@ -93,6 +95,8 @@ def validate_sentence(text, facts, available, pick):
         require(any((f['writing']['comparison_scope'] or {}).get('kind') in
                     ('most_recent_available_h2h', 'most_recent_available_team_result') for f in facts),
                 'Recency language lacks an explicit comparison scope')
+    validate_venues(text, facts)
+    validate_derived_claims(text, facts, previous_text, (pick['home'], pick['away']))
     names = {s['name'] for f in facts for s in f['writing']['scorers']}
     available_names = {s['name'] for f in available for s in f['writing']['scorers']}
     for name in available_names:
@@ -117,11 +121,17 @@ def validate_sentence(text, facts, available, pick):
         if any(s.get('own_goal') and _contains_name(text, s['name']) for s in f['writing']['scorers']):
             require(re.search(r'\bown[ -]goal\b', text, re.I), 'Own goal must be identified explicitly')
     # Catch new named scorers absent from the fact set, not only known-but-uncited players.
-    actors = re.findall(r"\b([A-ZÀ-Þ][\w’'-]*(?: [A-ZÀ-Þ][\w’'-]*){0,3})\s+(?:scored|netted|struck|headed|converted)\b", text)
+    actors = re.findall(r"\b([A-ZÀ-Þ][\w’'-]*(?:\s+(?:(?:de|del|da|di|dos|van|von|der|den|la|le)\s+)*[A-ZÀ-Þ][\w’'-]*){0,5})\s+(?:scored|netted|struck|headed|converted)\b", text)
     teams = {pick['home'], pick['away']} | {f.get('subject_team', '') for f in facts}
     teams |= {r.get(side, '') for f in facts for r in f['provenance'].get('fixtures', [])
               for side in ('home_team', 'away_team')}
+    teams = set().union(*(aliases(team) for team in teams))
     for actor in actors:
+        if actor == 'They':
+            antecedents = {t for _, t in mentions(previous_text, {pick['home'], pick['away']})}
+            require(len(antecedents) == 1 and team_pronoun(facts, previous_text),
+                    'Ambiguous team scoring pronoun')
+            continue
         possessive = re.split(r"[’']s ", actor, maxsplit=1)
         if len(possessive) == 2 and any(normalized(possessive[0]) == normalized(t) for t in teams):
             actor = possessive[1]
@@ -129,7 +139,7 @@ def validate_sentence(text, facts, available, pick):
 
 
 def validate_fixture_output(item, pick):
-    """Unchanged PR25 single-entry safeguards shared with the batch writer."""
+    """PR25 single-entry safeguards plus deterministic PR27 claim checks."""
     require(isinstance(item, dict) and set(item) == {'fixture_id', 'picked_team', 'heading', 'sentences'},
             'Invalid fixture output/schema')
     fid = item['fixture_id']
@@ -139,6 +149,7 @@ def validate_fixture_output(item, pick):
     sentences = item['sentences']
     require(isinstance(sentences, list) and 1 <= len(sentences) <= 3, 'Invalid sentence list')
     available = {f['id']: f for f in all_facts(pick)}
+    previous_text = ''
     for sentence in sentences:
         require(isinstance(sentence, dict) and set(sentence) == {'text', 'used_fact_ids'}, 'Invalid sentence/schema')
         require(isinstance(sentence['text'], str) and bool(sentence['text'].strip()), 'Empty sentence')
@@ -146,7 +157,8 @@ def validate_fixture_output(item, pick):
         require(isinstance(ids, list) and 1 <= len(ids) <= 3 and all(isinstance(i, str) for i in ids), 'Invalid used_fact_ids')
         require(len(ids) == len(set(ids)), 'Duplicate fact ID')
         require(set(ids) <= set(available), 'Unknown or cross-fixture fact ID')
-        validate_sentence(sentence['text'], [available[i] for i in ids], list(available.values()), pick)
+        validate_sentence(sentence['text'], [available[i] for i in ids], list(available.values()), pick, previous_text)
+        previous_text = sentence['text']
     body = ' '.join(s['text'] for s in sentences)
     require(len(body.split()) <= 90, 'Overlong fixture body')
     require(re.search(r'\b(win\w*|won|drew|draw\w*|lost|defeat\w*|unbeaten|undefeated|scor\w*|goal\w*|clean.sheet)\b|\b\d+[–-]\d+\b', body, re.I),
