@@ -85,6 +85,26 @@ class SharedBriefTests(unittest.TestCase):
             self.assertNotIn('47',str(slot['context']['identity']))
         self.assertEqual(before,self.source.read_bytes())
 
+    def test_twenty_thin_team_contexts_keep_editorial_ranking_and_are_deterministic(self):
+        from pre_match_brief import build_fixture_facts
+        kwargs = dict(season_year=2026, matchweek=2, as_of='2026-08-07T15:00:00Z')
+        before = self.source.read_bytes()
+        actual = build_round(self.source, **kwargs)
+        def previous_fallback(*args, **kw):
+            kw['recent_form'] = False
+            return build_fixture_facts(*args, **kw)
+        with patch('shared_brief_context.build_fixture_facts', side_effect=previous_fallback):
+            baseline = build_round(self.source, **kwargs)
+        self.assertEqual(actual, build_round(self.source, **kwargs))
+        self.assertEqual(len(actual), 20)
+        self.assertEqual({s['team'] for s in actual}, set(verified_mapping().values()))
+        for old, new in zip(baseline, actual):
+            self.assertTrue(new['context'])
+            self.assertEqual(old['context']['fixture']['candidates'], new['context']['fixture']['candidates'])
+            self.assertNotIn('player', new['context'])
+            self.assertNotIn('league_id', new['context'])
+        self.assertEqual(before, self.source.read_bytes())
+
     def test_local_ids_and_league_copies_do_not_change_canonical_context(self):
         before=self.slots()
         other=Path(self.temp.name)/'other-league.db'

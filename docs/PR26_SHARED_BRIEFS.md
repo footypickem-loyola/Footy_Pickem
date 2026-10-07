@@ -113,7 +113,7 @@ content and require a new pre-kickoff version. There is no per-player saved copy
 
 ## Verification and material activation constraints
 
-Full validation: **435 Python tests and 10 JavaScript tests passed**. New coverage
+Full validation: **446 Python tests and 10 JavaScript tests passed**. New coverage
 includes twenty perspectives without any picks/player tables; equivalent local-ID
 and league copies; failure-only retry; two concurrent workers; uncertain claims
 and stale-worker fencing; kickoff gates; schedule changes during I/O; isolated
@@ -140,3 +140,9 @@ These are explicit limitations, not reasons to generate per player or relax cuto
 The source snapshot remains SHA-256
 `73c37c2cceff71f360dbf36f55ecadc1a9ad05143ed0cbf93c369794df35bef4`.
 No deployment, Railway/n8n changes or production/game database writes were performed.
+
+The follow-up [Coventry–Hull coverage investigation](PR26_COVENTRY_HULL_COVERAGE.md)
+identifies refreshed result timestamps as the Week 2 replay blocker, documents
+20/20 upcoming Week 6 snapshot contexts, and adds bounded recent-form fallbacks
+for thin shared contexts. Strict Week 2 remains 18/20; live production freshness
+is unverified. The Training Ground section is titled **Pre-Match Brief**.

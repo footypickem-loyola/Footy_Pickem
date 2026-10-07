@@ -172,7 +172,7 @@ def validate_context(context):
     return context
 
 
-def build_fixture_facts(db, *, f, team, schedule, results, weeks, season, cutoff, candidate_limit=5):
+def build_fixture_facts(db, *, f, team, schedule, results, weeks, season, cutoff, candidate_limit=5, recent_form=False):
     """Project unchanged ranked intelligence and writer-only fallback facts."""
     history = load_fixture_history(db, fixture=f, as_of=cutoff)
     packet = build_fixture_intelligence(fixture=f, fixtures=schedule, results=results, weeks=weeks,
@@ -189,7 +189,7 @@ def build_fixture_facts(db, *, f, team, schedule, results, weeks, season, cutoff
                                    if k in ('source', 'fixtures', 'rows', 'reference_event_ids', 'external_event_ids')}
         candidates.append(candidate)
     fallback = fallback_facts(db, fixture=f, picked_team=team, history=history, candidates=candidates,
-                              schedule=schedule, results=results, cutoff=cutoff)
+                              schedule=schedule, results=results, cutoff=cutoff, recent_form=recent_form)
     if not candidates and not fallback:
         raise BriefNotReady(f'No supported football context for fixture {f.id}; cannot generate an empty entry')
     return dict(candidates=candidates, fallback_facts=fallback)

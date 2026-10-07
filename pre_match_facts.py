@@ -104,7 +104,83 @@ def _anchor(target_id, row, kind, cutoff, comparison=None):
     return dict(id=f'{target_id}:fallback:{kind}:{fingerprint}', **fact)
 
 
-def fallback_facts(db, *, fixture, picked_team, history, candidates, schedule, results, cutoff):
+def recent_form_fact(fixture, team, schedule, results, candidates, cutoff, db=None):
+    """Bounded official-result sample, never a season-long or gap-bridging run.
+
+    This writer fallback deliberately does not create/rank editorial candidates.
+    Scores are accessed only after kickoff and result-update eligibility checks.
+    """
+    by_id = {r.fixture_id: r for r in results}
+    rows = []
+    for f in sorted(schedule, key=lambda f: f.id):
+        if (f.id == fixture.id or team not in (f.home, f.away) or f.kickoff_utc is None
+                or utc(f.kickoff_utc) >= cutoff):
+            continue
+        r = by_id.get(f.id)
+        if r is None or r.updated_at is None or utc(r.updated_at) >= cutoff:
+            continue
+        if not all(type(s) is int and s >= 0 for s in (r.home_score, r.away_score)):
+            continue
+        expected = 'Home' if r.home_score > r.away_score else 'Away' if r.away_score > r.home_score else 'Draw'
+        if r.outcome != expected:
+            continue
+        rows.append(dict(official_fixture_id=f.id, home_team=f.home, away_team=f.away,
+            kickoff=utc(f.kickoff_utc).isoformat(), home_score=r.home_score, away_score=r.away_score,
+            updated_at=utc(r.updated_at).isoformat(), source='Footy official results'))
+    rows = sorted(rows, key=lambda r: (r['kickoff'], r['official_fixture_id']))[-5:]
+    if not rows:
+        return None
+    # Suppress substantial overlap with retained facts for this club, including
+    # current-season candidates whose provenance uses `rows`, not `fixtures`.
+    covered = set()
+    for c in candidates:
+        if c['subject_team'] == team:
+            covered.update(utc(r['kickoff']) for r in c['provenance'].get('rows', c['provenance'].get('fixtures', [])))
+    if sum(utc(r['kickoff']) in covered for r in rows) * 2 >= len(rows):
+        return None
+    # Enrich only an already eligible official result. A reference event ledger
+    # must match the fixture identities, date and score; no anonymous goals.
+    if db is not None:
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if {'football_reference_fixtures', 'football_reference_seasons', 'football_reference_events'} <= tables:
+            latest = rows[-1]
+            home_id, away_id = resolve_club_ids(db, (latest['home_team'], latest['away_team']))
+            for ref in _reference_rows(db, home_id, cutoff) if home_id else []:
+                if (_complete(ref) and ref['home_team_id'] == home_id and ref['away_team_id'] == away_id
+                        and utc(ref['kickoff']) == utc(latest['kickoff'])
+                        and (ref['home_score'], ref['away_score']) == (latest['home_score'], latest['away_score'])):
+                    ref['events'] = _events(db, ref)
+                    if _scorers(ref):
+                        latest.update(reference_fixture_id=ref['reference_fixture_id'], home_team_id=home_id,
+                            away_team_id=away_id, events=ref['events'])
+                    break
+    if len(rows) == 1:
+        return _anchor(fixture.id, rows[0], 'PICKED_TEAM_RESULT', cutoff)
+    outcomes, gf, ga = [], 0, 0
+    for r in rows:
+        scored, conceded = ((r['home_score'], r['away_score']) if team == r['home_team']
+                            else (r['away_score'], r['home_score']))
+        gf += scored
+        ga += conceded
+        outcomes.append('W' if scored > conceded else 'L' if scored < conceded else 'D')
+    counts = Counter(outcomes)
+    evidence = dict(team=team, sample_size=len(rows), results=outcomes, wins=counts['W'], draws=counts['D'],
+        losses=counts['L'], goals_for=gf, goals_against=ga, start=rows[0]['kickoff'], end=rows[-1]['kickoff'],
+        scope='up_to_five_eligible_official_league_results', complete_season=False,
+        scorer_match_date=rows[-1]['kickoff'])
+    fact = dict(signal_type='RECENT_FORM_CONTEXT',
+        claim=f"{team}: {counts['W']} wins, {counts['D']} draws and {counts['L']} defeats across {len(rows)} Premier League matches "
+              f"from {rows[0]['kickoff'][:10]} to {rows[-1]['kickoff'][:10]}, scoring {gf} and conceding {ga}.",
+        evidence=evidence, provenance=dict(source='Footy official results',
+            fixtures=[{k:v for k,v in r.items() if k != 'events'} for r in rows]), cutoff=cutoff.isoformat(),
+        writing=dict(role='fallback', scorers=_scorers(rows[-1]) if rows[-1].get('events') else [], specific_goal_story=False, scoring_meetings=None,
+            comparison_scope=dict(kind='bounded_verified_results', start=rows[0]['kickoff'], end=rows[-1]['kickoff'], count=len(rows)),
+            instruction='Use exact sample size and dates. This may omit unavailable results; do not infer a consecutive run, full-season record, all-time record or absolute recency. Named scorer totals apply only to scorer_match_date, not the whole sample; identify their club. No unsupported goal minute or decisive-goal claim.'))
+    fingerprint = sha256(json.dumps(fact, sort_keys=True).encode()).hexdigest()[:16]
+    return dict(id=f'{fixture.id}:fallback:RECENT_FORM_CONTEXT:{fingerprint}', **fact)
+
+
+def fallback_facts(db, *, fixture, picked_team, history, candidates, schedule, results, cutoff, recent_form=False):
     """Fill up to two usable facts, in A/B/C/D order, without changing ranking.
 
     C requires a complete pre-cutoff current-season reference goal ledger for the
@@ -117,12 +193,26 @@ def fallback_facts(db, *, fixture, picked_team, history, candidates, schedule, r
     for c in candidates:
         for r in c['provenance'].get('fixtures', []):
             seen.add((utc(r['kickoff']), r['home_team'], r['away_team']))
+        if recent_form:
+            fixtures_by_id = {f.id: f for f in schedule}
+            for r in c['provenance'].get('rows', []):
+                f = fixtures_by_id.get(r['fixture_id'])
+                if f is not None:
+                    seen.add((utc(r['kickoff']), f.home, f.away))
 
     def add(row, kind, comparison=None):
         key = (utc(row['kickoff']), row['home_team'], row['away_team'])
         if key not in seen:
             seen.add(key)
             output.append(_anchor(fixture.id, row, kind, cutoff, comparison))
+
+    if recent_form:
+        form = recent_form_fact(fixture, picked_team, schedule, results, candidates, cutoff, db)
+        if form:
+            output.append(form)
+            seen.update((utc(r['kickoff']), r['home_team'], r['away_team']) for r in form['provenance']['fixtures'])
+        if len(output) >= needed:
+            return output
 
     latest = history.get('most_recent_meeting')
     if latest:
@@ -172,6 +262,14 @@ def fallback_facts(db, *, fixture, picked_team, history, candidates, schedule, r
             continue
         rows = _reference_rows(db, team_id, cutoff, season_start)
         if not rows or not all(_complete(r) for r in rows):
+            continue
+        # A complete event ledger for a partial set of fixtures does not prove
+        # club season leaders. Cross-check known current-season schedule coverage.
+        covered_dates = {utc(r['kickoff']) for r in rows}
+        if any(team in (f.home, f.away) and (f.kickoff_utc is None or
+               (utc(f.kickoff_utc) < cutoff and
+                utc(f.kickoff_utc).year - (utc(f.kickoff_utc).month < 7) == season_start and
+                utc(f.kickoff_utc) not in covered_dates)) for f in schedule):
             continue
         for r in rows:
             r['events'] = _events(db, r)

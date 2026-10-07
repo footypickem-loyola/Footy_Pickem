@@ -116,7 +116,7 @@ def build_round(database, *, season_year, matchweek, as_of):
                     context, error = None, None
                     try:
                         facts = build_fixture_facts(db, f=f, team=team, schedule=list(schedule.values()),
-                            results=list(results.values()), weeks=weeks, season=season_year, cutoff=cutoff)
+                            results=list(results.values()), weeks=weeks, season=season_year, cutoff=cutoff, recent_form=True)
                         context = validate_team_context(dict(context_version=CONTEXT_VERSION, prompt_version=PROMPT_VERSION,
                             identity=key, matchweek=matchweek, as_of=cutoff.isoformat(), week_first_kickoff=first.isoformat(),
                             candidate_limit=5, fixture=dict(fixture_id=f.id, home=f.home, away=f.away, picked_team=team,

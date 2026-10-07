@@ -18,7 +18,7 @@
       </section>
 
     </div><div class="insight-column">
-      <section class="card insight-section"><h2>What to Look For</h2>
+      <section class="card insight-section"><h2>Pre-Match Brief</h2>
         {% if shared_briefs %}<ul class="insight-briefs">{% for brief in shared_briefs %}<li><strong>{{ brief.team }} · {{ brief.home }} vs {{ brief.away }}</strong><p>{{ brief.body if brief.body else 'Brief not available yet.' }}</p></li>{% endfor %}</ul>
         {% else %}<p class="muted">Your five selections will appear here once assigned. Briefs are prepared ahead of kickoff.</p>{% endif %}
       </section>
