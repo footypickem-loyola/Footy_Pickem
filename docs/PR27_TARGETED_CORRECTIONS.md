@@ -1,5 +1,9 @@
 # PR27 targeted grounding, actor and timing corrections
 
+This records the offline pass at `2aed35e`. The subsequently authorized
+[second live evaluation](PR27_SECOND_LIVE_EVALUATION.md) is complete and records
+the new outcomes; the offline findings below remain unchanged.
+
 Continues draft PR27 after `52aef0b`. This is an **offline correctness pass**:
 no OpenAI requests, AI repair, output editing, production database access/writes,
 deployment, merge, Railway changes or n8n changes. The original live evaluation

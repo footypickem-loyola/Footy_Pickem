@@ -167,8 +167,10 @@ The authorized October 7 evaluation is complete: **20 calls, 16 persisted,
 [the complete evaluation](PR27_LIVE_EVALUATION.md). The subsequent
 [targeted offline correction report](PR27_TARGETED_CORRECTIONS.md) records the fixes
 and unchanged-output replay: 18 accepted, two false outputs rejected, no new valid
-sentence rejections. PR27 stays draft pending review and a separately authorized
-second live evaluation; it is not approved for activation. No output was edited or
+sentence rejections. The authorized [second live evaluation](PR27_SECOND_LIVE_EVALUATION.md)
+then made 20 fresh attempts: 18 persisted, two supported outputs rejected by W-D-L
+subject parsing, and one accepted sentence added an unsupplied stadium name.
+PR27 remains **not ready for merge or activation** pending those findings. No output was edited or
 regenerated to hide failures; all raw outputs remain local. For a separately
 authorized future evaluation, use a fresh **nonproduction** copy of the
 authoritative source and a separate local content/operational store. Keep the source
@@ -208,8 +210,9 @@ Approval is required for additional paid evaluation, production content initiali
 enabled worker/start command, deployment and monitor configuration. The October 7
 read-only snapshot had ten mapped fixtures, fresh official sync and twenty usable
 contexts, but the live quality review found material blockers. The targeted fixes
-pass offline replay; a second controlled live evaluation is recommended before
-merge. Monitor delivery, volume capacity/backup policy, always-on behavior and an
+pass offline replay, but the second live run found two further validator false
+positives and an ungrounded venue addition. Resolve and review these before merge.
+Monitor delivery, volume capacity/backup policy, always-on behavior and an
 actual in-window production-equivalent run remain unverified.
 The reference cron's fresh data is frozen at preparation; generation does not import
 or scrape anything. Future multi-service league deployments need a shared content
@@ -221,6 +224,9 @@ Latest targeted pass: **480 Python tests / 10 JavaScript tests passed**. The
 [correction report](PR27_TARGETED_CORRECTIONS.md) records the 30h/24h/18h boundaries,
 exact false-acceptance regressions, actor fixes and offline replay of all twenty
 unchanged outputs. All 45 supported sentences pass; both false sentences fail.
+The same full suites passed again after the second live run. Its independent
+review classified **42/43 sentences supported and one unsupported**; the second
+report records all outputs, hashes, response IDs and local operational checks.
 
 Original implementation: **463 Python tests and 10 JavaScript tests passed.** Commands:
 `python -m unittest discover -s tests` and
