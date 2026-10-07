@@ -1156,6 +1156,21 @@ class PickemAppTests(AutoDraftCases, PickInsightCases, PickInsightTaskCases, uni
             self.assertEqual(lookup.call_count,10)
         self.assertEqual(before,game_state())
 
+    def test_shared_brief_status_authentication_and_read_only_monitoring(self):
+        with patch.dict(os.environ, {'SYNC_SECRET':'test-monitor-key','SHARED_BRIEF_AUTOMATION_ENABLED':'1'}), \
+             patch('shared_brief_operations.read_status', return_value=dict(heartbeat_stale=False,
+                   intervention_required=False,rounds=[],upcoming_matchweek=6)) as status, \
+             patch('shared_brief_workflow.run_batch',side_effect=AssertionError('status cannot generate')):
+            client=app_module.app.test_client()
+            self.assertEqual(client.get('/tasks/pre-match-briefs/status').status_code,403)
+            status.assert_not_called()
+            response=client.get('/tasks/pre-match-briefs/status',headers={'X-Sync-Secret':'test-monitor-key'})
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(response.headers['Cache-Control'],'no-store')
+            self.assertEqual(response.json['upcoming_matchweek'],6)
+            self.assertTrue(response.json['automation_enabled'])
+            status.assert_called_once()
+
     def test_position_chart_matches_official_snapshots_with_ties_and_excludes_provisional(self):
         db, week, game, a, b = self.finalize_one_sided_matchup()
         sid = week.season_id

@@ -5109,6 +5109,24 @@ def scheduled_sync_football_reference():
     return reply(payload, status)
 
 
+@app.get("/tasks/pre-match-briefs/status")
+def scheduled_pre_match_brief_status():
+    """Operator monitoring only. Never initializes, queues, or generates content."""
+    expected = os.environ.get('SYNC_SECRET', '').strip()
+    supplied = request.headers.get('X-Sync-Secret', '')
+    if not expected:
+        return jsonify(ok=False, error_code='not_configured'), 503
+    if not hmac.compare_digest(expected.encode('utf-8'), supplied.encode('utf-8')):
+        return jsonify(ok=False, error_code='forbidden'), 403
+    from shared_brief_operations import read_status
+    from datetime import timezone
+    status = read_status(os.environ.get('SHARED_BRIEF_OPERATIONS_STORE', ''), datetime.now(timezone.utc))
+    status['automation_enabled'] = os.environ.get('SHARED_BRIEF_AUTOMATION_ENABLED') == '1'
+    response = jsonify(ok=True, **status)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 @app.post("/tasks/sync-results")
 def scheduled_sync_results():
     """Run one score sync from a scheduler without exposing admin credentials."""

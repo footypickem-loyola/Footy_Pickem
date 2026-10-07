@@ -116,7 +116,21 @@ class BriefStore:
                               serialize(c) if c else None, digest(c) if c else None,
                               'pending' if c else 'blocked', slot['error']))
 
-    def claim(self, key, version, now, *, retry_failed=False, retry_uncertain=False):
+    def frozen_slots(self, season_year, matchweek, version):
+        rows = self.db.execute('''SELECT * FROM team_briefs WHERE provider='football-data'
+            AND competition='PL' AND season_year=? AND matchweek=? AND content_version=?
+            ORDER BY external_fixture_id,team_id''', (season_year, matchweek, version)).fetchall()
+        require(len(rows) == 20, 'Incomplete frozen batch')
+        slots = []
+        for r in rows:
+            context = json.loads(r['context_json']) if r['context_json'] else None
+            require(context is None or digest(context) == r['context_sha256'], 'Frozen context hash mismatch')
+            slots.append(dict(identity={k:r[k] for k in KEY.split(',')[:-1]}, context=context,
+                kickoff=r['kickoff'], home=r['home'], away=r['away'], team=r['team'], error=r['error_code']))
+        return slots
+
+    def claim(self, key, version, now, *, retry_failed=False, retry_uncertain=False,
+              max_attempts=None, retry_delay_seconds=0):
         now = utc(now)
         values = key_values(key, version)
         with transaction(self.db):
@@ -132,6 +146,10 @@ class BriefStore:
                 self.db.execute(f"UPDATE team_briefs SET status='uncertain',claim_token=NULL,error_code='lease_expired' WHERE {WHERE}", values)
                 status = 'uncertain'
             eligible = status == 'pending' or (retry_failed and status == 'failed') or (retry_uncertain and status == 'uncertain')
+            if max_attempts is not None and row['attempts'] >= max_attempts:
+                eligible = False
+            if status == 'failed' and row['completed_at'] and now < utc(row['completed_at']) + timedelta(seconds=retry_delay_seconds):
+                eligible = False
             if not eligible:
                 return None
             token = uuid4().hex

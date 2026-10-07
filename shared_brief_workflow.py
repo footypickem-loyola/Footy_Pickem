@@ -17,7 +17,8 @@ def clock():
 
 
 def run_batch(source, store_path, *, season_year, matchweek, content_version, model=DEFAULT_MODEL,
-              generate=False, retry_failed=False, retry_uncertain=False, now=clock, writer=generate_team_brief):
+              generate=False, retry_failed=False, retry_uncertain=False, now=clock, writer=generate_team_brief,
+              resume_frozen=False, max_entries=None, max_attempts=None, retry_delay_seconds=0, start_before=None):
     require(Path(source).resolve() != Path(store_path).resolve(), 'Content store must be separate from game/reference source')
     require(isinstance(model, str) and model.strip() == model and bool(model), 'Explicit nonempty model required')
     store = BriefStore(store_path)
@@ -25,20 +26,30 @@ def run_batch(source, store_path, *, season_year, matchweek, content_version, mo
         batch = store.batch(season_year, matchweek, content_version)
         cutoff = batch['as_of'] if batch else utc(now()).isoformat()
         prompt_sha = sha256(load_team_prompt().encode()).hexdigest()
-        slots = build_round(source, season_year=season_year, matchweek=matchweek, as_of=cutoff)
-        store.prepare(slots, season_year=season_year, matchweek=matchweek, version=content_version,
-                      as_of=cutoff, model=model, prompt_sha=prompt_sha)
+        if resume_frozen:
+            require(batch is not None and batch['model'] == model and batch['prompt_sha256'] == prompt_sha,
+                    'Frozen batch missing or model/prompt changed')
+            slots = store.frozen_slots(season_year, matchweek, content_version)
+        else:
+            slots = build_round(source, season_year=season_year, matchweek=matchweek, as_of=cutoff)
+            store.prepare(slots, season_year=season_year, matchweek=matchweek, version=content_version,
+                          as_of=cutoff, model=model, prompt_sha=prompt_sha)
         if generate:
+            attempts = 0
             for slot in slots:
+                if (max_entries is not None and attempts >= max_entries) or (start_before is not None and utc(now()) >= utc(start_before)):
+                    break
                 claim = store.claim(slot['identity'], content_version, now(),
-                                    retry_failed=retry_failed, retry_uncertain=retry_uncertain)
+                                    retry_failed=retry_failed, retry_uncertain=retry_uncertain,
+                                    max_attempts=max_attempts, retry_delay_seconds=retry_delay_seconds)
                 if claim is None:
                     continue
+                attempts += 1
                 try:
                     context = validate_team_context(claim['context'])
                     check_current_fixture(source, slot)
-                    if utc(now()) >= utc(slot['kickoff']):
-                        store.finish(slot['identity'], content_version, claim['token'], now(), error='kickoff_passed')
+                    if utc(now()) >= utc(slot['kickoff']) or (start_before is not None and utc(now()) >= utc(start_before)):
+                        store.finish(slot['identity'], content_version, claim['token'], now(), error='generation_window_closed')
                         continue
                     result = writer(context, model=model)
                     validate_fixture_output(result['output'], context['fixture'])
