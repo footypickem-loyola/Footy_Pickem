@@ -112,6 +112,10 @@
 .insight-chart-data {margin-top:12px;font-size:.8rem}
 .insight-chart-data summary {cursor:pointer;margin:8px 0}
 .insight-empty {padding:30px 8px;text-align:center;color:var(--v3-muted)}
+.insight-briefs {margin:0;padding-left:1.1rem;font-size:.86rem;line-height:1.45}
+.insight-briefs li + li {margin-top:12px}
+.insight-briefs strong {font-size:.8rem}
+.insight-briefs p {margin:4px 0 0}
 @media(max-width:900px) {.insight-metrics {grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:600px) {
  .insight-page .insight-section {padding:14px}
