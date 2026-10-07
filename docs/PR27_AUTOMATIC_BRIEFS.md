@@ -141,9 +141,14 @@ success. Per-fixture kickoff and claim-token publication checks remain unchanged
   the worker after 60 seconds; stale-heartbeat monitoring detects a persistent failure.
   SIGTERM/exit cleanup terminates children; killed in-flight calls remain uncertain.
 
-## Controlled twenty-perspective evaluation — awaiting authorization
+## Controlled twenty-perspective evaluation
 
-No live paid evaluation was run in PR27. Use a fresh **nonproduction** copy of the
+The authorized October 7 evaluation is complete: **20 calls, 16 persisted,
+4 validation failures; 45 supported and 2 unsupported sentences**. See
+[the complete evaluation](PR27_LIVE_EVALUATION.md). PR27 is **not ready for merge
+or activation** pending the diagnosed factual and availability issues. No code or
+prompt was changed to hide failures; all raw outputs remain local. For a separately
+authorized future evaluation, use a fresh **nonproduction** copy of the
 authoritative source and a separate local content/operational store. Keep the source
 unchanged and choose an actual upcoming ten-fixture matchweek whose kickoff is known.
 Never rewrite timestamps or the clock to make production appear eligible.
@@ -177,11 +182,12 @@ Never rewrite timestamps or the clock to make production appear eligible.
 
 ## Remaining activation blockers
 
-Approval is required for paid evaluation, production content initialization, enabled
-worker/start command, deployment and monitor configuration. Verify a fresh production
-source has ten mapped fixtures, current successful official sync, and twenty usable
-contexts. Live provider quality, actual current game DB freshness, monitor delivery,
-volume capacity/backup policy and always-on behavior have not been verified here.
+Approval is required for additional paid evaluation, production content initialization,
+enabled worker/start command, deployment and monitor configuration. The October 7
+read-only snapshot had ten mapped fixtures, fresh official sync and twenty usable
+contexts, but the live quality review found material blockers. Resolve those before
+release. Monitor delivery, volume capacity/backup policy, always-on behavior and an
+actual in-window production-equivalent run remain unverified.
 The reference cron's fresh data is frozen at preparation; generation does not import
 or scrape anything. Future multi-service league deployments need a shared content
 service/central transactional database rather than independent SQLite copies.
@@ -200,6 +206,8 @@ monitoring. Supervisor tests cover opt-in startup, independent worker recovery a
 child cleanup. Existing PR26 cross-user/league reuse, five-entry GET/HTMX checks,
 PR24 ranking, PR25 grounding and protected game-state tests also passed.
 
-No live OpenAI calls, production database access/writes, Railway configuration
-changes, n8n changes, merge or deployment were performed. Railway metadata was read
-only. Unrelated local files and `.env` remain untouched.
+The full 463 Python / 10 JavaScript suites passed again after the authorized live
+evaluation. That evaluation used 20 OpenAI calls and a read-only production snapshot;
+all content/operational persistence and UI setup stayed local. No production writes,
+Railway configuration changes, n8n changes, merge or deployment were performed.
+Unrelated local files and `.env` remain untouched.
