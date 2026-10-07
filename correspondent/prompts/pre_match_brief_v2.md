@@ -59,6 +59,8 @@ that scoring sequence; add another fact only if it contributes something distinc
 
 ## Recency and scope
 
+Never name a stadium or ground unless its exact name appears in the cited facts.
+
 League rankings/comparisons describe the frozen cutoff, not the end date of a
 team's match sample. Never put a historical date or date range in a sentence
 asserting a league ranking (best/worst, fewest/most, joint, highest/lowest).

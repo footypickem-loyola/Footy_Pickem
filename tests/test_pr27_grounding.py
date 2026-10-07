@@ -109,6 +109,7 @@ class GroundingTests(unittest.TestCase):
     def goal(self,name='Matthijs de Ligt'):
         f=fact('Man United',signal='LATE_DECISIVE_GOAL')
         f['evidence']=dict(kind='equalizer')
+        f['provenance']['fixtures']=[dict(home_team='Tottenham Hotspur',away_team='Manchester United')]
         f['writing'].update(specific_goal_story=True,scorers=[dict(name=name,minute=90,extra_minute=6)])
         return f
 

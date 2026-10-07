@@ -9,6 +9,7 @@ import unicodedata
 
 from .writer import CorrespondentError, DEFAULT_MODEL
 from .football_claim_checks import aliases, mentions, team_pronoun, validate_derived_claims
+from .venue_grounding import validate_venues
 from pre_match_brief import PROMPT_VERSION, CONTEXT_VERSION, serialize, validate_context, require, all_facts
 
 PROMPT_PATH = Path(__file__).resolve().parent / 'prompts' / 'pre_match_brief_v2.md'
@@ -94,6 +95,7 @@ def validate_sentence(text, facts, available, pick, previous_text=''):
         require(any((f['writing']['comparison_scope'] or {}).get('kind') in
                     ('most_recent_available_h2h', 'most_recent_available_team_result') for f in facts),
                 'Recency language lacks an explicit comparison scope')
+    validate_venues(text, facts)
     validate_derived_claims(text, facts, previous_text, (pick['home'], pick['away']))
     names = {s['name'] for f in facts for s in f['writing']['scorers']}
     available_names = {s['name'] for f in available for s in f['writing']['scorers']}

@@ -170,7 +170,11 @@ and unchanged-output replay: 18 accepted, two false outputs rejected, no new val
 sentence rejections. The authorized [second live evaluation](PR27_SECOND_LIVE_EVALUATION.md)
 then made 20 fresh attempts: 18 persisted, two supported outputs rejected by W-D-L
 subject parsing, and one accepted sentence added an unsupplied stadium name.
-PR27 remains **not ready for merge or activation** pending those findings. No output was edited or
+The subsequent [final narrow corrections](PR27_FINAL_CORRECTIONS.md) resolve those
+observed cases offline: 19 second-run outputs pass and Liverpool's unsupported
+venue is rejected; all 42 supported sentences pass. **Proceed to merge review
+without a third paid run**; keep PR27 draft and production activation unapproved.
+No output was edited or
 regenerated to hide failures; all raw outputs remain local. For a separately
 authorized future evaluation, use a fresh **nonproduction** copy of the
 authoritative source and a separate local content/operational store. Keep the source
@@ -210,8 +214,10 @@ Approval is required for additional paid evaluation, production content initiali
 enabled worker/start command, deployment and monitor configuration. The October 7
 read-only snapshot had ten mapped fixtures, fresh official sync and twenty usable
 contexts, but the live quality review found material blockers. The targeted fixes
-pass offline replay, but the second live run found two further validator false
-positives and an ungrounded venue addition. Resolve and review these before merge.
+pass offline replay. The second live run's two further validator false positives
+and ungrounded venue addition are now covered by final deterministic corrections
+and exact-output replay. Review those changes before merge; another paid evaluation
+is not required for the observed cases.
 Monitor delivery, volume capacity/backup policy, always-on behavior and an
 actual in-window production-equivalent run remain unverified.
 The reference cron's fresh data is frozen at preparation; generation does not import
@@ -220,7 +226,13 @@ service/central transactional database rather than independent SQLite copies.
 
 ## Verification for this draft
 
-Latest targeted pass: **480 Python tests / 10 JavaScript tests passed**. The
+Final narrow pass: **490 Python tests / 10 JavaScript tests passed**. Exact second-run
+replay accepts 19 briefs and all 42 supported sentences; it rejects Liverpool and
+the one unsupported sentence. No new supported-prose rejections. First-run replay
+also retains its expected 45-supported/two-false result. See the
+[final correction report](PR27_FINAL_CORRECTIONS.md).
+
+Earlier targeted pass: **480 Python tests / 10 JavaScript tests passed**. The
 [correction report](PR27_TARGETED_CORRECTIONS.md) records the 30h/24h/18h boundaries,
 exact false-acceptance regressions, actor fixes and offline replay of all twenty
 unchanged outputs. All 45 supported sentences pass; both false sentences fail.

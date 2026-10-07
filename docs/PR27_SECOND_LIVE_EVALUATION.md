@@ -1,5 +1,10 @@
 # PR27 second controlled twenty-brief live evaluation
 
+Historical run at `2aed35e`, reported in `3b896fc`. The subsequent
+[final offline corrections](PR27_FINAL_CORRECTIONS.md) close the three observed
+validator/grounding issues and recommend merge review without a third paid run.
+The original outputs and evaluation findings below remain unchanged.
+
 **NOT READY FOR MERGE. NOT READY FOR ACTIVATION.** The second run improved to 18/20
 validator passes, but two supported briefs are still rejected and an accepted
 Liverpool sentence introduces an unsupplied stadium name. These are respectively
