@@ -1121,6 +1121,41 @@ class PickemAppTests(AutoDraftCases, PickInsightCases, PickInsightTaskCases, uni
         self.assertEqual(context['summary']['points_for'], 0)
         self.assertEqual(context['club_records'], [])
 
+    def test_training_shared_briefs_are_five_read_only_bullets_on_refresh(self):
+        from pick_insight_enrichment import verified_mapping
+        db, week, game, a, b = self.finalize_one_sided_matchup()
+        aid, name = a.id, a.name
+        teams = list(verified_mapping().values())
+        week.status = 'drafting'
+        week.season.api_competition_code, week.season.api_season_year = 'PL', 2026
+        for i, fixture in enumerate(db.query(app_module.Fixture).order_by(app_module.Fixture.id)):
+            old_home = fixture.home
+            fixture.home, fixture.away = teams[2*i], teams[2*i+1]
+            fixture.external_match_id = 800000+i
+            fixture.kickoff_utc = datetime(2030, 8, 1, 15)
+            for pick in db.query(app_module.Pick).filter_by(fixture_id=fixture.id):
+                pick.team = fixture.home if pick.team == old_home else fixture.away
+        db.commit()
+        def game_state():
+            session = app_module.SessionLocal()
+            return [session.execute(m.__table__.select().order_by(m.id)).all()
+                    for m in (app_module.Season,app_module.Week,app_module.Fixture,app_module.Result,app_module.Pick,app_module.Matchup)]
+        before = game_state()
+        with patch('shared_brief_view.read_saved', return_value='Saved football result <script>unsafe</script>') as lookup, \
+             patch('shared_brief_workflow.run_batch', side_effect=AssertionError('GET cannot run batch')), \
+             patch('correspondent.shared_team_writer.generate_team_brief', side_effect=AssertionError('GET cannot generate')):
+            for headers in ({}, {'HX-Request':'true'}):
+                response, context = self.insights_response(f'/tab/stats?player={aid}', name, headers)
+                self.assertEqual(response.status_code,200)
+                self.assertEqual(len(context['shared_briefs']),5)
+                html=response.get_data(as_text=True)
+                bullets=re.search(r'<ul class="insight-briefs">(.*?)</ul>',html,re.S).group(1)
+                self.assertEqual(bullets.count('<li>'),5)
+                self.assertNotIn('<script>',bullets)
+                self.assertIn('&lt;script&gt;',bullets)
+            self.assertEqual(lookup.call_count,10)
+        self.assertEqual(before,game_state())
+
     def test_position_chart_matches_official_snapshots_with_ties_and_excludes_provisional(self):
         db, week, game, a, b = self.finalize_one_sided_matchup()
         sid = week.season_id

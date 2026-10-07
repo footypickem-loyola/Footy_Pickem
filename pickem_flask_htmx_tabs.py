@@ -5835,6 +5835,8 @@ def insight_context(league=False):
         context['matchup_players'] = [row for row in standings if matchup and row['player_id'] in
                                      [p['id'] for p in matchup['players']]]
         context['current_picks'] = next((p['owned'] for p in matchup['players'] if p['id'] == pid), []) if matchup else []
+        from shared_brief_view import selected_briefs
+        context['shared_briefs'] = selected_briefs(db, sys.modules[__name__], selected_season, current, context['current_picks'])
     return context
 
 

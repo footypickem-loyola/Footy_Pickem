@@ -18,7 +18,10 @@
       </section>
 
     </div><div class="insight-column">
-      <section class="card insight-section insight-placeholder"><h2>What to Look For</h2><p class="muted">Your pre-match briefing will live here. Personalized scouting is not available yet.</p></section>
+      <section class="card insight-section"><h2>Pre-Match Brief</h2>
+        {% if shared_briefs %}<ul class="insight-briefs">{% for brief in shared_briefs %}<li><strong>{{ brief.team }} · {{ brief.home }} vs {{ brief.away }}</strong><p>{{ brief.body if brief.body else 'Brief not available yet.' }}</p></li>{% endfor %}</ul>
+        {% else %}<p class="muted">Your five selections will appear here once assigned. Briefs are prepared ahead of kickoff.</p>{% endif %}
+      </section>
     <section class="card insight-section"><h2>My Season{% if selected_player %} · {{ selected_player.name }}{% endif %}</h2><p class="muted">Official record across {{ finalized_count }} finalized matchweek{{ '' if finalized_count == 1 else 's' }}.</p>
       {% if summary %}<dl class="insight-metrics">
         {% for label, value in [('Rank',summary.rank),('For',summary.points_for),('Against',summary.points_against),('Net',summary.net_points),('Correct',summary.correct),('Incorrect',summary.incorrect),('Draws',summary.draws),('Correct-pick %',summary.correct_percentage)] %}<div data-metric="{{ label }}"><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endfor %}

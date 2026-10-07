@@ -128,6 +128,32 @@ def validate_sentence(text, facts, available, pick):
         require(any(normalized(actor) == normalized(n) for n in names | teams), 'Unknown/uncited scoring actor')
 
 
+def validate_fixture_output(item, pick):
+    """Unchanged PR25 single-entry safeguards shared with the batch writer."""
+    require(isinstance(item, dict) and set(item) == {'fixture_id', 'picked_team', 'heading', 'sentences'},
+            'Invalid fixture output/schema')
+    fid = item['fixture_id']
+    require(type(fid) is int and fid == pick['fixture_id'], 'Unknown fixture ID')
+    require(item['picked_team'] == pick['picked_team'], 'Incorrect picked team')
+    require(item['heading'] == f"{pick['home']} vs {pick['away']}", 'Incorrect fixture heading')
+    sentences = item['sentences']
+    require(isinstance(sentences, list) and 1 <= len(sentences) <= 3, 'Invalid sentence list')
+    available = {f['id']: f for f in all_facts(pick)}
+    for sentence in sentences:
+        require(isinstance(sentence, dict) and set(sentence) == {'text', 'used_fact_ids'}, 'Invalid sentence/schema')
+        require(isinstance(sentence['text'], str) and bool(sentence['text'].strip()), 'Empty sentence')
+        ids = sentence['used_fact_ids']
+        require(isinstance(ids, list) and 1 <= len(ids) <= 3 and all(isinstance(i, str) for i in ids), 'Invalid used_fact_ids')
+        require(len(ids) == len(set(ids)), 'Duplicate fact ID')
+        require(set(ids) <= set(available), 'Unknown or cross-fixture fact ID')
+        validate_sentence(sentence['text'], [available[i] for i in ids], list(available.values()), pick)
+    body = ' '.join(s['text'] for s in sentences)
+    require(len(body.split()) <= 90, 'Overlong fixture body')
+    require(re.search(r'\b(win\w*|won|drew|draw\w*|lost|defeat\w*|unbeaten|undefeated|scor\w*|goal\w*|clean.sheet)\b|\b\d+[–-]\d+\b', body, re.I),
+            'Entry lacks substantive football content')
+    return item
+
+
 def validate_brief_payload(payload, context):
     """No repair, deduplication or reordering of model mistakes.
 
@@ -141,29 +167,11 @@ def validate_brief_payload(payload, context):
     seen = set()
     expected = {p['fixture_id']: p for p in context['picks']}
     for item in items:
-        require(isinstance(item, dict) and set(item) == {'fixture_id', 'picked_team', 'heading', 'sentences'},
-                'Invalid fixture output/schema')
-        fid = item['fixture_id']
+        require(isinstance(item, dict), 'Invalid fixture output/schema')
+        fid = item.get('fixture_id')
         require(type(fid) is int and fid in expected and fid not in seen, 'Unknown or duplicate fixture ID')
         seen.add(fid)
-        pick = expected[fid]
-        require(item['picked_team'] == pick['picked_team'], 'Incorrect picked team')
-        require(item['heading'] == f"{pick['home']} vs {pick['away']}", 'Incorrect fixture heading')
-        sentences = item['sentences']
-        require(isinstance(sentences, list) and 1 <= len(sentences) <= 3, 'Invalid sentence list')
-        available = {f['id']: f for f in all_facts(pick)}
-        for sentence in sentences:
-            require(isinstance(sentence, dict) and set(sentence) == {'text', 'used_fact_ids'}, 'Invalid sentence/schema')
-            require(isinstance(sentence['text'], str) and bool(sentence['text'].strip()), 'Empty sentence')
-            ids = sentence['used_fact_ids']
-            require(isinstance(ids, list) and 1 <= len(ids) <= 3 and all(isinstance(i, str) for i in ids), 'Invalid used_fact_ids')
-            require(len(ids) == len(set(ids)), 'Duplicate fact ID')
-            require(set(ids) <= set(available), 'Unknown or cross-fixture fact ID')
-            validate_sentence(sentence['text'], [available[i] for i in ids], list(available.values()), pick)
-        body = ' '.join(s['text'] for s in sentences)
-        require(len(body.split()) <= 90, 'Overlong fixture body')
-        require(re.search(r'\b(win\w*|won|drew|draw\w*|lost|defeat\w*|unbeaten|undefeated|scor\w*|goal\w*|clean.sheet)\b|\b\d+[–-]\d+\b', body, re.I),
-                'Entry lacks substantive football content')
+        validate_fixture_output(item, expected[fid])
     require([p['fixture_id'] for p in items] == [p['fixture_id'] for p in context['picks']], 'Incorrect fixture order')
     words = len((payload['title'] + ' ' + payload['intro'] + ' ' + ' '.join(s['text'] for i in items for s in i['sentences'])).split())
     require(words <= 400, 'Brief exceeds 400-word safety cap')
