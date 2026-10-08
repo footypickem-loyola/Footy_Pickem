@@ -4536,6 +4536,25 @@ def current_drafting_week(db, season: Season) -> Optional[Week]:
     if wk: return wk
     return base.order_by(Week.number.asc()).first()
 
+def select_default_matchweek(weeks: Iterable[Week], now: datetime) -> Optional[Week]:
+    """Select a season's Matchweek destination using naive UTC timestamps.
+
+    Keep the preceding final visible for 12 hours, then show the earliest
+    unfinished week. Legacy finals without a timestamp have no grace period.
+    """
+    ordered = sorted(weeks, key=lambda week: week.number)
+    unfinished = next((week for week in ordered if week.status != "finalized"), None)
+    previous = next((week for week in reversed(ordered)
+                     if week.status == "finalized"
+                     and (unfinished is None or week.number < unfinished.number)), None)
+    if unfinished is None:
+        return previous
+    if (previous is not None and previous.finalized_at is not None
+            and now < previous.finalized_at + timedelta(hours=12)):
+        return previous
+    return unfinished
+
+
 # -------------------- Tab routes (HTMX content) --------------------
 @app.get("/tab/current")
 def tab_current():
@@ -4550,7 +4569,9 @@ def tab_current():
         if wk is None:
             abort(404, "Week not found")
     else:
-        wk = current_drafting_week(db, season)
+        wk = select_default_matchweek(
+            db.query(Week).filter_by(season_id=season.id).all(), now=utcnow(),
+        )
     if wk is None:
         return render_template("v3/pages/matchweek.html", mw=None,
                                message=f"No weeks initialized for {season.name} yet.")
