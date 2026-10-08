@@ -291,6 +291,65 @@ class PickemAppTests(AutoDraftCases, PickInsightCases, PickInsightTaskCases, uni
             self.assertEqual(error.status_code, 404)
             self.assertNotIn(b'navigation-tabs', error.data)
 
+    def test_default_matchweek_selection(self):
+        now = datetime(2026, 9, 21, 12)
+        def week(number, status, age=None):
+            return SimpleNamespace(number=number, status=status,
+                                   finalized_at=None if age is None else now - age)
+        cases = [
+            ("provisional before drafting", [week(7, "drafting"), week(6, "provisional")], 6),
+            ("earliest drafting", [week(7, "provisional"), week(6, "drafting")], 6),
+            ("inside grace", [week(6, "finalized", timedelta(hours=11, minutes=59)), week(7, "drafting")], 6),
+            ("at boundary", [week(6, "finalized", timedelta(hours=12)), week(7, "drafting")], 7),
+            ("after grace", [week(6, "finalized", timedelta(hours=12, minutes=1)), week(7, "drafting")], 7),
+            ("season ended", [week(1, "finalized"), week(38, "finalized", timedelta(days=10))], 38),
+            ("legacy final", [week(6, "finalized"), week(7, "drafting")], 7),
+            ("legacy season ended", [week(37, "finalized"), week(38, "finalized")], 38),
+            ("later final cannot hide unfinished", [week(6, "provisional"), week(7, "finalized", timedelta(hours=1))], 6),
+            ("only preceding final gets grace", [week(5, "finalized", timedelta(hours=1)), week(6, "finalized", timedelta(days=1)), week(7, "drafting")], 7),
+            ("empty season", [], None),
+        ]
+        for label, weeks, expected in cases:
+            with self.subTest(label=label):
+                selected = app_module.select_default_matchweek(weeks, now=now)
+                self.assertEqual(selected.number if selected else None, expected)
+
+    def test_matchweek_default_rollover_and_force_week(self):
+        now = datetime(2026, 9, 21, 12)
+        db = app_module.SessionLocal()
+        week = db.query(app_module.Week).one()
+        week.number = 6
+        week.status = "provisional"
+        season_id = week.season_id
+        db.add(app_module.Week(season_id=season_id, number=7, status="drafting", room_code="NEXT"))
+        other = app_module.Season(code="other-season", name="Other season")
+        db.add(other)
+        db.flush()
+        db.add(app_module.Week(season_id=other.id, number=1, status="drafting", room_code="OTHER"))
+        db.commit()
+        for status, age, expected in [
+            ("provisional", None, 6),
+            ("finalized", timedelta(hours=11, minutes=59), 6),
+            ("finalized", timedelta(hours=12), 7),
+            ("finalized", timedelta(hours=12, minutes=1), 7),
+        ]:
+            with self.subTest(status=status, age=age):
+                db = app_module.SessionLocal()
+                week = db.query(app_module.Week).filter_by(season_id=season_id, number=6).one()
+                week.status = status
+                week.finalized_at = None if age is None else now - age
+                db.commit()
+                # Other workflows retain their existing drafting-first selector.
+                self.assertEqual(app_module.current_drafting_week(db, week.season).number, 7)
+                with patch.object(app_module, "utcnow", return_value=now):
+                    for forced, selected in [(None, expected), (6, 6), (7, 7)]:
+                        query = "?season=year-2" + (f"&force_week={forced}" if forced else "")
+                        response, model = self.matchweek_response(query=query)
+                        self.assertEqual(response.status_code, 200)
+                        self.assertEqual(model["week"], selected)
+                    with app_module.app.test_client() as client:
+                        self.assertEqual(client.get("/tab/current?season=year-2&force_week=999").status_code, 404)
+
     def test_v3_navigation_links_assets_and_join_flow(self):
         with app_module.app.test_client() as client:
             self.assertEqual(client.get("/join").status_code, 200)
