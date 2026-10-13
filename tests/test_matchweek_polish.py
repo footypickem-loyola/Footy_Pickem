@@ -15,18 +15,31 @@ class DetailParser(HTMLParser):
         self.openers = []
         self.depth = 0
         self.max_depth = 0
+        self.card_depth = 0
+        self.trigger = None
+        self.triggers = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if tag == 'article':
+            self.card_depth += 1
+        if self.trigger is not None:
+            self.trigger['children'].append(tag)
         if tag == 'dialog':
             self.dialogs.append(attrs['id'])
         if 'data-matchup-open' in attrs:
             self.openers.append(attrs['data-matchup-open'])
+            self.trigger = dict(tag=tag, attrs=attrs, children=[], in_article=self.card_depth > 0)
+            self.triggers.append(self.trigger)
         if tag == 'details':
             self.depth += 1
             self.max_depth = max(self.max_depth, self.depth)
 
     def handle_endtag(self, tag):
+        if tag == 'article':
+            self.card_depth -= 1
+        if tag == 'button':
+            self.trigger = None
         if tag == 'details':
             self.depth -= 1
 
@@ -112,6 +125,15 @@ class PolishTests(unittest.TestCase):
             parser = DetailParser()
             parser.feed(html)
             self.assertEqual(len(parser.openers), len(model['others']))
+            for trigger in parser.triggers:
+                self.assertTrue(trigger['in_article'])
+                self.assertEqual(trigger['tag'], 'button')
+                self.assertEqual(trigger['children'], [])
+                self.assertEqual(trigger['attrs']['type'], 'button')
+                self.assertEqual(trigger['attrs']['aria-haspopup'], 'dialog')
+                self.assertEqual(trigger['attrs']['aria-controls'], trigger['attrs']['data-matchup-open'])
+                self.assertIn('versus', trigger['attrs']['aria-label'])
+                self.assertNotIn('tabindex', trigger['attrs'])  # Native keyboard focus.
             for other in model['others']:
                 target = f'other-matchup-{other["id"]}'
                 self.assertIn(target, parser.openers)
