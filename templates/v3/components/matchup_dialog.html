@@ -1,0 +1,21 @@
+<dialog id="other-matchup-{{ m.id }}" class="mw-detail-dialog" aria-labelledby="other-matchup-title-{{ m.id }}">
+  <header class="mw-section-heading">
+    <div><p class="mw-eyebrow">Week {{ mw.week }} · {{ m.state_label }}</p>
+      <h2 id="other-matchup-title-{{ m.id }}">{{ m.players[0].name }} vs {{ m.players[1].name }}</h2>
+    </div>
+    <button type="button" class="btn" data-matchup-close aria-label="Close matchup details" autofocus>Close</button>
+  </header>
+  {% if m.state == 'draft' %}<p>{{ m.total_picks }}/10 picked · {{ m.turn.name }}’s turn</p>
+  {% else %}<p>{{ 'Provisional' if m.state == 'live' else 'Official' if m.state == 'final' else 'Current' }} Pick ’Em Score · {% for player in m.players %}{{ player.name }} <strong>{{ '%+d'|format(player['for']) }}</strong>{% if loop.first %} · {% endif %}{% endfor %}</p>{% endif %}
+  <div class="mw-owned-grid">
+    {% for player in m.players %}
+    <section class="card mw-owned">
+      <h3>{{ player.name }}’s Picks · {{ player.owned|length }}/5</h3>
+      {% for pick in player.owned %}
+        {% if m.state == 'live' %}{% include 'v3/components/live_fixture.html' %}
+        {% else %}{% include 'v3/components/owned_fixture.html' %}{% endif %}
+      {% else %}<p class="muted">No picks yet.</p>{% endfor %}
+    </section>
+    {% endfor %}
+  </div>
+</dialog>

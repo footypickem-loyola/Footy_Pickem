@@ -85,8 +85,14 @@ def enrich_matchweek(model, db, models, week, now=None):
                     clock = (pick['kickoff_utc'] or datetime.min) + timedelta(minutes=(event['minute'] or 0) + (event['extra_minute'] or 0))
                     view['timeline'].append(dict(event, home=pick['home'], away=pick['away'], owner=player['name'],
                         team=pick['team'], impact=impact, clock=clock, fixture_id=pick['fixture_id'], goal_correction=pick['goal_correction']))
+            player['pick_record'] = {
+                outcome: sum(p['outcome'] == outcome and p['live_status'] in ('Official FT', 'FT · Provisional')
+                             for p in player['owned'])
+                for outcome in ('correct', 'incorrect', 'draw')
+            }
             player['for'] = sum(p['contribution'] or 0 for p in player['owned'])
             player['remaining'] = sum(p['live_status'] not in ('Official FT', 'FT · Provisional') for p in player['owned'])
+            player['completed'] = len(player['owned']) - player['remaining']
         a, b = view['players']
         for player, opponent in ((a, b), (b, a)):
             player['against'] = opponent['for']

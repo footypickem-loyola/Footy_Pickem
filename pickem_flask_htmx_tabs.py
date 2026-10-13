@@ -4536,6 +4536,21 @@ def current_drafting_week(db, season: Season) -> Optional[Week]:
     if wk: return wk
     return base.order_by(Week.number.asc()).first()
 
+def training_ground_week(db, season: Season) -> Optional[Week]:
+    """Stay on the earliest unfinished week; no post-final grace period."""
+    weeks = db.query(Week).filter_by(season_id=season.id).order_by(Week.number).all()
+    for week in weeks:
+        if week.status == "finalized":
+            continue
+        fixtures = db.query(Fixture).filter_by(week_id=week.id).all()
+        official = {r.fixture_id for r in db.query(Result).join(Fixture).filter(Fixture.week_id == week.id)}
+        finished = {s.fixture_id for s in db.query(LiveFixtureState).join(Fixture).filter(
+            Fixture.week_id == week.id, LiveFixtureState.state == "finished")}
+        if not fixtures or any(f.id not in official | finished for f in fixtures):
+            return week
+    return weeks[-1] if weeks else None
+
+
 def select_default_matchweek(weeks: Iterable[Week], now: datetime) -> Optional[Week]:
     """Select a season's Matchweek destination using naive UTC timestamps.
 
@@ -5865,7 +5880,7 @@ def insight_context(league=False):
         context['performance'] = performance_chart(snapshots, pid)
         context['weekly_results'] = weekly_results(players, meetings,
             {w.number: weekly_pick_records(db, w) for w in weeks}, pid)
-        current = None if selected_season.is_archived else current_drafting_week(db, selected_season)
+        current = None if selected_season.is_archived else training_ground_week(db, selected_season)
         week_model = load_matchweek_model(db, selected_season, current, include_context=False) if current else None
         games = ([week_model['primary']] if week_model and week_model['primary'] else []) + (week_model['others'] if week_model else [])
         matchup = next((g for g in games if any(p['id'] == pid for p in g['players'])), None)

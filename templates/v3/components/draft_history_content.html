@@ -1,0 +1,9 @@
+  <ol class="mw-pick-log">
+    {% for pick in (m.draft_slots if m.state == 'draft' else m.history) %}
+    <li {% if pick.pending %}class="mw-pending"{% else %}data-pick-id="{{ pick.id }}"{% endif %}>
+      <span class="mw-pick-sequence">{{ pick.sequence }}</span>
+      {% if pick.pending %}<span class="mw-log-player">—</span><span class="muted">Pending…</span>
+      {% else %}<span class="mw-log-player">{{ pick.player }}</span><span class="mw-log-club"><strong>{{ pick.team }}</strong> <span class="muted">(vs {{ pick.opposition }})</span></span>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
