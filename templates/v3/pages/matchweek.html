@@ -40,7 +40,8 @@
       <div class="mw-section-heading"><h2 id="other-matchups-title">Other Matchups</h2><span class="muted">Around your league</span></div>
       <div class="mw-other-grid">
         {% for other in mw.others %}
-        <article class="card mw-other" data-matchup-id="{{ other.id }}">
+        <article class="card mw-other mw-other-card" data-matchup-id="{{ other.id }}">
+          <button type="button" class="mw-other-trigger" data-matchup-open="other-matchup-{{ other.id }}" aria-haspopup="dialog" aria-controls="other-matchup-{{ other.id }}" aria-label="View {{ other.players[0].name }} versus {{ other.players[1].name }} matchup details"></button>
           <span class="mw-state">{{ other.state_label }}</span>
           <h3>{{ other.players[0].name }} <span class="muted">vs</span> {{ other.players[1].name }}{% if other.state == 'final' %}: {% if other.winner %}{{ other.winner }} Wins ${{ other.payout.payout }}{% else %}Draw $0{% endif %}{% endif %}</h3>
           {% if other.state == 'final' %}
@@ -53,5 +54,6 @@
       </div>
     </section>
     {% endif %}
+    {% for m in mw.others %}{% include 'v3/components/matchup_dialog.html' %}{% endfor %}
   {% endif %}
 </div>

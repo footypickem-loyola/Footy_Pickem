@@ -1,0 +1,14 @@
+        <article class="live-fixture" data-fixture-id="{{ pick.fixture_id }}">
+          <div class="live-fixture-meta"><span>{{ pick.kickoff_utc|kickoff_eastern }}</span><span class="live-status {{ 'is-live' if pick.live_status == 'LIVE' else '' }}">{{ pick.live_status }}{% if pick.minute is not none and pick.live_status == 'LIVE' %} {{ pick.minute }}{% if pick.extra_minute %}+{{ pick.extra_minute }}{% endif %}′{% endif %}</span></div>
+          <div class="live-teams"><strong>{{ pick.home }}</strong><b>{{ pick.score or 'vs' }}</b><strong>{{ pick.away }}</strong></div>
+          <div class="live-team-events">
+          {% for side in ['home', 'away'] %}<ul aria-label="{{ pick.home if side == 'home' else pick.away }} events">
+            {% for event in pick.events if event.side == side and event.event_type in ['goal', 'own_goal', 'penalty', 'yellow_card', 'red_card', 'second_yellow'] %}
+            <li><span aria-label="{{ event.event_type|replace('_', ' ') }}">{{ '⚽' if event.event_type in ['goal', 'own_goal', 'penalty'] else '🟨' if event.event_type == 'yellow_card' else '🟥' }}</span> {{ event.player_name or 'Player unavailable' }}{% if event.minute is not none %} · {{ event.minute }}{% if event.extra_minute %}+{{ event.extra_minute }}{% endif %}′{% endif %}{% if event.event_type == 'own_goal' %} (OG){% elif event.event_type == 'penalty' %} (P){% elif event.event_type == 'second_yellow' %} (2nd yellow){% endif %}</li>
+            {% endfor %}
+          </ul>{% endfor %}
+          </div>
+          {% if pick.goal_correction %}<small class="live-delayed">VAR goal correction reported. Event details may be revised; current score drives your pick.</small>{% endif %}
+          <div class="live-pick live-pick--{{ pick.outcome }}"><span>{{ player.name }} picks <strong>{{ pick.team }}</strong> · {{ 'Not started' if pick.live_status == 'Upcoming' else 'Currently correct' if pick.outcome == 'correct' else 'Currently wrong' if pick.outcome == 'incorrect' else 'Level' if pick.outcome == 'draw' else 'Score unavailable' }}</span><strong>{{ '%+d'|format(pick.contribution) if pick.contribution is not none else '—' }}</strong></div>
+          {% if pick.stale %}<small class="live-delayed">Update delayed</small>{% endif %}
+        </article>
