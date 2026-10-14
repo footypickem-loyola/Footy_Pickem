@@ -12,6 +12,7 @@ def main(argv=None):
     parser.add_argument('--store', required=True)
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--init-store', action='store_true')
+    modes.add_argument('--init-operations-store', action='store_true')
     modes.add_argument('--prepare', action='store_true')
     modes.add_argument('--generate', action='store_true')
     parser.add_argument('--source')
@@ -22,6 +23,10 @@ def main(argv=None):
     parser.add_argument('--retry-failed', action='store_true')
     parser.add_argument('--retry-uncertain', action='store_true', help='Explicitly risk repeating a lost provider response; inspect first')
     args = parser.parse_args(argv)
+    if args.init_operations_store:
+        from shared_brief_operations import initialize
+        initialize(args.store)
+        return {'operations_initialized': True}
     if args.init_store:
         from shared_brief_store import initialize
         initialize(args.store)
