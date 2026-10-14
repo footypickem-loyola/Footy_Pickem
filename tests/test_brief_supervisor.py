@@ -2,6 +2,9 @@
 import os
 from unittest.mock import patch,Mock
 import unittest
+import tempfile
+from pathlib import Path
+import sqlite3
 import run_web_with_briefs as launcher
 import shared_brief_worker as worker
 
@@ -36,3 +39,33 @@ class SupervisorTests(unittest.TestCase):
         with patch.dict(os.environ,{'SHARED_BRIEF_AUTOMATION_ENABLED':'1','DB_PATH':'sqlite:///:memory:'}), \
              patch.object(worker.operations,'initialize',side_effect=AssertionError()):
             self.assertEqual(worker.main(),1)
+
+    def test_enabled_worker_requires_existing_operations_schema_without_initializing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            paths = [Path(folder)/name for name in ('game.db','content.db','operations.db')]
+            with patch.dict(os.environ,{'SHARED_BRIEF_AUTOMATION_ENABLED':'1'}), \
+                 patch.object(worker,'configuration',return_value=(paths,{})), \
+                 patch.object(worker,'BriefStore'), \
+                 patch.object(worker.operations,'initialize',side_effect=AssertionError('startup schema write')), \
+                 patch.object(worker,'tick',side_effect=AssertionError('must fail closed')):
+                self.assertEqual(worker.main(),1)
+                self.assertFalse(paths[2].exists())
+                # An existing wrong-schema file must also remain byte-identical.
+                with sqlite3.connect(paths[2]) as db: db.execute('CREATE TABLE unrelated(value TEXT)')
+                before=paths[2].read_bytes()
+                self.assertEqual(worker.main(),1)
+                self.assertEqual(paths[2].read_bytes(),before)
+
+    def test_existing_operations_store_is_checked_without_ddl(self):
+        with tempfile.TemporaryDirectory() as folder:
+            paths=[Path(folder)/name for name in ('game.db','content.db','operations.db')]
+            worker.operations.initialize(paths[2])  # Explicit test arrangement only.
+            before=paths[2].read_bytes()
+            with patch.dict(os.environ,{'SHARED_BRIEF_AUTOMATION_ENABLED':'1'}), \
+                 patch.object(worker,'configuration',return_value=(paths,{})), \
+                 patch.object(worker,'BriefStore'), \
+                 patch.object(worker.operations,'initialize',side_effect=AssertionError('startup schema write')), \
+                 patch.object(worker,'tick',return_value={}), \
+                 patch.object(worker.time,'sleep',side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt): worker.main()
+            self.assertEqual(paths[2].read_bytes(),before)

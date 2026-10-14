@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import time
+from contextlib import closing
 from sqlalchemy.engine import make_url
 
 from pre_match_brief import require
@@ -34,7 +35,10 @@ def main():
     try:
         paths,config=configuration()
         store=BriefStore(paths[1]); store.close()
-        operations.initialize(paths[2])
+        # Deployment must not create a missing operations DB. Initialization is
+        # an explicit maintenance command, independent of worker startup.
+        with closing(operations.connect(paths[2], 'ro')) as db:
+            operations.check(db)
     except Exception:
         print(json.dumps(dict(status='configuration_error',intervention_required=True)),flush=True)
         return 1

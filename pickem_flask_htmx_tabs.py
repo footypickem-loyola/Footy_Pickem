@@ -1395,7 +1395,8 @@ def ensure_database_schema(target_engine=engine) -> bool:
     return migrated
 
 
-ensure_database_schema(engine)
+# Schema changes are explicit maintenance operations, never import/startup work.
+# Foundation tables deliberately are NOT registered on this Base.metadata.
 
 
 # -------------------- football-data.org client --------------------
@@ -6408,6 +6409,10 @@ def main():
     parser.add_argument("--season-code", default=os.environ.get("SEASON_CODE", "year-2"))
     parser.add_argument("--season-name", default=os.environ.get("SEASON_NAME", "Year 2"))
     parser.add_argument(
+        "--initialize-legacy-schema", action="store_true",
+        help="Explicitly initialize/upgrade only the legacy schema at DB_PATH and exit; never run on startup",
+    )
+    parser.add_argument(
         "--sync-api-once",
         action="store_true",
         help="Synchronize the active API-backed season and exit (for a scheduled job)",
@@ -6415,6 +6420,13 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5000)
     args = parser.parse_args()
+
+    if args.initialize_legacy_schema:
+        if "DB_PATH" not in os.environ:
+            parser.error("--initialize-legacy-schema requires an explicit DB_PATH")
+        ensure_database_schema(engine)
+        print("Legacy schema initialized. No foundation migration or data seed performed.")
+        return
 
     if args.sync_api_once:
         db = SessionLocal()

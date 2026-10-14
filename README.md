@@ -9,21 +9,40 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-## Safe database migrations
+## Explicit database initialization and migrations
 
-When the updated app first opens an older single-season database, it automatically:
+Importing or starting the web app no longer runs schema migrations or
+`Base.metadata.create_all`. A missing or outdated database is not automatically
+initialized/upgraded. Existing initialized databases keep their current behavior.
 
-- creates an adjacent `*.pre_seasons.db` backup;
-- assigns all existing weeks, picks, and results to archived `Year 1`;
-- enables duplicate week numbers across separate seasons.
+For a **new disposable local database**, set an explicit `DB_PATH`, then run:
 
-Before adding football-data.org fields to an existing database, it also creates
-`*.pre_football_api.db`. The migration preserves all fixtures, picks, results, and
-season history.
+```powershell
+$env:DB_PATH="sqlite:///pickem_local.db"
+.\.venv\Scripts\python.exe pickem_flask_htmx_tabs.py --initialize-legacy-schema
+```
 
-Before adding the Correspondent V2 recap fields to an existing V1 database, it
-creates `*.pre_correspondent_v2.db`. Existing recaps are retained and explicitly
-marked as V1.
+This explicitly invokes the legacy schema helper and exits. It does **not** run
+the private-beta foundation migration or seed players/seasons. For an existing
+older database, the helper retains its historical migration/backup behavior;
+review and back it up before authorizing that maintenance operation. Do not add
+this command to a deployment/start/pre-deploy command.
+
+Private-beta Stage 1 uses a separate, stdlib-only explicit command, documented
+in [PRIVATE_BETA_STAGE1.md](docs/PRIVATE_BETA_STAGE1.md). Its new tables are not
+registered on the application's ORM metadata. Neither deploying the code nor
+running `--initialize-legacy-schema` executes the foundation migration.
+
+The enabled shared-brief worker now requires an already initialized operations
+database and fails closed if it is absent/invalid. To initialize a **disposable
+local** operations store explicitly:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/generate_shared_briefs.py --store C:/path/to/local-operations.db --init-operations-store
+```
+
+Existing valid content/operations stores are unchanged. No deployment or
+production database operation is authorized by these examples.
 
 ## Start the app and import 2026–27 fixtures
 
