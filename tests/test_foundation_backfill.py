@@ -407,5 +407,364 @@ import foundation_backfill, foundation_backfill_manifest, foundation_backfill_va
             self.assertNotIn("executescript(", source)
 
 
-if __name__ == "__main__":
+
+class PlannerTests(unittest.TestCase):
+    """Reviewed synthetic v2 evidence, never provider requests or real snapshots."""
+    def setUp(self):
+        from test_foundation_migrations import LEGACY_DDL
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / 'planner-synthetic.db'
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.executescript(LEGACY_DDL)
+            db.executescript("""
+                INSERT INTO players(id,name) VALUES(9,'Alice'),(2,'Bob'),(15,'Unused');
+                INSERT INTO seasons(id,code,name,is_active,is_archived,api_competition_code,api_season_year)
+                    VALUES(1,'synthetic-one','Synthetic One',0,1,'PL',2025),(2,'synthetic-two','Synthetic Two',1,0,'PL',2026);
+                INSERT INTO weeks(id,season_id,number,room_code,status) VALUES(10,1,1,'synthetic-1','finalized'),(20,2,1,'synthetic-2','open');
+                INSERT INTO fixtures(id,week_id,match_number,home,away,external_match_id) VALUES
+                    (100,10,7,'Home FC','Away FC',1000),(101,10,9,'Away FC','Home FC',1001),(200,20,1,'Home FC','Away FC',2000);
+                INSERT INTO matchups(id,week_id,player_a_id,player_b_id,first_picker_id) VALUES(1,10,9,2,9),(2,20,2,9,2);
+                INSERT INTO picks(id,matchup_id,player_id,fixture_id,team) VALUES(1,1,9,100,'Home FC'),(2,2,2,200,'Away FC');
+                INSERT INTO auto_draft_preferences(id,matchup_id,player_id,fixture_id,team,priority) VALUES(1,1,2,101,'Home FC',1);
+                INSERT INTO results(id,fixture_id,outcome,source) VALUES(1,100,'Home','manual');
+                INSERT INTO fixture_provider_links(id,fixture_id,provider,external_fixture_id) VALUES
+                    (1,100,'sportmonks',3000),(2,101,'sportmonks',3001),(3,200,'sportmonks',4000);
+                INSERT INTO api_sync_states(id,season_id,provider,fixtures_imported,results_imported,pending_matches,unmatched_matches) VALUES(1,1,'football-data',3,1,0,0);
+                INSERT INTO pick_insight_refreshes(week_id,season_id,status,created_at,completed_at)
+                    VALUES(10,1,'completed','2026-01-01','2026-01-02');
+                INSERT INTO club_season_enrichment(season_id,sportmonks_team_id,sportmonks_season_id,league_id,footy_club,top_scorers,synced_at)
+                    VALUES(1,30,301,8,'Home FC','[]','2026-01-01');
+                INSERT INTO match_events(id,fixture_id,provider,external_event_id,event_type,side,team_provider_id,team_name,sort_order,is_active,created_at,updated_at,revisions)
+                    VALUES(1,100,'sportmonks','event-1','goal','home',30,'Home FC',1,1,'2026-01-01','2026-01-01','[]');
+            """)
+        before = stage1.inspect_database(self.path)
+        stage1.apply_database(self.path, expected_schema=before['schema_sha256'], backup=Path(self.temp.name)/'before.db', authorized=True)
+        self.doc = self.manifest()
+
+    def manifest(self):
+        from foundation_migrations import digest
+        evidence = {kind: digest(kind) for kind in ('product_decision','season_provider','fixture_provider','reviewed_alias','permission')}
+        from foundation_backfill_manifest import PLAN_EVIDENCE
+        rows = []
+        def add(kind, **values):
+            rows.append(dict(kind=kind, evidence=[evidence[PLAN_EVIDENCE[kind]]], **values))
+        def providers(a,b):
+            return [dict(provider='football-data',external_id=str(a)),dict(provider='sportmonks',external_id=str(b))]
+        comp, home, away = digest('competition'), digest('home'), digest('away')
+        add('policy', timestamp='2026-10-01T00:00:00+00:00', slug='synthetic-loyola', status='setup',
+            timezone='America/New_York', correspondent_enabled=0, user_is_platform_admin=0, club_is_active=1, sync_enabled=0)
+        add('competition',key=comp,code='PL',name='Synthetic League',providers=providers('PL',8))
+        add('club',key=home,name='Home FC',providers=providers(10,30))
+        add('club',key=away,name='Away FC',providers=providers(20,40))
+        for sid, year, wid in [(1,2025,10),(2,2026,20)]:
+            sk = digest(str(sid))
+            add('football_season',key=sk,competition_key=comp,name=f'Synthetic {sid}',start_year=year,providers=providers(100+sid,300+sid))
+            add('season',id=sid,football_season_key=sk,api_competition_code='PL',api_season_year=year)
+            add('week',id=wid,season_id=sid,football_season_key=sk,number=1)
+            for name, ck in [('Home FC',home),('Away FC',away)]:
+                add('alias',football_season_key=sk,name=name,club_key=ck)
+        for fid,wid,sid,external,sport,h,a in [(100,10,1,1000,3000,home,away),(101,10,1,1001,3001,away,home),(200,20,2,2000,4000,home,away)]:
+            ps = []
+            for provider, ext, hc, ac, season, competition in [
+                ('football-data',external,10 if h==home else 20,20 if a==away else 10,100+sid,'PL'),
+                ('sportmonks',sport,30 if h==home else 40,40 if a==away else 30,300+sid,8)]:
+                ps.append(dict(provider=provider,external_id=str(ext),home_external_id=str(hc),away_external_id=str(ac),
+                               external_season_id=str(season),external_competition_id=str(competition)))
+            add('fixture',id=fid,week_id=wid,football_season_key=digest(str(sid)),round=1,
+                home='Home FC' if h==home else 'Away FC',away='Away FC' if a==away else 'Home FC',
+                home_club_key=h,away_club_key=a,external_match_id=external,providers=ps)
+        add('recipient',recipient_kind='recap',email_normalized='synthetic@example.invalid',enabled=1,user_id=None)
+        doc = dict(schema_version=2, source=inspector.inspect_database(self.path)['source'],
+                   evidence=[dict(kind=k,sha256=v) for k,v in evidence.items()],mappings=rows)
+        return resign(doc)
+
+    def plan(self):
+        from foundation_backfill_planner import plan_database
+        return plan_database(self.path,resign(self.doc),inspector.inspect_database(self.path))
+
+    def change(self, sql, args=()):
+        with closing(sqlite3.connect(self.path)) as db, db: db.execute(sql,args)
+        self.doc['source'] = inspector.inspect_database(self.path)['source']
+
+    def row(self, kind):
+        return next(r for r in self.doc['mappings'] if r['kind']==kind)
+
+    def test_happy_path_multi_season(self):
+        plan=self.plan()
+        self.assertEqual(plan['blockers'],[])
+        self.assertEqual(plan['status'],'planned')
+        self.assertEqual(len(plan['new_rows']['football_seasons']),2)
+        self.assertEqual(len(plan['nullable_updates']['fixtures']),3)
+        self.assertFalse(plan['execution_authorized'])
+
+    def test_repeat_and_permuted_input_byte_stability(self):
+        first=canonical_json(self.plan())
+        self.doc['mappings'].reverse()
+        self.doc['evidence'].reverse()
+        for row in self.doc['mappings']:
+            if 'providers' in row: row['providers'].reverse()
+        self.assertEqual(first,canonical_json(self.plan()))
+        self.assertEqual(first,canonical_json(self.plan()))
+
+    def test_proposed_ids_follow_numeric_player_order(self):
+        users=self.plan()['proposed_ids']['users']
+        self.assertEqual(users,{'2':1,'9':2,'15':3})
+
+    def test_player_name_collision_never_merges_users(self):
+        self.change("UPDATE players SET name='alice' WHERE id=2")
+        p=self.plan()
+        self.assertIn('MEMBERSHIP_NAME_COLLISION',codes(p))
+        self.assertEqual(len(p['new_rows']['users']),3)
+        self.assertEqual(len({r['values']['id'] for r in p['new_rows']['users']}),3)
+
+    def test_league_one_conflict(self):
+        self.change("INSERT INTO leagues(id,slug,name,created_at,updated_at) VALUES(1,'wrong','Wrong','now','now')")
+        self.assertIn('CONFLICTING_LEAGUE1_IDENTITY',codes(self.plan()))
+
+    def test_verified_season_not_year_identifier(self):
+        p=self.plan()
+        self.assertEqual({r['values']['external_season_id'] for r in p['new_rows']['football_season_provider_links']},{'101','102','301','302'})
+
+    def test_year_cannot_be_provider_season_id(self):
+        r=self.row('football_season')
+        r['providers'][0]['external_id']=str(r['start_year'])
+        self.assertIn('YEAR_IS_NOT_PROVIDER_SEASON_ID',codes(self.plan()))
+
+    def test_conflicting_season_evidence(self):
+        self.row('season')['api_season_year']=2030
+        self.assertIn('INCONSISTENT_SEASON_EVIDENCE',codes(self.plan()))
+
+    def test_week_matchweek_mismatch(self):
+        self.row('week')['number']=2
+        self.assertIn('INCONSISTENT_SEASON_ROUND_EVIDENCE',codes(self.plan()))
+
+    def test_alias_ambiguity(self):
+        self.doc['mappings'].append(deepcopy(self.row('alias')))
+        self.assertIn('AMBIGUOUS_CLUB_ALIAS',codes(self.plan()))
+
+    def test_provider_id_conflict(self):
+        self.row('fixture')['providers'][0]['external_id']='bad'
+        self.assertIn('CONFLICTING_PROVIDER_IDS',codes(self.plan()))
+
+    def test_provider_participants_reversed(self):
+        p=self.row('fixture')['providers'][0]
+        p['home_external_id'],p['away_external_id']=p['away_external_id'],p['home_external_id']
+        self.assertIn('CONFLICTING_PROVIDER_PARTICIPANT_OR_SEASON',codes(self.plan()))
+
+    def test_home_away_reversal(self):
+        r=self.row('fixture')
+        r['home'],r['away']=r['away'],r['home']
+        self.assertIn('FIXTURE_ORIENTATION_CONFLICT',codes(self.plan()))
+
+    def test_exact_pick_and_preference_mapping(self):
+        p=self.plan()
+        self.assertEqual(len(p['nullable_updates']['picks']),2)
+        self.assertEqual(len(p['nullable_updates']['auto_draft_preferences']),1)
+
+    def test_draw_and_unknown_are_blockers(self):
+        for team in ['Draw','HOME FC','Unknown']:
+            with self.subTest(team=team):
+                self.change('UPDATE picks SET team=? WHERE id=1',(team,))
+                self.assertIn('UNRESOLVED_PICK_PARTICIPANT',codes(self.plan()))
+
+    def test_unknown_preference_blocked(self):
+        self.change("UPDATE auto_draft_preferences SET team='Draw'")
+        self.assertIn('UNRESOLVED_PICK_PARTICIPANT',codes(self.plan()))
+
+    def test_cross_week_pick_relationship(self):
+        self.change('UPDATE picks SET fixture_id=200 WHERE id=1')
+        self.assertIn('CONFLICTING_PICK_RELATIONSHIP',codes(self.plan()))
+
+    def test_nonparticipant_player_blocked(self):
+        self.change('UPDATE picks SET player_id=15 WHERE id=1')
+        self.assertIn('CONFLICTING_PICK_RELATIONSHIP',codes(self.plan()))
+
+    def test_invalid_first_picker(self):
+        self.change('UPDATE matchups SET first_picker_id=15 WHERE id=1')
+        self.assertIn('INVALID_MATCHUP_RELATIONSHIP',codes(self.plan()))
+
+    def test_original_slate_ids_and_order(self):
+        rows=[r['values'] for r in self.plan()['new_rows']['league_week_fixtures']]
+        self.assertEqual({(r['fixture_id'],r['display_order']) for r in rows},{(100,7),(101,9),(200,1)})
+
+    def test_invalid_and_duplicate_slate_order(self):
+        with closing(sqlite3.connect(self.path)) as db, db:
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute('UPDATE fixtures SET match_number=7 WHERE id=101')
+        self.change('UPDATE fixtures SET match_number=0 WHERE id=101')
+        self.assertIn('INVALID_OR_DUPLICATE_SLATE_ORDER',codes(self.plan()))
+
+    def test_observed_roster_no_global_fallback(self):
+        rows=[r['values'] for r in self.plan()['new_rows']['league_season_memberships']]
+        self.assertEqual({(r['season_id'],r['membership_id']) for r in rows},{(1,2),(1,9),(2,2),(2,9)})
+
+    def test_empty_season_unresolved(self):
+        self.change("INSERT INTO seasons(id,code,name,is_active,is_archived) VALUES(3,'empty','Empty',0,0)")
+        self.assertIn('EMPTY_SEASON_ROSTER_UNRESOLVED',codes(self.plan()))
+
+    def test_completed_task_preserved(self):
+        job=self.plan()['new_rows']['football_refresh_jobs'][0]['values']
+        self.assertEqual((job['status'],job['created_at'],job['completed_at']),('completed','2026-01-01','2026-01-02'))
+
+    def test_running_uncertain_and_stale_claims_block(self):
+        for status,claim in [('running',None),('uncertain',None),('completed','stale-claim')]:
+            with self.subTest(status=status):
+                self.change('UPDATE pick_insight_refreshes SET status=?,claim_token=?',(status,claim))
+                self.assertIn('UNSUPPORTED_OR_IN_FLIGHT_TASK',codes(self.plan()))
+
+    def test_task_season_conflict(self):
+        self.change('UPDATE pick_insight_refreshes SET season_id=2')
+        self.assertIn('TASK_SEASON_WEEK_CONFLICT',codes(self.plan()))
+
+    def test_explicit_recipient_no_association(self):
+        r=self.plan()['new_rows']['league_notification_recipients'][0]['values']
+        self.assertEqual((r['league_id'],r['email_normalized'],r['user_id']),(1,'synthetic@example.invalid',None))
+
+    def test_recipient_guessing_refused(self):
+        self.row('recipient')['user_id']=2
+        with self.assertRaisesRegex(ManifestError,'RECIPIENT_IDENTITY_UNSUPPORTED'): self.plan()
+
+    def test_recipient_permission_not_inferred(self):
+        self.doc['mappings']=[r for r in self.doc['mappings'] if r['kind']!='recipient']
+        self.assertIn('RECIPIENT_PERMISSION_MANIFEST_REQUIRED',codes(self.plan()))
+
+    def test_unknown_identity_and_permission_null(self):
+        p=self.plan()
+        for r in p['new_rows']['users']:
+            self.assertEqual(r['values']['status'],'unclaimed')
+            for field in ('email','email_normalized','email_verified_at','favorite_club_id'): self.assertIsNone(r['values'][field])
+        for r in p['nullable_updates']['players']:
+            self.assertFalse(set(r['values']) & {'role','recap_opt_in','status'})
+        self.assertTrue(p['intentionally_null'])
+
+    def test_stable_row_write_counts(self):
+        p=self.plan()
+        self.assertEqual(p['expected_write_counts']['updates']['players'],3)
+        self.assertEqual(p['expected_write_counts']['inserts']['league_season_memberships'],4)
+        self.assertEqual(p['expected_write_counts'],self.plan()['expected_write_counts'])
+
+    def test_no_writes_or_external_side_effects(self):
+        before=self.path.read_bytes()
+        with patch.object(stage1,'apply_database',side_effect=AssertionError('apply forbidden')), \
+             patch.object(socket.socket,'connect',side_effect=AssertionError('network forbidden')), \
+             patch.object(subprocess,'Popen',side_effect=AssertionError('process forbidden')):
+            p=self.plan()
+        self.assertEqual(before,self.path.read_bytes())
+        self.assertNotIn('schema_migrations',p['new_rows'])
+        self.assertNotIn('results',p['nullable_updates'])
+
+    def test_stale_fingerprint_refused(self):
+        from foundation_backfill_planner import plan_database
+        report=inspector.inspect_database(self.path)
+        self.change("UPDATE players SET name='Changed' WHERE id=9")
+        with self.assertRaisesRegex(inspector.InspectionError,'SOURCE_FINGERPRINT_MISMATCH'):
+            plan_database(self.path,resign(self.doc),report)
+
+    def test_supported_event_mapping(self):
+        self.assertEqual(len(self.plan()['nullable_updates']['match_events']),1)
+
+    def test_event_provider_conflict(self):
+        self.change('UPDATE match_events SET team_provider_id=40')
+        self.assertIn('EVENT_CLUB_CONFLICT',codes(self.plan()))
+
+    def test_event_without_team_evidence_left_null(self):
+        self.change('UPDATE match_events SET side=NULL,team_name=NULL,team_provider_id=NULL')
+        p=self.plan()
+        self.assertNotIn('match_events',p['nullable_updates'])
+        self.assertTrue(any(r['table']=='match_events' for r in p['intentionally_null']))
+
+    def test_cache_provider_conflict(self):
+        self.change('UPDATE club_season_enrichment SET sportmonks_season_id=999')
+        self.assertIn('CONFLICTING_PROVIDER_IDS',codes(self.plan()))
+
+    def test_cli_plan_redacts_private_values_and_has_no_apply(self):
+        manifest=Path(self.temp.name)/'manifest.json'
+        manifest.write_text(canonical_json(self.doc))
+        output=io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(['plan','--database',str(self.path),'--manifest',str(manifest)]),0)
+        self.assertNotIn('synthetic@example.invalid',output.getvalue())
+        self.assertNotIn('Alice',output.getvalue())
+        self.assertFalse(json.loads(output.getvalue())['execution_authorized'])
+        with redirect_stdout(io.StringIO()),self.assertRaises(SystemExit): main(['apply'])
+
+    def test_canonical_task_collision_blocks_even_with_completed_receipts(self):
+        from foundation_migrations import digest
+        sk=digest('1')
+        self.change('UPDATE seasons SET api_season_year=2025 WHERE id=2')
+        self.change("INSERT INTO pick_insight_refreshes(week_id,season_id,status,created_at,completed_at) VALUES(20,2,'completed','2026-02-01','2026-02-02')")
+        for row in self.doc['mappings']:
+            if row['kind']=='season' and row['id']==2:
+                row['football_season_key']=sk
+                row['api_season_year']=2025
+            if row['kind']=='week' and row['id']==20: row['football_season_key']=sk
+            if row['kind']=='fixture' and row['id']==200:
+                row['football_season_key']=sk
+                for p in row['providers']:
+                    p['external_season_id']='101' if p['provider']=='football-data' else '301'
+        self.assertIn('CANONICAL_JOB_COLLISION',codes(self.plan()))
+
+    def test_missing_reviewed_policy_and_evidence_block(self):
+        self.doc['mappings']=[r for r in self.doc['mappings'] if r['kind']!='policy']
+        self.row('season')['evidence']=[]
+        p=self.plan()
+        self.assertIn('REVIEWED_POLICY_REQUIRED',codes(p))
+        self.assertIn('MISSING_OR_DUPLICATE_EVIDENCE',codes(p))
+        self.assertFalse(p['counts_are_complete'])
+        self.assertTrue(all(r['classification']=='unresolved / blocker' for rows in p['new_rows'].values() for r in rows))
+
+    def test_missing_fixture_and_alias_are_review_requirements(self):
+        self.doc['mappings']=[r for r in self.doc['mappings'] if not (r['kind']=='fixture' and r['id']==100)]
+        p=self.plan()
+        self.assertIn('FIXTURE_MAPPING_REQUIRED',codes(p))
+        self.assertTrue(any(b['classification']=='requires reviewed manifest evidence' for b in p['blockers']))
+
+    def test_duplicate_manifest_fixture_refused(self):
+        self.doc['mappings'].append(deepcopy(self.row('fixture')))
+        self.assertIn('DUPLICATE_CANONICAL_MAPPING',codes(self.plan()))
+
+    def test_v2_unknown_fields_and_wrong_evidence_type_refused(self):
+        doc=deepcopy(self.doc)
+        self.row('recipient')['guessed_player_name']='Bob'
+        with self.assertRaises(ManifestError): self.plan()
+        self.doc=doc
+        self.doc['evidence'][0]['kind']=[]
+        with self.assertRaises(ManifestError): self.plan()
+
+    def test_v2_checksum_verified(self):
+        from foundation_backfill_planner import plan_database
+        self.doc['checksum']='0'*64
+        with self.assertRaisesRegex(ManifestError,'MANIFEST_CHECKSUM_MISMATCH'):
+            plan_database(self.path,self.doc,inspector.inspect_database(self.path))
+
+    def test_policy_cannot_enable_sync_or_grant_admin(self):
+        for field in ('sync_enabled','user_is_platform_admin'):
+            with self.subTest(field=field):
+                self.row('policy')[field]=1
+                with self.assertRaises(ManifestError): self.plan()
+                self.row('policy')[field]=0
+
+    def test_manifest_source_mismatch_refused(self):
+        self.doc['source']['data_sha256']='0'*64
+        with self.assertRaisesRegex(inspector.InspectionError,'SOURCE_FINGERPRINT_MISMATCH'): self.plan()
+
+    def test_all_proposals_have_provenance_and_allowed_targets(self):
+        from foundation_schema import ADDITIONS
+        p=self.plan()
+        for table,rows in p['nullable_updates'].items():
+            for row in rows:
+                self.assertTrue(set(row['values']) <= set(ADDITIONS[table]))
+                self.assertTrue(row['provenance'])
+        for table,rows in p['new_rows'].items():
+            self.assertNotIn(table,{'schema_migrations','user_identities','league_invitations'})
+            for row in rows: self.assertTrue(row['provenance'])
+
+    def test_database_and_stage1_receipt_unchanged(self):
+        before=inspector.inspect_database(self.path)
+        self.plan()
+        self.assertEqual(before,inspector.inspect_database(self.path))
+
+
+if __name__ == '__main__':
     unittest.main()

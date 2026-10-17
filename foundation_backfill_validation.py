@@ -229,33 +229,38 @@ def inspect_database(path):
     try:
         with closing(connect_readonly(path)) as db:
             db.execute("BEGIN")
-            columns = _validate_baseline(db)
-            issues = []
-
-            def block(code, **details):
-                issues.append({"label": "Unresolved", "code": code, **details})
-
-            inventory = _inventory(db, columns)
-            population = _population(db, block)
-            evidence = _evidence(db, block)
-            _task_blockers(db, columns, block)
-            if db.execute("SELECT 1 FROM sqlite_schema WHERE name='sqlite_sequence'").fetchone():
-                columns = dict(columns, sqlite_sequence=("name", "seq"))
-            full = row_manifest(db, columns)
-            protected = {t: tuple(c for c in names if c not in ADDITIONS.get(t, {}))
-                         for t, names in columns.items() if t not in FOUNDATION}
-            hashes = row_manifest(db, protected)
-            return {"report_version": 1, "label": "Observed", "stage1_valid": True,
-                    "status": "blocked" if issues else "inspected", "execution_authorized": False,
-                    "source": {"schema_sha256": digest(schema(db)), "data_sha256": digest(full)},
-                    "stage1_checksum": migration_checksum(), "inventory": inventory,
-                    "table_fingerprints": {_token(t, KNOWN_TABLES): v for t, v in sorted(full.items())},
-                    "protected_fingerprints": {_token(t, KNOWN_TABLES): v for t, v in sorted(hashes.items())},
-                    "population": population, "evidence": evidence,
-                    "limitations": [{"label": "Inferred", "code": "EVIDENCE_PRESENCE_IS_NOT_IDENTITY_PROOF"},
-                                    {"label": "Unresolved", "code": "SEPARATE_STORES_NOT_INSPECTED"}],
-                    "blockers": sorted(issues, key=lambda r: (r["code"], digest(r)))}
+            return inspect_connection(db)
     except InspectionError:
         raise
     except (sqlite3.Error, OSError, ValueError, TypeError):
         raise InspectionError("DATABASE_INSPECTION_REFUSED") from None
+
+
+def inspect_connection(db):
+    """Inspect an already-reserved read-only snapshot; caller owns connection."""
+    columns = _validate_baseline(db)
+    issues = []
+
+    def block(code, **details):
+        issues.append({"label": "Unresolved", "code": code, **details})
+
+    inventory = _inventory(db, columns)
+    population = _population(db, block)
+    evidence = _evidence(db, block)
+    _task_blockers(db, columns, block)
+    if db.execute("SELECT 1 FROM sqlite_schema WHERE name='sqlite_sequence'").fetchone():
+        columns = dict(columns, sqlite_sequence=("name", "seq"))
+    full = row_manifest(db, columns)
+    protected = {t: tuple(c for c in names if c not in ADDITIONS.get(t, {}))
+                 for t, names in columns.items() if t not in FOUNDATION}
+    hashes = row_manifest(db, protected)
+    return {"report_version": 1, "label": "Observed", "stage1_valid": True,
+            "status": "blocked" if issues else "inspected", "execution_authorized": False,
+            "source": {"schema_sha256": digest(schema(db)), "data_sha256": digest(full)},
+            "stage1_checksum": migration_checksum(), "inventory": inventory,
+            "table_fingerprints": {_token(t, KNOWN_TABLES): v for t, v in sorted(full.items())},
+            "protected_fingerprints": {_token(t, KNOWN_TABLES): v for t, v in sorted(hashes.items())},
+            "population": population, "evidence": evidence,
+            "limitations": [{"label": "Inferred", "code": "EVIDENCE_PRESENCE_IS_NOT_IDENTITY_PROOF"},
+                            {"label": "Unresolved", "code": "SEPARATE_STORES_NOT_INSPECTED"}],
+            "blockers": sorted(issues, key=lambda r: (r["code"], digest(r)))}

@@ -77,7 +77,7 @@ def _unique_object(pairs):
     return result
 
 
-def load_manifest(path):
+def read_manifest(path):
     try:
         with Path(path).open("rb") as stream:
             raw = stream.read(MAX_BYTES + 1)
@@ -88,11 +88,17 @@ def load_manifest(path):
         raise
     except (OSError, ValueError, TypeError, RecursionError):
         raise ManifestError("MANIFEST_UNREADABLE_OR_INVALID_JSON") from None
-    return validate_manifest(document)
+    return document
+
+
+def load_manifest(path):
+    return validate_manifest(read_manifest(path))
 
 
 def validate_manifest(document):
     """Validate shape, checksums and internal evidence consistency, never readiness."""
+    if type(document) is dict and document.get("schema_version") == 2:
+        return validate_planning_manifest(document)
     _fields(document, {"schema_version", "source", "evidence", "mappings", "checksum"})
     _need(type(document["schema_version"]) is int and document["schema_version"] == VERSION,
           "UNSUPPORTED_MANIFEST_VERSION")
@@ -219,3 +225,106 @@ def validate_manifest(document):
             "execution_authorized": False, "checksum": document["checksum"],
             "mapping_counts": {k: len(v) for k, v in sorted(indexed.items())},
             "blockers": [{"label": "Unresolved", "code": c} for c in sorted(blockers)]}
+
+# Version 2 contains private reviewed planning values. Never emit these in CLI
+# diagnostics. Evidence hashes refer to separately reviewed artifacts, not proof
+# that an arbitrary submitted assertion is true. V1 remains evidence-only.
+PLAN_FIELDS = {
+    'policy': {'timestamp', 'slug', 'status', 'timezone', 'correspondent_enabled', 'user_is_platform_admin', 'club_is_active', 'sync_enabled'},
+    'competition': {'key', 'code', 'name', 'providers'},
+    'football_season': {'key', 'competition_key', 'name', 'start_year', 'providers'},
+    'club': {'key', 'name', 'providers'},
+    'season': {'id', 'football_season_key', 'api_competition_code', 'api_season_year'},
+    'week': {'id', 'season_id', 'football_season_key', 'number'},
+    'fixture': {'id', 'week_id', 'football_season_key', 'round', 'home', 'away',
+                'home_club_key', 'away_club_key', 'external_match_id', 'providers'},
+    'alias': {'football_season_key', 'name', 'club_key'},
+    'recipient': {'recipient_kind', 'email_normalized', 'enabled', 'user_id'},
+}
+PLAN_EVIDENCE = {'policy': 'product_decision', 'competition': 'season_provider',
+                 'football_season': 'season_provider', 'club': 'reviewed_alias',
+                 'season': 'season_provider', 'week': 'fixture_provider',
+                 'fixture': 'fixture_provider', 'alias': 'reviewed_alias', 'recipient': 'permission'}
+
+
+def validate_planning_manifest(document):
+    """Strict private v2 shape; source binding/domain resolution happens in planner.
+
+    No identity associations or elevated permissions supported in this slice.
+    Explicit reviewed policy is required even for nonprivileged required values.
+    """
+    from datetime import datetime
+    _fields(document, {'schema_version', 'source', 'evidence', 'mappings', 'checksum'})
+    _need(type(document['schema_version']) is int and document['schema_version'] == 2)
+    _fields(document['source'], {'schema_sha256', 'data_sha256'})
+    _need(all(_hash(v) for v in document['source'].values()))
+    _need(type(document['evidence']) is list and type(document['mappings']) is list)
+    _need(len(document['evidence']) <= 10000 and len(document['mappings']) <= 10000, 'MANIFEST_TOO_LARGE')
+    evidence = {}
+    blockers = set()
+    for e in document['evidence']:
+        _fields(e, {'sha256', 'kind'})
+        _need(_hash(e['sha256']) and type(e['kind']) is str and e['kind'] in EVIDENCE_KINDS)
+        if e['sha256'] in evidence: blockers.add('DUPLICATE_OR_CONFLICTING_EVIDENCE')
+        evidence[e['sha256']] = min(evidence.get(e['sha256'], e['kind']), e['kind'])
+    counts = {}
+    for row in document['mappings']:
+        _need(type(row) is dict and type(row.get('kind')) is str and row['kind'] in PLAN_FIELDS)
+        kind = row['kind']
+        _fields(row, PLAN_FIELDS[kind] | {'kind', 'evidence'})
+        refs = row['evidence']
+        _need(type(refs) is list and all(_hash(r) for r in refs))
+        if not refs or len(set(refs)) != len(refs) or any(r not in evidence for r in refs):
+            blockers.add('MISSING_OR_DUPLICATE_EVIDENCE')
+        if PLAN_EVIDENCE[kind] not in {evidence.get(r) for r in refs}:
+            blockers.add('REVIEWED_EVIDENCE_KIND_REQUIRED')
+        counts[kind] = counts.get(kind, 0) + 1
+        for field in PLAN_FIELDS[kind]:
+            value = row[field]
+            if field == 'providers':
+                _need(type(value) is list)
+                fields = {'provider', 'external_id'}
+                if kind == 'fixture':
+                    fields |= {'home_external_id', 'away_external_id', 'external_season_id', 'external_competition_id'}
+                for provider in value:
+                    _fields(provider, fields)
+                    _need(all(type(v) is str and bool(v.strip()) for v in provider.values()))
+            elif field == 'user_id':
+                _need(value is None, 'RECIPIENT_IDENTITY_UNSUPPORTED_IN_V2')
+            elif field == 'user_is_platform_admin':
+                _need(type(value) is int and value == 0, 'PRIVILEGE_POLICY_UNSUPPORTED')
+            elif field == 'sync_enabled':
+                _need(type(value) is int and value == 0, 'SYNC_ENABLEMENT_UNSUPPORTED')
+            elif field in {'enabled', 'correspondent_enabled', 'club_is_active'}:
+                _need(type(value) is int and value in (0, 1))
+            elif field in {'id', 'season_id', 'week_id', 'number', 'round'}:
+                _need(type(value) is int and value > 0)
+            elif field in {'start_year', 'api_season_year', 'external_match_id'}:
+                _need(value is None or (type(value) is int and value > 0))
+            elif field == 'api_competition_code':
+                _need(value is None or (type(value) is str and bool(value.strip())))
+            elif field == 'key' or field.endswith('_key'):
+                _need(_hash(value))
+            else:
+                _need(type(value) is str and bool(value.strip()))
+        if kind == 'policy':
+            _need(row['slug'] == row['slug'].strip().lower())
+            _need(row['status'] in {'setup', 'active', 'archived'})
+            try:
+                instant = datetime.fromisoformat(row['timestamp'])
+                _need(instant.tzinfo is not None, 'TIMESTAMP_TIMEZONE_REQUIRED')
+            except ValueError:
+                raise ManifestError('INVALID_TIMESTAMP') from None
+        if kind == 'recipient':
+            _need(row['recipient_kind'] in {'recap', 'admin_alert'})
+            email = row['email_normalized']
+            _need(email == email.strip().lower() and email.count('@') == 1 and
+                  all(email.split('@')) and not any(c.isspace() for c in email), 'INVALID_RECIPIENT')
+    if counts.get('policy') != 1: blockers.add('REVIEWED_POLICY_REQUIRED')
+    if not counts.get('recipient'): blockers.add('RECIPIENT_PERMISSION_MANIFEST_REQUIRED')
+    _need(_hash(document['checksum']) and document['checksum'] == manifest_checksum(document),
+          'MANIFEST_CHECKSUM_MISMATCH')
+    return {'schema_version': 2, 'status': 'blocked' if blockers else 'valid',
+            'scope': 'structure_and_internal_consistency_only', 'execution_authorized': False,
+            'checksum': document['checksum'], 'mapping_counts': counts,
+            'blockers': [{'label': 'Unresolved', 'code': c} for c in sorted(blockers)]}
