@@ -412,9 +412,16 @@ class PlannerTests(unittest.TestCase):
     """Reviewed synthetic v2 evidence, never provider requests or real snapshots."""
     def setUp(self):
         from test_foundation_migrations import LEGACY_DDL
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.path = Path(self.temp.name) / 'planner-synthetic.db'
+        if getattr(self, 'use_synthetic_writer', False):
+            from foundation_backfill_synthetic import synthetic_database
+            from types import SimpleNamespace
+            self.target = self.enterContext(synthetic_database(acknowledge_disposable=True))
+            self.path = self.target.path
+            self.temp = SimpleNamespace(name=str(self.path.parent))
+        else:
+            self.temp = tempfile.TemporaryDirectory()
+            self.addCleanup(self.temp.cleanup)
+            self.path = Path(self.temp.name) / 'planner-synthetic.db'
         with closing(sqlite3.connect(self.path)) as db, db:
             db.executescript(LEGACY_DDL)
             db.executescript("""
@@ -438,6 +445,9 @@ class PlannerTests(unittest.TestCase):
                 INSERT INTO match_events(id,fixture_id,provider,external_event_id,event_type,side,team_provider_id,team_name,sort_order,is_active,created_at,updated_at,revisions)
                     VALUES(1,100,'sportmonks','event-1','goal','home',30,'Home FC',1,1,'2026-01-01','2026-01-01','[]');
             """)
+            if getattr(self, 'use_synthetic_writer', False):
+                self.populate_preserved_history(db)
+                db.executescript(getattr(self, 'extra_schema', ''))
         before = stage1.inspect_database(self.path)
         stage1.apply_database(self.path, expected_schema=before['schema_sha256'], backup=Path(self.temp.name)/'before.db', authorized=True)
         self.doc = self.manifest()
@@ -764,6 +774,427 @@ class PlannerTests(unittest.TestCase):
         before=inspector.inspect_database(self.path)
         self.plan()
         self.assertEqual(before,inspector.inspect_database(self.path))
+
+class SyntheticApplyTests(unittest.TestCase):
+    use_synthetic_writer = True
+    setUp = PlannerTests.setUp
+    manifest = PlannerTests.manifest
+    row = PlannerTests.row
+    plan = PlannerTests.plan
+    change = PlannerTests.change
+    extra_schema = """
+        CREATE TABLE preserved_reference(id INTEGER PRIMARY KEY AUTOINCREMENT, provider_id TEXT, payload BLOB);
+        INSERT INTO preserved_reference(provider_id,payload) VALUES('synthetic-event',X'0001FF');
+        CREATE TABLE brief_batches(id INTEGER PRIMARY KEY, context_json TEXT, delivery_marker TEXT);
+        INSERT INTO brief_batches VALUES(1,'{ "frozen":  true }','synthetic-marker');
+        CREATE INDEX extra_preservation_index ON preserved_reference(provider_id);
+        CREATE VIEW extra_preservation_view AS SELECT id,payload FROM preserved_reference;
+        CREATE TRIGGER extra_preservation_trigger AFTER UPDATE OF name ON players
+        WHEN OLD.name <> NEW.name BEGIN
+            INSERT INTO preserved_reference(provider_id,payload) VALUES('name-changed',X'FF');
+        END;
+    """
+
+    def populate_preserved_history(self, db):
+        """Populate every operational family with synthetic, terminal receipts."""
+        overrides = {
+            'weekly_recaps': dict(id=1,week_id=10,status='ready',context_json='{ "keep":  true }',body_markdown='Synthetic recap'),
+            'correspondent_sources': dict(id=1,week_id=10,fixture_id=100,submitted_by_player_id=9),
+            'correspondent_source_classifications': dict(id=1,source_id=1),
+            'correspondent_classification_jobs': dict(id=1,season_id=1,week_id=10,status='completed'),
+            'correspondent_classification_job_items': dict(id=1,job_id=1,source_id=1,status='imported'),
+            'correspondent_x_collection_states': dict(id=1,week_id=10,status='completed'),
+            'correspondent_x_page_receipts': dict(id=1,collection_id=1,claim_token='synthetic-paid-page'),
+            'correspondent_email_deliveries': dict(id=1,recap_id=1,status='sent',gmail_message_id='synthetic-ack',recipients_json='["historical@example.invalid"]'),
+            'correspondent_notifications': dict(id=1,week_id=10,status='sent',gmail_message_id='synthetic-admin-ack'),
+            'recap_source_usages': dict(id=1,recap_id=1,source_id=1),
+            'weekly_recap_selections': dict(id=1,week_id=10,recap_id=1),
+            'live_fixture_states': dict(fixture_id=100,provider='sportmonks',state='finished'),
+            'auto_draft_settings': dict(id=1,matchup_id=1,player_id=9,enabled=1),
+        }
+        for table, values in overrides.items():
+            for _, name, kind, required, default, pk in db.execute(f'PRAGMA table_info({table})'):
+                if required and name not in values:
+                    values[name] = 1 if kind in {'INTEGER','BOOLEAN'} else '2026-01-01' if kind=='DATETIME' else 'synthetic-'+name
+            names=tuple(values)
+            db.execute(f'INSERT INTO {table} ({",".join(names)}) VALUES ({",".join("?" for _ in names)})',tuple(values[n] for n in names))
+        db.execute("INSERT INTO results(id,fixture_id,outcome,home_score,away_score,source) VALUES(2,101,'Draw',1,1,'manual'),(3,200,'Home',2,0,'api')")
+        db.execute("INSERT INTO picks(id,matchup_id,player_id,fixture_id,team) VALUES(3,1,2,101,'Away FC')")
+
+    def apply(self, plan=None, **kwargs):
+        from foundation_backfill_synthetic import apply_synthetic
+        from foundation_migrations import digest
+        plan = self.plan() if plan is None else plan
+        return apply_synthetic(self.target, database_path=self.path, manifest=self.doc,
+                               plan=plan, expected_plan_sha256=digest(canonical_json(plan)), **kwargs)
+
+    def snapshot(self):
+        return inspector.inspect_database(self.path)
+
+    def test_full_happy_path_counts_ids_integrity_and_receipt(self):
+        from foundation_migrations import digest
+        plan=self.plan()
+        self.assertEqual(plan['blockers'],[])
+        before=self.snapshot()
+        result=self.apply(plan)
+        self.assertEqual(result['status'],'applied')
+        self.assertEqual(result['write_counts'],plan['expected_write_counts'])
+        self.assertEqual(result['plan_sha256'],digest(canonical_json(plan)))
+        after=self.snapshot()
+        self.assertEqual(before['protected_fingerprints'],after['protected_fingerprints'])
+        self.assertEqual(before['source']['schema_sha256'],after['source']['schema_sha256'])
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('PRAGMA foreign_key_check').fetchall(),[])
+            self.assertEqual(db.execute('PRAGMA integrity_check').fetchall(),[('ok',)])
+            self.assertEqual(db.execute('SELECT id,user_id FROM players ORDER BY id').fetchall(),[(2,1),(9,2),(15,3)])
+            self.assertEqual(db.execute('SELECT version FROM schema_migrations').fetchall(),[('private_beta_001_additive',)])
+            self.assertEqual(db.execute('SELECT id FROM leagues').fetchall(),[(1,)])
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM user_identities').fetchone(),(0,))
+
+    def test_exact_idempotent_rerun_after_reopen(self):
+        plan=self.plan()
+        first=self.apply(plan)
+        after=self.snapshot()
+        second=self.apply(plan)
+        third=self.apply(plan)
+        self.assertEqual(second,third)
+        self.assertEqual(second['status'],'already_matches')
+        self.assertEqual(second['write_counts'],{'inserts':{},'updates':{}})
+        self.assertEqual(first['post_state'],second['post_state'])
+        self.assertEqual(after,self.snapshot())
+
+    def test_failure_at_each_phase_rolls_back_all_state(self):
+        from foundation_backfill_synthetic import FAILURE_POINTS, SyntheticApplyError
+        plan=self.plan()
+        before=self.snapshot()
+        for phase in sorted(FAILURE_POINTS):
+            with self.subTest(phase=phase):
+                with self.assertRaisesRegex(SyntheticApplyError,'INJECTED_FAILURE'):
+                    self.apply(plan,fail_at=phase)
+                self.assertEqual(before,self.snapshot())
+        self.assertEqual(self.apply(plan)['status'],'applied')
+
+    def test_protected_legacy_change_refused(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        with closing(sqlite3.connect(self.path)) as db,db:
+            db.execute("UPDATE results SET outcome='Away' WHERE id=1")
+        before=self.snapshot()
+        with self.assertRaisesRegex(SyntheticApplyError,'STALE_SOURCE_FINGERPRINT'): self.apply(plan)
+        self.assertEqual(before,self.snapshot())
+
+    def test_partial_and_conflicting_population_refused(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        with closing(sqlite3.connect(self.path)) as db,db:
+            db.execute("INSERT INTO leagues(id,slug,name,created_at,updated_at) VALUES(1,'conflict','Wrong','now','now')")
+        before=self.snapshot()
+        with self.assertRaisesRegex(SyntheticApplyError,'PARTIAL_OR_CONFLICTING_POPULATION'): self.apply(plan)
+        self.assertEqual(before,self.snapshot())
+
+    def test_identical_single_row_is_still_partial_not_resumed(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        row=plan['new_rows']['competitions'][0]['values']
+        with closing(sqlite3.connect(self.path)) as db,db:
+            db.execute('INSERT INTO competitions(id,code,name,country_code) VALUES(?,?,?,?)',tuple(row[k] for k in ('id','code','name','country_code')))
+        before=self.snapshot()
+        with self.assertRaisesRegex(SyntheticApplyError,'PARTIAL_OR_CONFLICTING_POPULATION'): self.apply(plan)
+        self.assertEqual(before,self.snapshot())
+
+    def test_conflicting_nonnull_column_refused(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        with closing(sqlite3.connect(self.path)) as db,db: db.execute("UPDATE players SET role='commissioner' WHERE id=2")
+        before=self.snapshot()
+        with self.assertRaisesRegex(SyntheticApplyError,'PARTIAL_OR_CONFLICTING_POPULATION'): self.apply(plan)
+        self.assertEqual(before,self.snapshot())
+
+    def test_exact_poststate_tampering_refused(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        self.apply(plan)
+        with closing(sqlite3.connect(self.path)) as db,db: db.execute("UPDATE users SET created_at='changed' WHERE id=1")
+        before=self.snapshot()
+        with self.assertRaisesRegex(SyntheticApplyError,'PARTIAL_OR_CONFLICTING_POPULATION'): self.apply(plan)
+        self.assertEqual(before,self.snapshot())
+
+    def test_manifest_change_and_plan_identity_mismatch_refused(self):
+        from foundation_backfill_synthetic import apply_synthetic,SyntheticApplyError
+        plan=self.plan()
+        before=self.snapshot()
+        with self.assertRaisesRegex(SyntheticApplyError,'PLAN_IDENTITY_MISMATCH'):
+            apply_synthetic(self.target,database_path=self.path,manifest=self.doc,plan=plan,expected_plan_sha256='0'*64)
+        self.row('policy')['slug']='changed-reviewed-policy'
+        resign(self.doc)
+        with self.assertRaisesRegex(SyntheticApplyError,'MANIFEST_IDENTITY_MISMATCH'): self.apply(plan)
+        self.assertEqual(before,self.snapshot())
+
+    def test_forged_plan_with_recomputed_checksum_refused(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        plan['new_rows']['users'][0]['values']['is_platform_admin']=1
+        before=self.snapshot()
+        with self.assertRaisesRegex(SyntheticApplyError,'REVALIDATED_PLAN_MISMATCH'): self.apply(plan)
+        self.assertEqual(before,self.snapshot())
+
+    def test_plan_source_mismatch_refused(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        plan['source']['data_sha256']='0'*64
+        with self.assertRaisesRegex(SyntheticApplyError,'MANIFEST_IDENTITY_MISMATCH'): self.apply(plan)
+
+    def test_extra_schema_and_blob_shared_history_preserved(self):
+        before=self.snapshot()
+        self.apply()
+        after=self.snapshot()
+        self.assertEqual(before['inventory'],after['inventory'])
+        self.assertEqual(before['protected_fingerprints'],after['protected_fingerprints'])
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT payload FROM extra_preservation_view').fetchall(),[(b'\x00\x01\xff',)])
+            self.assertEqual(db.execute('SELECT context_json FROM brief_batches').fetchone()[0],'{ "frozen":  true }')
+            self.assertEqual(db.execute('SELECT gmail_message_id FROM correspondent_email_deliveries').fetchone(),('synthetic-ack',))
+            self.assertEqual(db.execute('SELECT claim_token FROM correspondent_x_page_receipts').fetchone(),('synthetic-paid-page',))
+
+    def test_scoring_uses_actual_pure_rule_without_app_import(self):
+        from types import SimpleNamespace
+        # Compile only the existing pure scoring function, never the app module.
+        source=ast.parse((ROOT/'pickem_flask_htmx_tabs.py').read_text(encoding='utf-8'))
+        node=next(n for n in source.body if isinstance(n,ast.FunctionDef) and n.name=='pick_contribution')
+        node.returns=None
+        for arg in node.args.args: arg.annotation=None
+        namespace={}
+        exec(compile(ast.Module(body=[node],type_ignores=[]),'existing-scoring-rule','exec'),namespace)
+        def score():
+            with closing(sqlite3.connect(self.path)) as db:
+                rows=db.execute('SELECT p.id,p.player_id,p.team,f.home,f.away,r.outcome FROM picks p JOIN fixtures f ON f.id=p.fixture_id LEFT JOIN results r ON r.fixture_id=f.id ORDER BY p.id').fetchall()
+            return [(pid,player,namespace['pick_contribution'](SimpleNamespace(team=team,fixture=SimpleNamespace(home=home,away=away)),outcome)) for pid,player,team,home,away,outcome in rows]
+        before=score()
+        self.assertEqual(before,[(1,9,1),(2,2,-1),(3,2,0)])
+        self.apply()
+        self.assertEqual(before,score())
+
+    def test_no_network_process_or_runtime_import(self):
+        import builtins
+        original=builtins.__import__
+        def guarded(name,*args,**kwargs):
+            if name.split('.')[0] in {'pickem_flask_htmx_tabs','flask','sqlalchemy','requests','openai'}:
+                raise AssertionError('Forbidden runtime import')
+            return original(name,*args,**kwargs)
+        plan=self.plan()
+        with patch.object(builtins,'__import__',side_effect=guarded), \
+             patch.object(socket.socket,'connect',side_effect=AssertionError('network')), \
+             patch.object(subprocess,'Popen',side_effect=AssertionError('process')):
+            self.assertEqual(self.apply(plan)['status'],'applied')
+
+    def test_no_general_apply_cli(self):
+        for command in ('apply','apply-synthetic','backfill','write'):
+            with redirect_stdout(io.StringIO()),self.assertRaises(SystemExit): main([command])
+
+    def test_missing_explicit_path_and_missing_file_refused_without_creation(self):
+        from foundation_backfill_synthetic import apply_synthetic,synthetic_database,SyntheticApplyError
+        plan=self.plan()
+        checksum=stage1.digest(canonical_json(plan))
+        with self.assertRaisesRegex(SyntheticApplyError,'EXPLICIT_DATABASE_REQUIRED'):
+            apply_synthetic(self.target,database_path=None,manifest=self.doc,plan=plan,expected_plan_sha256=checksum)
+        with synthetic_database(acknowledge_disposable=True) as empty:
+            with self.assertRaisesRegex(SyntheticApplyError,'SYNTHETIC_DATABASE_MISSING'):
+                apply_synthetic(empty,database_path=empty.path,manifest=self.doc,plan=plan,expected_plan_sha256=checksum)
+            self.assertFalse(empty.path.exists())
+
+    def test_arbitrary_path_and_forged_capability_refused_before_connect(self):
+        from foundation_backfill_synthetic import apply_synthetic,SyntheticTarget,SyntheticApplyError
+        plan=self.plan()
+        with patch.object(sqlite3,'connect',side_effect=AssertionError('must not open')):
+            for target,path in [(self.target,Path('/data/pickem.db')),(SyntheticTarget(self.path),self.path)]:
+                with self.assertRaises(SyntheticApplyError):
+                    apply_synthetic(target,database_path=path,manifest=self.doc,plan=plan,expected_plan_sha256=stage1.digest(canonical_json(plan)))
+
+    def test_closed_capability_refused(self):
+        from foundation_backfill_synthetic import synthetic_database,apply_synthetic,SyntheticApplyError
+        with synthetic_database(acknowledge_disposable=True) as target: pass
+        with self.assertRaisesRegex(SyntheticApplyError,'LIVE_SYNTHETIC_TARGET_REQUIRED'):
+            apply_synthetic(target,database_path=target.path,manifest=self.doc,plan=self.plan(),expected_plan_sha256='0'*64)
+
+    def test_acknowledgement_required(self):
+        from foundation_backfill_synthetic import synthetic_database,SyntheticApplyError
+        with self.assertRaises(SyntheticApplyError):
+            with synthetic_database(): pass
+
+    def test_hard_link_target_refused(self):
+        import os
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        link=self.path.parent/'synthetic-hardlink.db'
+        os.link(self.path,link)
+        try:
+            with self.assertRaisesRegex(SyntheticApplyError,'SYNTHETIC_FILE_REQUIRED'): self.apply(plan)
+        finally:
+            link.unlink()
+
+    def test_writer_lock_contention_bounded_and_no_partial_write(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        before=self.snapshot()
+        with closing(sqlite3.connect(self.path,isolation_level=None)) as holder:
+            holder.execute('BEGIN IMMEDIATE')
+            with self.assertRaisesRegex(SyntheticApplyError,'SYNTHETIC_APPLY_REFUSED'): self.apply(plan)
+            holder.execute('ROLLBACK')
+        self.assertEqual(before,self.snapshot())
+
+    def test_authorizer_forbids_destructive_sql_ddl_and_legacy_writes(self):
+        from foundation_backfill_synthetic import _guard
+        before=self.snapshot()
+        with closing(sqlite3.connect(self.path,isolation_level=None)) as db:
+            db.set_authorizer(_guard)
+            for sql in ("DELETE FROM players", "UPDATE results SET outcome='Away'", "CREATE TABLE forbidden(id)",
+                        "DROP VIEW extra_preservation_view", "ATTACH ':memory:' AS other", "PRAGMA foreign_keys=OFF",
+                        "INSERT INTO schema_migrations VALUES('bad','x','x','x','x')"):
+                with self.subTest(sql=sql),self.assertRaises(sqlite3.DatabaseError): db.execute(sql)
+        self.assertEqual(before,self.snapshot())
+
+    def test_no_replace_or_ddl_in_writer_statement_sources(self):
+        source=(ROOT/'foundation_backfill_synthetic.py').read_text()
+        tree=ast.parse(source)
+        forbidden=('REPLACE ','DELETE ','CREATE ','ALTER ','DROP ')
+        for node in ast.walk(tree):
+            if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr in {'execute','executemany','executescript'}:
+                self.assertNotEqual(node.func.attr,'executescript')
+                if node.args:
+                    sql=ast.get_source_segment(source,node.args[0]).upper()
+                    self.assertFalse(any(term in sql for term in forbidden),sql)
+
+    def test_poststate_validation_rolls_back_wrong_selected_value(self):
+        import foundation_backfill_synthetic as writer
+        original=writer._update_rows
+        plan=self.plan()
+        before=self.snapshot()
+        def corrupted(db,table,records):
+            records=deepcopy(records)
+            if table=='picks':
+                for row in records:
+                    row['values']['selected_club_id']=3-row['values']['selected_club_id']
+            return original(db,table,records)
+        with patch.object(writer,'_update_rows',side_effect=corrupted):
+            with self.assertRaisesRegex(writer.SyntheticApplyError,'EXPECTED_POSTSTATE_MISMATCH'): self.apply(plan)
+        self.assertEqual(before,self.snapshot())
+
+    def test_complete_poststate_copy_has_exact_rerun_without_memory_receipt(self):
+        import shutil
+        from foundation_backfill_synthetic import synthetic_database,apply_synthetic
+        plan=self.plan()
+        self.apply(plan)
+        with synthetic_database(acknowledge_disposable=True) as second:
+            shutil.copyfile(self.path,second.path)  # Both capability-owned synthetic files.
+            result=apply_synthetic(second,database_path=second.path,manifest=self.doc,plan=plan,
+                                   expected_plan_sha256=stage1.digest(canonical_json(plan)))
+            self.assertEqual(result['status'],'already_matches')
+            self.assertEqual(result['write_counts'],{'inserts':{},'updates':{}})
+
+    def test_foreign_key_failure_rolls_back(self):
+        import foundation_backfill_synthetic as writer
+        plan=self.plan()
+        before=self.snapshot()
+        original=writer._update_rows
+        def invalid(db,table,records):
+            records=deepcopy(records)
+            if table=='players': records[0]['values']['user_id']=99999
+            return original(db,table,records)
+        with patch.object(writer,'_update_rows',side_effect=invalid):
+            with self.assertRaisesRegex(writer.SyntheticApplyError,'SYNTHETIC_APPLY_REFUSED'): self.apply(plan)
+        self.assertEqual(before,self.snapshot())
+
+    def test_stage1_ledger_checksum_failure_refused(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        with closing(sqlite3.connect(self.path)) as db,db:
+            db.execute("UPDATE schema_migrations SET checksum='bad'")
+            before='\n'.join(db.iterdump())
+        with self.assertRaisesRegex(SyntheticApplyError,'SYNTHETIC_APPLY_REFUSED'): self.apply(plan)
+        with closing(sqlite3.connect(self.path)) as db: self.assertEqual(before,'\n'.join(db.iterdump()))
+
+    def test_malformed_manifest_refused(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        self.doc['checksum']='0'*64
+        with self.assertRaisesRegex(SyntheticApplyError,'INVALID_MANIFEST_OR_PLAN'): self.apply(plan)
+
+    def test_no_write_family_can_target_legacy_or_receipt(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        for table in ('results','players','schema_migrations','league_invitations','user_identities'):
+            plan=self.plan()
+            plan['new_rows'][table]=[{'values':{'id':1}}]
+            with self.subTest(table=table),self.assertRaisesRegex(SyntheticApplyError,'WRITE_SCOPE_REFUSED'):
+                self.apply(plan)
+
+    def test_deadline_refusal_rolls_back(self):
+        import foundation_backfill_synthetic as writer
+        plan=self.plan()
+        before=self.snapshot()
+        with patch.object(writer,'TRANSACTION_SECONDS',-1):
+            with self.assertRaises(writer.SyntheticApplyError): self.apply(plan)
+        self.assertEqual(before,self.snapshot())
+
+    def test_symlink_guard_refuses_before_sqlite_connect(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        plan=self.plan()
+        with patch.object(Path,'is_symlink',return_value=True),patch.object(sqlite3,'connect',side_effect=AssertionError('opened')):
+            with self.assertRaisesRegex(SyntheticApplyError,'SYNTHETIC_LINK_REFUSED'): self.apply(plan)
+
+
+class SyntheticTriggerTests(unittest.TestCase):
+    def fixture(self,trigger):
+        case=SyntheticApplyTests('test_full_happy_path_counts_ids_integrity_and_receipt')
+        self.addCleanup(case.doCleanups)
+        case.extra_schema += trigger
+        case.setUp()
+        return case
+
+    def test_trigger_protected_result_write_denied_and_rolled_back(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        case=self.fixture("""CREATE TRIGGER forbidden_result_change AFTER UPDATE OF league_id ON players
+            WHEN NEW.id=2 BEGIN UPDATE results SET outcome='Away' WHERE id=1; END;""")
+        plan=case.plan()
+        before=case.snapshot()
+        with self.assertRaisesRegex(SyntheticApplyError,'SYNTHETIC_APPLY_REFUSED'): case.apply(plan)
+        self.assertEqual(before,case.snapshot())
+
+    def test_trigger_extra_foundation_row_refused_and_rolled_back(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        case=self.fixture("""CREATE TRIGGER extra_club AFTER UPDATE OF league_id ON players
+            WHEN NEW.id=2 BEGIN INSERT INTO clubs(id,name) VALUES(999,'Unexpected'); END;""")
+        plan=case.plan()
+        before=case.snapshot()
+        with self.assertRaisesRegex(SyntheticApplyError,'UNEXPECTED_TRIGGER_WRITES'): case.apply(plan)
+        self.assertEqual(before,case.snapshot())
+
+    def test_trigger_same_value_write_still_refused(self):
+        from foundation_backfill_synthetic import SyntheticApplyError
+        case=self.fixture("""CREATE TRIGGER hidden_same_value AFTER UPDATE OF league_id ON players
+            WHEN NEW.id=2 BEGIN UPDATE players SET role=NULL WHERE id=2; END;""")
+        plan=case.plan()
+        before=case.snapshot()
+        with self.assertRaisesRegex(SyntheticApplyError,'UNEXPECTED_TRIGGER_WRITES'): case.apply(plan)
+        self.assertEqual(before,case.snapshot())
+
+
+class SyntheticImportTests(unittest.TestCase):
+    def test_writer_import_is_inert_and_cli_does_not_import_writer(self):
+        script = """
+import sqlite3, socket, tempfile, sys
+from unittest.mock import patch
+def forbidden(*args, **kwargs): raise AssertionError('Import side effect')
+with patch.object(sqlite3, 'connect', side_effect=forbidden), \
+     patch.object(tempfile, 'TemporaryDirectory', side_effect=forbidden), \
+     patch.object(socket.socket, 'connect', side_effect=forbidden):
+    import foundation_backfill
+    assert 'foundation_backfill_synthetic' not in sys.modules
+    import foundation_backfill_synthetic
+    assert 'pickem_flask_htmx_tabs' not in sys.modules
+    assert 'flask' not in sys.modules
+"""
+        result=subprocess.run([sys.executable,'-B','-c',script],cwd=ROOT,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
 
 
 if __name__ == '__main__':
