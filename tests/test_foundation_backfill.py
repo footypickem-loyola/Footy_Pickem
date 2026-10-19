@@ -1197,5 +1197,221 @@ with patch.object(sqlite3, 'connect', side_effect=forbidden), \
         self.assertEqual(result.returncode,0,result.stderr)
 
 
+
+class Slice4CPlannerTests(unittest.TestCase):
+    setUp = PlannerTests.setUp
+    manifest = PlannerTests.manifest
+    row = PlannerTests.row
+    plan = PlannerTests.plan
+    change = PlannerTests.change
+
+    def omit_football_data_objects(self, minimal=False):
+        for row in self.doc['mappings']:
+            if row['kind'] in {'football_season', 'club', 'fixture'}:
+                providers = []
+                for provider in row['providers']:
+                    if provider['provider'] != 'football-data':
+                        providers.append(provider)
+                    elif row['kind'] == 'fixture' and minimal:
+                        providers.append({k: provider[k] for k in ('provider', 'external_id')})
+                row['providers'] = providers
+
+    def test_fixture_without_provider_objects_fabricates_nothing(self):
+        self.omit_football_data_objects()
+        before = self.path.read_bytes()
+        plan = self.plan()
+        self.assertEqual(plan['status'], 'planned')
+        self.assertEqual(len(plan['nullable_updates']['fixtures']), 3)
+        for table in ('football_season_provider_links', 'club_provider_links'):
+            self.assertTrue(all(r['values']['provider']=='sportmonks' for r in plan['new_rows'][table]))
+        self.assertNotIn('fixture_provider_links', plan['new_rows'])
+        self.assertTrue(all('external_match_id' not in r['values'] for r in plan['nullable_updates']['fixtures']))
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_minimal_football_data_assertion_and_conflicting_id(self):
+        self.omit_football_data_objects(minimal=True)
+        self.assertEqual(self.plan()['status'], 'planned')
+        next(p for p in self.row('fixture')['providers'] if p['provider']=='football-data')['external_id']='999'
+        self.assertIn('CONFLICTING_PROVIDER_IDS', codes(self.plan()))
+
+    def test_legacy_fixture_id_cannot_change(self):
+        self.omit_football_data_objects()
+        self.row('fixture')['external_match_id']=999
+        self.assertIn('CONFLICTING_PROVIDER_IDS', codes(self.plan()))
+
+    def test_canonical_conflicts_still_block(self):
+        self.omit_football_data_objects()
+        original=deepcopy(self.doc)
+        cases=[('season','api_season_year',2040,'INCONSISTENT_SEASON_EVIDENCE'),
+               ('week','number',2,'INCONSISTENT_SEASON_ROUND_EVIDENCE'),
+               ('fixture','home','Wrong','FIXTURE_ORIENTATION_CONFLICT'),
+               ('fixture','home_club_key',self.row('fixture')['away_club_key'],'CONFLICTING_FIXTURE_PARTICIPANTS')]
+        for kind,field,value,code in cases:
+            with self.subTest(kind=kind,field=field):
+                self.doc=deepcopy(original)
+                self.row(kind)[field]=value
+                self.assertIn(code,codes(self.plan()))
+
+    def test_sportmonks_assertions_remain_strict(self):
+        self.omit_football_data_objects()
+        self.row('fixture')['providers'][0]['external_season_id']='999'
+        self.assertIn('CONFLICTING_PROVIDER_PARTICIPANT_OR_SEASON',codes(self.plan()))
+        provider=self.row('fixture')['providers'][0]
+        self.row('fixture')['providers']=[{k:provider[k] for k in ('provider','external_id')}]
+        with self.assertRaises(ManifestError):self.plan()
+
+    def test_existing_link_cannot_be_omitted_or_collide_with_legacy_id(self):
+        self.omit_football_data_objects()
+        original=deepcopy(self.doc)
+        self.row('fixture')['providers']=[]
+        self.assertIn('CONFLICTING_PROVIDER_IDS',codes(self.plan()))
+        self.doc=original
+        self.change("INSERT INTO fixture_provider_links(id,fixture_id,provider,external_fixture_id) VALUES(4,101,'football-data',1000)")
+        self.assertIn('CONFLICTING_PROVIDER_IDS',codes(self.plan()))
+
+    def test_sync_namespace_preserved_without_season_object(self):
+        self.omit_football_data_objects()
+        self.change("UPDATE api_sync_states SET provider='football-data.org'")
+        before=self.path.read_bytes()
+        plan=self.plan()
+        self.assertEqual(plan['status'],'planned')
+        self.assertEqual(set(plan['nullable_updates']['api_sync_states'][0]['values']),{'football_season_id'})
+        self.assertEqual(self.path.read_bytes(),before)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT provider,football_season_id FROM api_sync_states').fetchone(),('football-data.org',None))
+
+    def test_unknown_sync_provider_and_unresolved_season_block(self):
+        self.omit_football_data_objects()
+        self.change("UPDATE api_sync_states SET provider='unknown'")
+        self.assertIn('SYNC_PROVIDER_SEASON_UNRESOLVED',codes(self.plan()))
+        self.change("UPDATE api_sync_states SET provider='football-data.org'")
+        self.doc['mappings']=[r for r in self.doc['mappings'] if not(r['kind']=='season' and r['id']==1)]
+        self.assertIn('SYNC_PROVIDER_SEASON_UNRESOLVED',codes(self.plan()))
+
+    def test_approved_aliases_are_reviewed_and_season_scoped(self):
+        for alias,name,team_id in [('Man Utd','Manchester United','14'),("Nott'm Forest",'Nottingham Forest','63'),('Spurs','Tottenham Hotspur','6')]:
+            with self.subTest(alias=alias):
+                original=deepcopy(self.doc)
+                home=self.row('club');home['name']=name;home_key=home['key']
+                home['providers'][1]['external_id']=team_id
+                for row in self.doc['mappings']:
+                    if row['kind']=='fixture':
+                        for provider in row['providers']:
+                            if provider['provider']=='sportmonks':
+                                for side in ('home','away'):
+                                    if row[side+'_club_key']==home_key:provider[side+'_external_id']=team_id
+                self.change('UPDATE club_season_enrichment SET sportmonks_team_id=?',(int(team_id),))
+                self.change('UPDATE match_events SET team_provider_id=?',(team_id,))
+                self.change('UPDATE fixtures SET home=? WHERE id=100',(alias,))
+                self.change('UPDATE picks SET team=? WHERE id=1',(alias,))
+                self.row('fixture')['home']=alias
+                reviewed=deepcopy(next(r for r in self.doc['mappings'] if r['kind']=='alias' and r['club_key']==home_key))
+                reviewed['name']=alias;self.doc['mappings'].append(reviewed)
+                self.assertEqual(self.plan()['status'],'planned')
+                reviewed['football_season_key']=next(r['football_season_key'] for r in self.doc['mappings'] if r['kind']=='season' and r['id']==2)
+                self.assertIn('CLUB_ALIAS_MAPPING_REQUIRED',codes(self.plan()))
+                self.change("UPDATE fixtures SET home='Home FC' WHERE id=100")
+                self.change("UPDATE picks SET team='Home FC' WHERE id=1")
+                self.change('UPDATE club_season_enrichment SET sportmonks_team_id=30')
+                self.change("UPDATE match_events SET team_provider_id='30'")
+                self.doc=original
+
+    def test_expired_x_plan_gate_cannot_apply(self):
+        self.change('''INSERT INTO correspondent_x_collection_states
+            (id,week_id,status,window_start,window_end,page_count,retrieved_count,persisted_count,
+             lease_token,lease_expires_at,created_at,updated_at)
+            VALUES(1,10,'claimed','2000-01-01','2000-01-02',0,0,0,'private-x-token',
+                   '2000-01-03','2000-01-01','2000-01-01')''')
+        before=self.path.read_bytes()
+        plan=self.plan()
+        from foundation_backfill_planner import plan_summary
+        self.assertEqual(plan['status'],'gated');self.assertEqual(plan['blockers'],[])
+        self.assertTrue(plan['counts_are_complete'])
+        self.assertEqual(plan['execution_gates'][0]['code'],'X_CLAIM_REVALIDATION_AND_FENCING_REQUIRED')
+        self.assertEqual(plan_summary(plan)['execution_gates'],plan['execution_gates'])
+        self.assertNotIn('private-x-token',canonical_json(plan_summary(plan)))
+        self.assertNotIn('correspondent_x_collection_states',plan['nullable_updates'])
+        self.assertEqual(self.path.read_bytes(),before)
+        from foundation_backfill_synthetic import apply_synthetic,SyntheticApplyError
+        with patch('foundation_backfill_synthetic._target_path',return_value=self.path), \
+             patch('foundation_backfill_synthetic.sqlite3.connect',side_effect=AssertionError('Must not open')):
+            with self.assertRaisesRegex(SyntheticApplyError,'BLOCKED_PLAN'):
+                apply_synthetic(None,database_path=self.path,manifest=resign(self.doc),plan=plan,
+                                expected_plan_sha256=stage1.digest(canonical_json(plan)))
+
+
+class Slice4CTaskPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.db=sqlite3.connect(':memory:');self.addCleanup(self.db.close)
+        self.db.executescript('''
+            CREATE TABLE pick_insight_refreshes(week_id,status,claim_token,lease_until);
+            CREATE TABLE correspondent_classification_jobs(id,status);
+            CREATE TABLE correspondent_classification_job_items(id,job_id,status,active_reservation_key);
+            CREATE TABLE correspondent_x_collection_states(id,status,lease_token,lease_expires_at);
+            CREATE TABLE correspondent_x_page_receipts(collection_id,claim_token);
+            CREATE TABLE correspondent_email_deliveries(id,status,claim_token,claim_expires_at);
+            CREATE TABLE correspondent_notifications(id,status,claim_token,claim_expires_at);
+            CREATE TABLE football_reference_tasks(provider,external_season_id,status,completed_at,claim_token,lease_until,error_code);
+        ''')
+
+    def findings(self):
+        before='\n'.join(self.db.iterdump());issues=[];historical=[];gates=[]
+        def sink(target):return lambda code,**details:target.append(dict(code=code,**details))
+        inspector._task_blockers(self.db,stage1.table_columns(self.db),sink(issues),sink(historical),sink(gates))
+        self.assertEqual(before,'\n'.join(self.db.iterdump()))
+        return issues,historical,gates
+
+    def test_failed_items_require_terminal_parent_and_clear_reservation(self):
+        self.db.execute("INSERT INTO correspondent_classification_jobs VALUES(1,'failed')")
+        self.db.execute("INSERT INTO correspondent_classification_job_items VALUES(1,1,'failed',NULL)")
+        for status in sorted(inspector.TERMINAL_CLASSIFICATION_JOBS):
+            self.db.execute('UPDATE correspondent_classification_jobs SET status=?',(status,))
+            self.assertEqual(self.findings(),([],[],[]))
+        self.db.execute("UPDATE correspondent_classification_job_items SET active_reservation_key='private-token'")
+        self.assertTrue(self.findings()[0])
+        self.db.execute('UPDATE correspondent_classification_job_items SET active_reservation_key=NULL')
+        for status in ('pending','running','submission_unknown','unknown'):
+            self.db.execute('UPDATE correspondent_classification_jobs SET status=?',(status,))
+            self.assertTrue(any(r.get('table')=='correspondent_classification_job_items' for r in self.findings()[0]))
+        self.db.execute('DELETE FROM correspondent_classification_jobs')
+        self.assertTrue(self.findings()[0])
+
+    def test_pending_and_unknown_items_still_block(self):
+        self.db.execute("INSERT INTO correspondent_classification_jobs VALUES(1,'completed')")
+        for status in ('pending','unknown','running'):
+            self.db.execute('DELETE FROM correspondent_classification_job_items')
+            self.db.execute('INSERT INTO correspondent_classification_job_items VALUES(1,1,?,NULL)',(status,))
+            self.assertTrue(self.findings()[0])
+
+    def test_completed_reference_task_requires_quiescence(self):
+        self.db.execute("INSERT INTO football_reference_tasks VALUES('sportmonks',28083,'completed','2026-01-01',NULL,NULL,NULL)")
+        self.assertEqual(self.findings(),([],[],[]))
+        for column,value in [('status','running'),('status','failed'),('completed_at',None),('completed_at','invalid'),
+                             ('claim_token','private-token'),('lease_until','2000-01-01'),('error_code','failure')]:
+            with self.subTest(column=column,value=value):
+                old=self.db.execute('SELECT '+column+' FROM football_reference_tasks').fetchone()[0]
+                self.db.execute('UPDATE football_reference_tasks SET '+column+'=?',(value,))
+                self.assertTrue(self.findings()[0])
+                self.db.execute('UPDATE football_reference_tasks SET '+column+'=?',(old,))
+
+    def test_expired_uncheckpointed_x_claim_is_preserved_gate(self):
+        self.db.execute("INSERT INTO correspondent_x_collection_states VALUES(2,'claimed','private-x','2000-01-01')")
+        issues,historical,gates=self.findings()
+        self.assertEqual(issues,[]);self.assertEqual(historical[0]['row_id'],2)
+        self.assertEqual(gates[0]['code'],'X_CLAIM_REVALIDATION_AND_FENCING_REQUIRED')
+        self.assertNotIn('private-x',json.dumps([historical,gates]))
+
+    def test_active_malformed_checkpointed_x_claims_block(self):
+        self.db.execute("INSERT INTO correspondent_x_collection_states VALUES(2,'claimed','private-x','2099-01-01')")
+        self.assertTrue(self.findings()[0])
+        for expiry in (None,'invalid'):
+            self.db.execute('UPDATE correspondent_x_collection_states SET lease_expires_at=?',(expiry,))
+            self.assertTrue(self.findings()[0])
+        self.db.execute("UPDATE correspondent_x_collection_states SET lease_expires_at='2000-01-01'")
+        self.db.execute("INSERT INTO correspondent_x_page_receipts VALUES(2,'private-x')")
+        issues,historical,gates=self.findings()
+        self.assertTrue(issues);self.assertEqual((historical,gates),([],[]))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -319,23 +319,31 @@ def _build_plan(tables, manifest, inspection, validation):
                 valid = False
             observed['football-data'] = str(row['external_match_id'])
         reviewed = provider_map(binding)
+        # external_match_id itself is preserved football-data fixture evidence;
+        # canonical season/round/clubs were validated above. No season-object
+        # assertion is implied by the legacy fixture ID. Explicit assertions
+        # (when supplied) must still agree, and existing links remain required.
+        if row['external_match_id'] is not None:
+            reviewed.setdefault('football-data', str(binding['external_match_id']))
         if binding['external_match_id'] != row['external_match_id'] or observed != reviewed:
             block('CONFLICTING_PROVIDER_IDS', 'fixtures', fid)
             valid = False
+        for provider, external_id in observed.items():
+            identity = (provider, external_id)
+            if identity in fixture_provider_seen:
+                block('CONFLICTING_PROVIDER_IDS', 'fixtures', fid)
+                valid = False
+            fixture_provider_seen[identity] = fid
         for p in binding['providers']:
             provider = p['provider']
             comp = seasons[target[0]]['competition_key']
-            if (p['home_external_id'] != provider_ids['club', home].get(provider) or
+            minimal_legacy = provider == 'football-data' and set(p) == {'provider', 'external_id'}
+            if not minimal_legacy and (p['home_external_id'] != provider_ids['club', home].get(provider) or
                 p['away_external_id'] != provider_ids['club', away].get(provider) or
                 p['external_season_id'] != provider_ids['football_season', target[0]].get(provider) or
                 p['external_competition_id'] != provider_ids['competition', comp].get(provider)):
                 block('CONFLICTING_PROVIDER_PARTICIPANT_OR_SEASON', 'fixtures', fid)
                 valid = False
-            identity = (provider, p['external_id'])
-            if identity in fixture_provider_seen:
-                block('CONFLICTING_PROVIDER_IDS', 'fixtures', fid)
-                valid = False
-            fixture_provider_seen[identity] = fid
         if not valid: continue
         resolved_fixtures[fid] = (target[0], home, away)
         update('fixtures', row, dict(football_season_id=ids['football_seasons'][target[0]],
@@ -402,7 +410,9 @@ def _build_plan(tables, manifest, inspection, validation):
 
     for row in tables['api_sync_states']:
         key = resolved_seasons.get(row['season_id'])
-        if key is None or row['provider'] not in provider_ids.get(('football_season', key), {}):
+        # Preserve the legacy namespace. A reviewed Season mapping, not an
+        # unpersisted provider season-object ID, establishes the new FK.
+        if key is None or row['provider'] not in {'football-data.org', 'football-data'}:
             missing('SYNC_PROVIDER_SEASON_UNRESOLVED', 'api_sync_states', row['id'])
         else:
             update('api_sync_states', row, dict(football_season_id=ids['football_seasons'][key]), provenance('api_sync_states', row['id']))
@@ -527,7 +537,9 @@ def _build_plan(tables, manifest, inspection, validation):
     counts = {'inserts': {t: len(rows) for t, rows in sorted(proposed.items()) if rows},
               'updates': {t: len(rows) for t, rows in sorted(updates.items()) if rows}}
     # IDs and proposal counts remain diagnostic on blocked plans; never readiness.
-    result = dict(plan_version=2, status='blocked' if blockers else 'planned', execution_authorized=False,
+    gates = inspection.get('execution_gates', [])
+    result = dict(plan_version=2, status='blocked' if blockers else ('gated' if gates else 'planned'), execution_authorized=False,
+                  historical_findings=inspection.get('historical_findings', []), execution_gates=gates,
                   manifest_checksum=manifest['checksum'], source=manifest['source'],
                   id_rule='Per table: observed max(id) + 1..N; Players numeric ID order; entity SHA256 keys lexical; matchweeks (season key, number) order. No persistence.',
                   proposed_ids=ids, new_rows=dict(proposed), nullable_updates=updates,
@@ -548,4 +560,6 @@ def plan_summary(plan):
     return dict(status=plan['status'], execution_authorized=False, plan_sha256=digest(canonical_json(plan)),
                 source=plan['source'], manifest_checksum=plan['manifest_checksum'],
                 expected_write_counts=plan['expected_write_counts'], counts_are_complete=plan['counts_are_complete'],
-                blocker_codes=sorted({b['code'] for b in plan['blockers']}))
+                blocker_codes=sorted({b['code'] for b in plan['blockers']}),
+                execution_gates=plan.get('execution_gates', []),
+                historical_findings=plan.get('historical_findings', []))

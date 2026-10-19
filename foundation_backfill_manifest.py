@@ -287,7 +287,12 @@ def validate_planning_manifest(document):
                 if kind == 'fixture':
                     fields |= {'home_external_id', 'away_external_id', 'external_season_id', 'external_competition_id'}
                 for provider in value:
-                    _fields(provider, fields)
+                    # Legacy football-data fixtures persisted the fixture ID only.
+                    # A minimal assertion does not invent team/season-object IDs.
+                    minimal = (kind == 'fixture' and type(provider) is dict and
+                               provider.get('provider') == 'football-data' and
+                               set(provider) == {'provider', 'external_id'})
+                    _fields(provider, {'provider', 'external_id'} if minimal else fields)
                     _need(all(type(v) is str and bool(v.strip()) for v in provider.values()))
             elif field == 'user_id':
                 _need(value is None, 'RECIPIENT_IDENTITY_UNSUPPORTED_IN_V2')

@@ -4,6 +4,7 @@ No app import, ID allocation, apply path, schema initialization or network.
 mode=ro uses normal SQLite WAL snapshots: never immutable=1 or nolock=1.
 """
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 
@@ -205,11 +206,22 @@ def _evidence(db, block):
             "seasons": seasons, "weeks": weeks, "fixtures": fixtures}
 
 
-def _task_blockers(db, columns, block):
+TERMINAL_CLASSIFICATION_JOBS = {"completed", "cancelled", "expired", "failed"}
+
+
+def _instant(value):
+    try:
+        instant = datetime.fromisoformat(value)
+        return instant.replace(tzinfo=timezone.utc) if instant.tzinfo is None else instant.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _task_blockers(db, columns, block, historical, gate):
     policies = {
         "pick_insight_refreshes": ("week_id", {"pending", "completed"}, ("claim_token", "lease_until")),
-        "correspondent_classification_jobs": ("id", {"completed", "cancelled", "expired", "failed"}, ()),
-        "correspondent_classification_job_items": ("id", {"completed", "imported"}, ("active_reservation_key",)),
+        "correspondent_classification_jobs": ("id", TERMINAL_CLASSIFICATION_JOBS, ()),
+        "correspondent_classification_job_items": ("id", {"completed", "imported", "failed"}, ("active_reservation_key",)),
         "correspondent_x_collection_states": ("id", {"completed", "capped", "cap_reached"}, ("lease_token", "lease_expires_at")),
         "correspondent_email_deliveries": ("id", {"sent"}, ("claim_token", "claim_expires_at")),
         "correspondent_notifications": ("id", {"sent"}, ("claim_token", "claim_expires_at")),
@@ -217,10 +229,36 @@ def _task_blockers(db, columns, block):
     for table, (key, terminal, claims) in policies.items():
         query = f"SELECT {key},status" + "".join("," + c for c in claims) + f" FROM {table} ORDER BY {key}"
         for row in db.execute(query):
+            if table == "correspondent_classification_job_items" and row[1] == "failed":
+                parent = db.execute("SELECT j.status FROM correspondent_classification_jobs j "
+                                    "JOIN correspondent_classification_job_items i ON i.job_id=j.id "
+                                    "WHERE i.id=?", (row[0],)).fetchone()
+                if parent is None or parent[0] not in TERMINAL_CLASSIFICATION_JOBS:
+                    block("UNSUPPORTED_OR_IN_FLIGHT_TASK", table=table, row_id=row[0])
+                    continue
+            if table == "correspondent_x_collection_states" and row[1] == "claimed":
+                expiry = _instant(row[3])
+                checkpointed = db.execute("SELECT COUNT(*) FROM correspondent_x_page_receipts "
+                                          "WHERE collection_id=? AND claim_token=?", (row[0], row[2])).fetchone()[0]
+                if row[2] and expiry is not None and expiry < datetime.now(timezone.utc) and not checkpointed:
+                    historical("HISTORICAL_UNRESOLVED_X_CLAIM", table=table, row_id=row[0])
+                    gate("X_CLAIM_REVALIDATION_AND_FENCING_REQUIRED", table=table, row_id=row[0])
+                    continue
             if row[1] not in terminal or any(value is not None for value in row[2:]):
                 block("UNSUPPORTED_OR_IN_FLIGHT_TASK", table=table, row_id=row[0])
-    # Additional stores are reported, never opened automatically or rekeyed.
-    for table in ("football_reference_tasks", "team_briefs", "scheduler"):
+    if "football_reference_tasks" in columns:
+        required = {"provider", "external_season_id", "status", "completed_at", "claim_token", "lease_until", "error_code"}
+        if not required <= set(columns["football_reference_tasks"]):
+            block("SHARED_STORE_STATE_REVIEW_REQUIRED", table_sha256=digest("football_reference_tasks"))
+        else:
+            for provider, season, status, completed, claim, lease, error in db.execute(
+                    "SELECT provider,external_season_id,status,completed_at,claim_token,lease_until,error_code "
+                    "FROM football_reference_tasks"):
+                if status != "completed" or _instant(completed) is None or any(v is not None for v in (claim, lease, error)):
+                    block("SHARED_STORE_STATE_REVIEW_REQUIRED", table_sha256=digest("football_reference_tasks"),
+                          row_sha256=digest([provider, season]))
+    # Separate stores are never opened automatically or rekeyed.
+    for table in ("team_briefs", "scheduler"):
         if table in columns and db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]:
             block("SHARED_STORE_STATE_REVIEW_REQUIRED", table_sha256=digest(table))
 
@@ -240,6 +278,13 @@ def inspect_connection(db):
     """Inspect an already-reserved read-only snapshot; caller owns connection."""
     columns = _validate_baseline(db)
     issues = []
+    historical_findings, execution_gates = [], []
+
+    def historical(code, **details):
+        historical_findings.append({"label": "Unresolved", "code": code, **details})
+
+    def gate(code, **details):
+        execution_gates.append({"label": "Unresolved", "code": code, **details})
 
     def block(code, **details):
         issues.append({"label": "Unresolved", "code": code, **details})
@@ -247,7 +292,7 @@ def inspect_connection(db):
     inventory = _inventory(db, columns)
     population = _population(db, block)
     evidence = _evidence(db, block)
-    _task_blockers(db, columns, block)
+    _task_blockers(db, columns, block, historical, gate)
     if db.execute("SELECT 1 FROM sqlite_schema WHERE name='sqlite_sequence'").fetchone():
         columns = dict(columns, sqlite_sequence=("name", "seq"))
     full = row_manifest(db, columns)
@@ -255,7 +300,9 @@ def inspect_connection(db):
                  for t, names in columns.items() if t not in FOUNDATION}
     hashes = row_manifest(db, protected)
     return {"report_version": 1, "label": "Observed", "stage1_valid": True,
-            "status": "blocked" if issues else "inspected", "execution_authorized": False,
+            "status": "blocked" if issues else ("gated" if execution_gates else "inspected"), "execution_authorized": False,
+            "historical_findings": sorted(historical_findings, key=digest),
+            "execution_gates": sorted(execution_gates, key=digest),
             "source": {"schema_sha256": digest(schema(db)), "data_sha256": digest(full)},
             "stage1_checksum": migration_checksum(), "inventory": inventory,
             "table_fingerprints": {_token(t, KNOWN_TABLES): v for t, v in sorted(full.items())},
