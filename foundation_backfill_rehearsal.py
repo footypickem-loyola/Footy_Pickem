@@ -1,0 +1,304 @@
+"""Capability-scoped rehearsal on fresh disposable offline copies; no CLI.
+
+Never register an arbitrary existing writable target. Only rehearsal_clone()
+creates targets, always as unique siblings of an explicitly hashed standalone
+source. Source and approved inputs are immutable; production gates stay open.
+The synthetic target factory and apply entry point are neither changed nor used.
+"""
+from contextlib import contextmanager, closing
+from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import sqlite3
+import tempfile
+import time
+
+from foundation_backfill_manifest import canonical_json, validate_planning_manifest, ManifestError
+from foundation_backfill_validation import inspect_connection, _read_guard, InspectionError
+from foundation_backfill_rehearsal_scoring import scoring_evidence
+# Reuse tested connection-level primitives, never the synthetic capability/API.
+from foundation_backfill_synthetic import (
+    PHASES, INSERT_TABLES, FAILURE_POINTS, SyntheticApplyError,
+    _guard, _columns, _source_projection, _rebuild_source_plan,
+    _check_poststate, _insert_rows, _update_rows,
+)
+from foundation_migrations import digest, MigrationError
+from foundation_schema import ADDITIONS
+
+TRANSACTION_SECONDS = 30
+GATES = (
+    'WRITER_FENCING_AND_REVALIDATION_REQUIRED',
+    'X_CLAIM_REVALIDATION_AND_FENCING_REQUIRED',
+    'CURRENT_RECIPIENT_CONFIGURATION_REVALIDATION_REQUIRED',
+    'SHARED_BRIEF_AND_SCHEDULER_REVALIDATION_REQUIRED',
+    'SOURCE_SCHEMA_DATA_STAGE1_LEDGER_REVALIDATION_REQUIRED',
+    'APPROVED_INDEPENDENT_CHECKPOINT_REQUIRED',
+    'SCORING_AND_PRESERVATION_EQUALITY_REQUIRED',
+    'TRIGGER_EFFECT_REVIEW_REQUIRED',
+)
+
+
+class RehearsalError(ValueError):
+    """Fixed reason codes only; never expose SQL, addresses or private values."""
+
+
+@dataclass(frozen=True, eq=False)
+class RehearsalTarget:
+    source: Path
+    path: Path
+    initial_sha256: str
+
+
+_ACTIVE = {}
+
+
+def file_sha256(path):
+    with Path(path).open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def plan_sha256(plan):
+    return hashlib.sha256(canonical_json(plan).encode()).hexdigest()
+
+
+def _identity(path):
+    s = path.stat()
+    return (s.st_dev, s.st_ino)
+
+
+def _local_file(value):
+    try:
+        raw = str(value).replace('\\', '/')
+        path = Path(value)
+        if (not path.is_absolute() or raw.startswith('//') or raw.startswith('file:') or
+                raw.lower().rstrip('/').endswith('/data/pickem.db')):
+            raise RehearsalError('LOCAL_OFFLINE_PATH_REQUIRED')
+        for part in (path, *path.parents):
+            if part.is_symlink() or part.is_junction():
+                raise RehearsalError('LINK_REFUSED')
+        if any((parent / '.git').exists() for parent in path.parents):
+            raise RehearsalError('REPOSITORY_DATABASE_REFUSED')
+        path = path.resolve(strict=True)
+        if not path.is_file() or path.stat().st_nlink != 1:
+            raise RehearsalError('REGULAR_SINGLE_LINK_FILE_REQUIRED')
+        return path
+    except RehearsalError:
+        raise
+    except (OSError, ValueError, TypeError):
+        raise RehearsalError('OFFLINE_FILE_UNAVAILABLE') from None
+
+
+def _source_check(path, expected):
+    path = _local_file(path)
+    if any(Path(str(path) + suffix).exists() for suffix in ('-wal', '-shm', '-journal')):
+        raise RehearsalError('STANDALONE_SOURCE_REQUIRED')
+    if file_sha256(path) != expected:
+        raise RehearsalError('SOURCE_HASH_MISMATCH')
+    return path
+
+
+def _readonly_source(path):
+    # Only a previously verified standalone offline artifact, never a live WAL DB.
+    db = sqlite3.connect(path.as_uri() + '?mode=ro&immutable=1', uri=True, isolation_level=None)
+    db.execute('PRAGMA query_only=ON')
+    db.execute('PRAGMA foreign_keys=ON')
+    db.execute('PRAGMA trusted_schema=OFF')
+    db.execute('PRAGMA temp_store=MEMORY')
+    db.set_authorizer(_read_guard)
+    return db
+
+
+def _inputs(manifest, plan, expected_manifest_checksum, expected_plan_sha256):
+    try:
+        manifest, plan = deepcopy(manifest), deepcopy(plan)
+        validation = validate_planning_manifest(manifest)
+        if validation['status'] != 'valid' or manifest['checksum'] != expected_manifest_checksum:
+            raise RehearsalError('MANIFEST_IDENTITY_MISMATCH')
+        if plan_sha256(plan) != expected_plan_sha256:
+            raise RehearsalError('PLAN_IDENTITY_MISMATCH')
+        if plan['manifest_checksum'] != manifest['checksum'] or plan['source'] != manifest['source']:
+            raise RehearsalError('MANIFEST_IDENTITY_MISMATCH')
+        if (plan['status'] not in {'planned', 'gated'} or plan['blockers'] or
+                plan['counts_are_complete'] is not True or plan['execution_authorized'] is not False):
+            raise RehearsalError('BLOCKED_PLAN')
+        gates = plan.get('execution_gates', [])
+        if bool(gates) != (plan['status'] == 'gated') or any(
+                g['code'] != 'X_CLAIM_REVALIDATION_AND_FENCING_REQUIRED' or
+                g.get('table') != 'correspondent_x_collection_states' or
+                type(g.get('row_id')) is not int for g in gates):
+            raise RehearsalError('UNSUPPORTED_EXECUTION_GATE')
+        if set(plan['new_rows']) - INSERT_TABLES or set(plan['nullable_updates']) - set(ADDITIONS):
+            raise RehearsalError('WRITE_SCOPE_REFUSED')
+        return manifest, plan, validation
+    except RehearsalError:
+        raise
+    except (ManifestError, ValueError, TypeError, KeyError):
+        raise RehearsalError('INVALID_MANIFEST_OR_PLAN') from None
+
+
+@contextmanager
+def rehearsal_clone(*, source_snapshot, expected_source_sha256, manifest,
+                    expected_manifest_checksum, plan, expected_plan_sha256,
+                    acknowledge_disposable_production_derived=False):
+    """Create a new exclusive clone; retain artifacts after capability closes.
+
+    Does not accept a destination path, overwrite a file, change source metadata,
+    create a writable source connection, or create a directory in a repository.
+    """
+    if acknowledge_disposable_production_derived is not True:
+        raise RehearsalError('DISPOSABLE_OFFLINE_CLONE_ACKNOWLEDGEMENT_REQUIRED')
+    manifest, plan, validation = _inputs(manifest, plan, expected_manifest_checksum, expected_plan_sha256)
+    source = _source_check(source_snapshot, expected_source_sha256)
+    source_identity = _identity(source)
+    with closing(_readonly_source(source)) as db:
+        db.execute('BEGIN')
+        inspection = inspect_connection(db)
+        if inspection['source'] != plan['source']:
+            raise RehearsalError('SOURCE_FINGERPRINT_MISMATCH')
+        columns = _columns(db)
+        if _source_projection(db, columns) != inspection['source']:
+            raise RehearsalError('FOUNDATION_EMPTY_BASELINE_REQUIRED')
+        rebuilt = _rebuild_source_plan(db, manifest, inspection, validation)
+        if canonical_json(rebuilt) != canonical_json(plan):
+            raise RehearsalError('REVALIDATED_PLAN_MISMATCH')
+        scoring = scoring_evidence(db)
+    # Fresh directory and exclusive file creation; no existing target adoption.
+    directory = Path(tempfile.mkdtemp(
+        prefix='rehearsal-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-',
+        dir=source.parent)).resolve(strict=True)
+    path = directory / 'pickem.rehearsal.db'
+    with source.open('rb') as src, path.open('xb') as dst:
+        shutil.copyfileobj(src, dst)
+    if (_source_check(source, expected_source_sha256) != source or
+            _identity(source) != source_identity or file_sha256(path) != expected_source_sha256):
+        raise RehearsalError('COPY_IDENTITY_MISMATCH')
+    target = RehearsalTarget(source, path, expected_source_sha256)
+    _ACTIVE[target] = dict(source_identity=source_identity, target_identity=_identity(path),
+                           directory_identity=_identity(directory),
+                           manifest_checksum=expected_manifest_checksum,
+                           plan_sha256=expected_plan_sha256, scoring=scoring)
+    try:
+        yield target
+    finally:
+        _ACTIVE.pop(target, None)
+
+
+def _target(target, database_path, source_snapshot, expected_target_sha256):
+    if type(target) is not RehearsalTarget or target not in _ACTIVE:
+        raise RehearsalError('LIVE_REHEARSAL_CAPABILITY_REQUIRED')
+    state = _ACTIVE[target]
+    source, path = _local_file(source_snapshot), _local_file(database_path)
+    if (path == source or source != target.source or path != target.path or
+            path.parent.parent != source.parent or expected_target_sha256 != target.initial_sha256 or
+            _identity(source) != state['source_identity'] or
+            _identity(path) != state['target_identity'] or
+            _identity(path.parent) != state['directory_identity']):
+        raise RehearsalError('REHEARSAL_TARGET_IDENTITY_MISMATCH')
+    _source_check(source, target.initial_sha256)
+    return path, state
+
+
+def apply_rehearsal(target, *, database_path, source_snapshot, expected_target_sha256,
+                    manifest, expected_manifest_checksum, plan, expected_plan_sha256, fail_at=None):
+    """Atomic offline rehearsal only; exact reruns verify then roll back read-only.
+
+    Production-time gates are retained, never cleared. Only this factory's live
+    capability is accepted. No caller callback can run within the transaction.
+    """
+    path, state = _target(target, database_path, source_snapshot, expected_target_sha256)
+    manifest, plan, validation = _inputs(manifest, plan, expected_manifest_checksum, expected_plan_sha256)
+    if (expected_manifest_checksum != state['manifest_checksum'] or
+            expected_plan_sha256 != state['plan_sha256']):
+        raise RehearsalError('CAPABILITY_INPUT_MISMATCH')
+    if fail_at is not None and fail_at not in FAILURE_POINTS:
+        raise RehearsalError('UNKNOWN_FAILURE_POINT')
+    try:
+        with closing(sqlite3.connect(path.as_uri() + '?mode=rw', uri=True, timeout=2,
+                                    isolation_level=None)) as db:
+            db.enable_load_extension(False)
+            db.execute('PRAGMA foreign_keys=ON')
+            db.execute('PRAGMA trusted_schema=OFF')
+            db.execute('PRAGMA temp_store=MEMORY')
+            if db.execute('PRAGMA foreign_keys').fetchone() != (1,):
+                raise RehearsalError('FOREIGN_KEYS_REQUIRED')
+            db.set_authorizer(_guard)
+            deadline = time.monotonic() + TRANSACTION_SECONDS
+            db.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+
+            def checkpoint(phase=None):
+                if time.monotonic() > deadline:
+                    raise RehearsalError('TRANSACTION_DEADLINE_EXCEEDED')
+                if phase is not None and phase == fail_at:
+                    raise RehearsalError('INJECTED_FAILURE')
+
+            def evidence(status, post, counts, score):
+                return dict(status=status, offline_rehearsal_only=True, execution_authorized=False,
+                            source_sha256=target.initial_sha256, manifest_checksum=expected_manifest_checksum,
+                            plan_sha256=expected_plan_sha256, post_state=post['source'], write_counts=counts,
+                            protected_sha256=digest(post['protected_fingerprints']),
+                            schema_unchanged=True, stage1_receipt_unchanged=True, stage2_receipt_written=False,
+                            exact_poststate_verified=True, scoring_equal=True, scoring=score,
+                            production_execution_gates=list(GATES), preserved_plan_gates=plan.get('execution_gates', []))
+
+            try:
+                db.execute('BEGIN IMMEDIATE')
+                checkpoint()
+                current = inspect_connection(db)
+                columns = _columns(db)
+                if _source_projection(db, columns) != plan['source']:
+                    raise RehearsalError('STALE_SOURCE_FINGERPRINT')
+                rebuilt = _rebuild_source_plan(db, manifest, current, validation)
+                if canonical_json(rebuilt) != canonical_json(plan):
+                    raise RehearsalError('REVALIDATED_PLAN_MISMATCH')
+                score_before = scoring_evidence(db)
+                if score_before != state['scoring']:
+                    raise RehearsalError('SCORING_SOURCE_MISMATCH')
+                checkpoint()
+                if current['source'] != plan['source']:
+                    try:
+                        post = _check_poststate(db, plan, columns)
+                    except SyntheticApplyError:
+                        raise RehearsalError('PARTIAL_OR_CONFLICTING_POPULATION') from None
+                    checkpoint()
+                    _source_check(target.source, target.initial_sha256)
+                    db.execute('ROLLBACK')
+                    return evidence('already_matches', post, {'inserts': {}, 'updates': {}}, score_before)
+                counts = {'inserts': {}, 'updates': {}}
+                changes_before = db.total_changes
+                for phase, inserts, updates in PHASES:
+                    for table in inserts:
+                        records = plan['new_rows'].get(table, [])
+                        if records: counts['inserts'][table] = _insert_rows(db, table, records)
+                    for table in updates:
+                        records = plan['nullable_updates'].get(table, [])
+                        if records: counts['updates'][table] = _update_rows(db, table, records)
+                    checkpoint(phase)
+                if db.total_changes - changes_before != sum(sum(v.values()) for v in counts.values()):
+                    raise RehearsalError('UNEXPECTED_TRIGGER_WRITES')
+                if counts != plan['expected_write_counts']:
+                    raise RehearsalError('WRITE_COUNTS_MISMATCH')
+                checkpoint('before_validation')
+                post = _check_poststate(db, plan, columns)
+                score_after = scoring_evidence(db)
+                if score_after != score_before:
+                    raise RehearsalError('SCORING_CHANGED')
+                _source_check(target.source, target.initial_sha256)
+                result = evidence('applied', post, counts, score_after)
+                json.dumps(result, allow_nan=False)
+                checkpoint('before_commit')
+                db.execute('COMMIT')
+                return result
+            except BaseException:
+                db.set_progress_handler(None, 0)
+                if db.in_transaction: db.execute('ROLLBACK')
+                raise
+    except RehearsalError:
+        raise
+    except SyntheticApplyError as exc:
+        raise RehearsalError(str(exc)) from None
+    except (sqlite3.Error, MigrationError, InspectionError, ValueError, TypeError, KeyError, OSError):
+        raise RehearsalError('REHEARSAL_REFUSED') from None
