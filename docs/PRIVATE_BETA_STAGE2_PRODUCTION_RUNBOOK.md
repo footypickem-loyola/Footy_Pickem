@@ -33,7 +33,13 @@ Receipt applied_at is different: it is generated once in UTC per actual invocati
 and preserved on exact rerun. Never copy the historical rehearsal receipt timestamp.
 Do not infer User claims, email association, permissions, or admin roles.
 
-## Phase A — read-only / fresh planning
+## Phase A — fenced planning / no database mutation
+
+Before Phase A, review the host-specific preparation packet required in
+Remaining production preparation below. Phase A does not modify production
+database rows. Writer fencing and later writer resume are operational production
+changes and each requires explicit authorization; they are not read-only actions.
+Checkpoint creation writes a separate backup artifact, never the live DB rows.
 
 ### Prerequisites requiring separate operational authorization
 
@@ -46,8 +52,8 @@ path and maintenance-code hashes; do not rely on cwd or DB_PATH defaults.
 
 Before checkpointing, obtain explicit permission to fence every writer and record
 their original states and the fencing time. Phase A contains no production
-mutation command. Writer-control actions are a separately approved operational
-prerequisite, not something the maintenance adapter performs.
+database-row mutation command. Writer-control actions are separately authorized
+operational production changes, not something the maintenance adapter performs.
 
 Inventory must cover all replicas and all known write entry points:
 - Web/player/admin requests, picks, drafts/autodrafts, week/season setup and
@@ -253,6 +259,34 @@ data or receipt writes. It must preserve applied_at.
 Each observation is bound to the approved packet. All PASS attestations are required;
 successful offline tests do not clear these gates.
 
+## Guarded application-compatibility smoke before writer resume
+
+After independently verifying the completed Stage 2 state, run the separately
+reviewed and authorized application-compatibility smoke while all writers remain
+fenced. Establish guards before application import/startup or request handling:
+deny database writes on every connection and store the smoke can reach, block
+external/network side effects, and prevent worker/scheduler startup. A GET request
+or nominally read-only route is not by itself a sufficient guard. If these
+protections cannot be positively demonstrated, STOP; do not run an unguarded smoke.
+
+Exercise representative normal application read/render paths selected in the
+host-specific preparation packet, including the public read view, season/week
+views, fixtures/results, picks and standings/history as applicable. Verify expected
+responses and rendering through ordinary app paths against the valid completed
+Stage 2 state. Explicitly prove that these paths tolerate the valid Stage 2
+receipt; a maintenance-verifier-only check is not an application smoke.
+
+Record schema/data/ledger and protected-state fingerprints before and after.
+Require equality, unchanged receipt/applied_at, and successful completed-state
+verification with the approved Stage 2 evidence afterward. Separate stores must
+also remain unchanged if accessible to the smoke. Record only safe result metadata,
+never rendered private content, recipient addresses, credentials or tokens.
+
+Any failed path, blocked write/side-effect attempt, fingerprint difference, invalid
+completed-state result or uncertain guard coverage prevents writer resume.
+Keep writers fenced and investigate under a separately approved scope. Do not
+weaken the guards, repair data or automatically replay the smoke to force a pass.
+
 ## Failure, recovery and writer resume
 
 Lock timeout, input refusal or known precommit failure: keep writers held; verify
@@ -278,18 +312,77 @@ approval, full writer fencing, a current forensic copy and an impact review.
 No automatic down migration or row cleanup exists.
 
 Resume only after independently verified target state, all postconditions and
-gates pass, explicit operator approval, and a recorded exact restoration of the
+gates pass, the guarded application-compatibility smoke passes, explicit operator
+approval, and a recorded exact restoration of the
 original writer/service states. Resume sequencing and observation must include
 web ingress, workers/supervisors, schedules and n8n. Never turn on previously
 disabled components. No app/runtime rollout or multi-league routing is part of
 Stage 2. Retain checkpoints and private evidence until separately authorized
 cleanup; never place them in Git, chat, shared storage or public logs.
 
+## Post-resume health observation
+
+After separately authorized resume, use the reviewed observation window and
+pass/fail criteria in the host-specific preparation packet. Restore only components
+that were enabled before fencing; previously disabled components must stay disabled.
+Verify the exact restoration of original states and observe:
+
+- Public app/read path: representative normal read/render requests return the
+  expected healthy response and content structure without new application errors.
+- Web service: expected deployment/replicas remain healthy, with no new crash,
+  restart loop, database/receipt errors or unexpected startup migration.
+- Live Sync, Score Sync and Football Reference Sync: enabled components return to
+  their recorded normal scheduled operation without new failures or stuck work.
+- Correspondent: its enabled intake, classification, recap and delivery workflows
+  have normal health/state progression with no unexpected duplicates or retries.
+- Shared-brief worker/scheduler: original enabled states, healthy worker/supervisor
+  behavior and normal lease/task progression, with no stuck or uncertain work.
+- n8n: only previously enabled workflows resume, with expected schedule/queue
+  health and no replay of held executions or duplicate sends.
+
+Use passive service/log/queue observations and separately approved safe read checks.
+Observe normal scheduled work when due; do not manually replay jobs, trigger syncs,
+generate briefs/recaps or send email merely to prove health. A component with no
+work due is recorded as not yet observed, not falsely marked functionally verified.
+Continue observation or escalate according to the reviewed packet.
+
+On unhealthy or uncertain results, STOP further resume actions and escalate.
+Any re-fencing or remediation requires the applicable explicit operational
+authorization; never automatically retry jobs, clear claims or restore the
+checkpoint. Resumed writers may already have created new data or external effects.
+
 ## Remaining production preparation
 
-Fresh current topology/writer inventory, exact fencing/resume commands and
-in-flight dispositions cannot be established locally. Collect and approve them
-in a separately authorized production read-only/operations task before execution.
-The operator wrapper, private file permissions, checkpoint destination/capacity,
-reviewed code availability and approval record must be reviewed for the actual
-host. This draft provides no authority to deploy those files or execute mutation.
+Before Phase A begins, collect and review a host-specific preparation packet in
+a separately authorized production read-only/operations task. It must contain:
+
+- Current Railway project/environment/service/deployment/volume identity and the
+  verified actual database/store paths; historical identifiers are insufficient.
+- Complete writer and replica inventory, including ingress, scheduled/manual jobs,
+  workers, supervisors, external orchestrators and in-flight/uncertain work.
+- Exact fence actions, their separately authorized scope, and positive verification
+  that every writer is held and cannot automatically restart or resume.
+- Exact resume actions, sequencing and recorded original enabled/disabled states,
+  including criteria for restoring only previously enabled components.
+- n8n hold/resume procedure, treatment of queued/in-flight executions and prevention
+  of replayed sends; unresolved external effects require a reviewed disposition.
+- Safe method to make the reviewed Stage 2 maintenance code available on the
+  production host, without implicit app startup, migration or deployment authority.
+- Code revision and file/hash verification for maintenance code, dependencies and
+  the application code used by scoring and the guarded compatibility smoke.
+- Unique checkpoint and restore-test destinations, available capacity, ownership,
+  private permissions, retention and independent verification procedure.
+- Exact private operator-wrapper invocation, explicit inputs/target, approval
+  record, safe metadata capture and ambiguous-outcome handling without retry.
+- Guarded application-smoke mechanism: representative read/render paths, enforced
+  database-write/network/side-effect blocks before import/startup, before/after
+  fingerprint and completed-state checks, and a fail-closed resume decision.
+- Post-resume health checks for every component listed above, the observation
+  window, normal schedule expectations, pass/fail criteria and escalation actions.
+
+Fresh topology, exact host actions and in-flight dispositions cannot be established
+locally. Missing or unreviewed packet items block Phase A. Packet review is not
+authorization to execute its actions: fencing, checkpointing, code placement,
+Phase B mutation and resume retain their separate explicit approval requirements.
+The fresh-plan STOP / HUMAN APPROVAL boundary remains mandatory after preparation.
+This draft provides no authority to deploy files or execute production operations.
