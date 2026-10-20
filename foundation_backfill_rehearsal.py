@@ -26,7 +26,8 @@ from foundation_backfill_synthetic import (
     _guard, _columns, _source_projection, _rebuild_source_plan,
     _check_poststate, _insert_rows, _update_rows,
 )
-from foundation_migrations import digest, MigrationError
+from foundation_migrations import digest, schema, MigrationError
+import foundation_backfill_receipt as receipt
 from foundation_schema import ADDITIONS
 
 TRANSACTION_SECONDS = 30
@@ -203,7 +204,8 @@ def _target(target, database_path, source_snapshot, expected_target_sha256):
 
 
 def apply_rehearsal(target, *, database_path, source_snapshot, expected_target_sha256,
-                    manifest, expected_manifest_checksum, plan, expected_plan_sha256, fail_at=None):
+                    manifest, expected_manifest_checksum, plan, expected_plan_sha256, fail_at=None,
+                    completion_receipt=False):
     """Atomic offline rehearsal only; exact reruns verify then roll back read-only.
 
     Production-time gates are retained, never cleared. Only this factory's live
@@ -214,8 +216,15 @@ def apply_rehearsal(target, *, database_path, source_snapshot, expected_target_s
     if (expected_manifest_checksum != state['manifest_checksum'] or
             expected_plan_sha256 != state['plan_sha256']):
         raise RehearsalError('CAPABILITY_INPUT_MISMATCH')
-    if fail_at is not None and fail_at not in FAILURE_POINTS:
+    if type(completion_receipt) is not bool:
+        raise RehearsalError('EXPLICIT_RECEIPT_MODE_REQUIRED')
+    receipt_points = {'before_receipt', 'after_receipt'} if completion_receipt else set()
+    if fail_at is not None and fail_at not in FAILURE_POINTS | receipt_points:
         raise RehearsalError('UNKNOWN_FAILURE_POINT')
+    applied_at = datetime.now(timezone.utc).isoformat()
+    receipt_evidence = dict(manifest=manifest, plan=plan,
+                            expected_manifest_checksum=expected_manifest_checksum,
+                            expected_plan_sha256=expected_plan_sha256)
     try:
         with closing(sqlite3.connect(path.as_uri() + '?mode=rw', uri=True, timeout=2,
                                     isolation_level=None)) as db:
@@ -225,7 +234,15 @@ def apply_rehearsal(target, *, database_path, source_snapshot, expected_target_s
             db.execute('PRAGMA temp_store=MEMORY')
             if db.execute('PRAGMA foreign_keys').fetchone() != (1,):
                 raise RehearsalError('FOREIGN_KEYS_REQUIRED')
-            db.set_authorizer(_guard)
+            receipt_insert_armed = False
+
+            def authorizer(action, first, second, database, trigger):
+                if action == sqlite3.SQLITE_INSERT and first == 'schema_migrations':
+                    return (sqlite3.SQLITE_OK if receipt_insert_armed and
+                            database == 'main' and trigger is None else sqlite3.SQLITE_DENY)
+                return _guard(action, first, second, database, trigger)
+
+            db.set_authorizer(authorizer)
             deadline = time.monotonic() + TRANSACTION_SECONDS
             db.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
 
@@ -247,6 +264,22 @@ def apply_rehearsal(target, *, database_path, source_snapshot, expected_target_s
             try:
                 db.execute('BEGIN IMMEDIATE')
                 checkpoint()
+                before_schema = digest(schema(db))
+                if completion_receipt:
+                    lifecycle = receipt.verify_state(db, **receipt_evidence)
+                    if lifecycle['status'] == 'stage2_complete':
+                        score = scoring_evidence(db)
+                        if score != state['scoring']:
+                            raise RehearsalError('SCORING_SOURCE_MISMATCH')
+                        _source_check(target.source, target.initial_sha256)
+                        checkpoint()
+                        result = evidence('already_matches', dict(source=lifecycle['post_state'],
+                            protected_fingerprints=plan['preservation']['protected_fingerprints']),
+                            {'inserts': {}, 'updates': {}}, score)
+                        result.update(receipt=lifecycle['receipt'], receipt_writes=0,
+                                      lifecycle_verification=lifecycle['status'])
+                        db.execute('ROLLBACK')
+                        return result
                 current = inspect_connection(db)
                 columns = _columns(db)
                 if _source_projection(db, columns) != plan['source']:
@@ -288,6 +321,27 @@ def apply_rehearsal(target, *, database_path, source_snapshot, expected_target_s
                     raise RehearsalError('SCORING_CHANGED')
                 _source_check(target.source, target.initial_sha256)
                 result = evidence('applied', post, counts, score_after)
+                if completion_receipt:
+                    checkpoint('before_receipt')
+                    after_schema = digest(schema(db))
+                    if before_schema != after_schema or after_schema != plan['source']['schema_sha256']:
+                        raise RehearsalError('RECEIPT_SCHEMA_MISMATCH')
+                    changes_before_receipt = db.total_changes
+                    receipt_insert_armed = True
+                    try:
+                        _insert_receipt(db, receipt.checksum(expected_manifest_checksum,
+                            expected_plan_sha256, plan['source']), applied_at, before_schema, after_schema)
+                    finally:
+                        receipt_insert_armed = False
+                        # Clear cached authorizations after disarming ledger insertion.
+                        db.set_authorizer(authorizer)
+                    if db.total_changes - changes_before_receipt != 1:
+                        raise RehearsalError('UNEXPECTED_RECEIPT_WRITES')
+                    lifecycle = receipt.verify_state(db, require_completed=True, **receipt_evidence)
+                    result.update(stage2_receipt_written=True, receipt_writes=1,
+                                  receipt=lifecycle['receipt'], post_state=lifecycle['post_state'],
+                                  lifecycle_verification=lifecycle['status'])
+                    checkpoint('after_receipt')
                 json.dumps(result, allow_nan=False)
                 checkpoint('before_commit')
                 db.execute('COMMIT')
@@ -302,3 +356,10 @@ def apply_rehearsal(target, *, database_path, source_snapshot, expected_target_s
         raise RehearsalError(str(exc)) from None
     except (sqlite3.Error, MigrationError, InspectionError, ValueError, TypeError, KeyError, OSError):
         raise RehearsalError('REHEARSAL_REFUSED') from None
+
+
+def _insert_receipt(db, checksum, applied_at, before_schema, after_schema):
+    # Only called with the bounded rehearsal transaction's insertion gate armed.
+    db.execute('INSERT INTO schema_migrations '
+               '(version,checksum,applied_at,before_schema_hash,after_schema_hash) VALUES(?,?,?,?,?)',
+               (receipt.VERSION, checksum, applied_at, before_schema, after_schema))
