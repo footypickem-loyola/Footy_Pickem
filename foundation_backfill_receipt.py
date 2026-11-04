@@ -106,7 +106,7 @@ def _expected_population(db, plan, columns):
 
 
 def verify_state(db, *, manifest, plan, expected_manifest_checksum,
-                 expected_plan_sha256, require_completed=False):
+                 expected_plan_sha256, require_completed=False, offline_review=None):
     """Caller owns a stable read/write transaction; this function only reads.
 
     Stage 1 receipt preservation includes every cell, including applied_at and
@@ -114,7 +114,14 @@ def verify_state(db, *, manifest, plan, expected_manifest_checksum,
     A valid receipt alone is never sufficient proof of completed population.
     """
     try:
-        validation = validate_planning_manifest(manifest)
+        if offline_review is None:
+            validation = validate_planning_manifest(manifest)
+        else:
+            # Read-only verification admission only; production execution never
+            # supplies this argument and retains its strict v2 admission.
+            from foundation_backfill_rehearsal import _inputs
+            _, _, validation = _inputs(manifest, plan, expected_manifest_checksum,
+                                       expected_plan_sha256, offline_review=offline_review)
         if validation['status'] != 'valid' or manifest['checksum'] != expected_manifest_checksum:
             raise ReceiptError('MANIFEST_IDENTITY_MISMATCH')
         if hashlib.sha256(canonical_json(plan).encode()).hexdigest() != expected_plan_sha256:
@@ -175,7 +182,9 @@ def verify_state(db, *, manifest, plan, expected_manifest_checksum,
                     receipt=None if receipt is None else dict(zip(
                         ('version','checksum','applied_at','before_schema_hash','after_schema_hash'),receipt)),
                     source=plan['source'], post_state=dict(schema_sha256=actual_schema,data_sha256=digest(full)),
-                    protected_sha256=digest(protected), integrity='ok', foreign_key_violations=0)
+                    protected_sha256=digest(protected), integrity='ok', foreign_key_violations=0,
+                    **({'offline_rehearsal_only': True, 'email_send_authorized': False}
+                       if offline_review is not None else {}))
     except ReceiptError:
         raise
     except (ManifestError, MigrationError, sqlite3.Error, ValueError, TypeError, KeyError, IndexError):

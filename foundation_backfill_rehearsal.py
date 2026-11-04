@@ -1,8 +1,9 @@
 """Capability-scoped rehearsal on fresh disposable offline copies; no CLI.
 
 Never register an arbitrary existing writable target. Only rehearsal_clone()
-creates targets, always as unique siblings of an explicitly hashed standalone
-source. Source and approved inputs are immutable; production gates stay open.
+creates targets from an explicitly hashed standalone source: v2 uses siblings;
+v3 requires an explicit private temporary directory. Source and approved inputs
+are immutable; production gates stay open.
 The synthetic target factory and apply entry point are neither changed nor used.
 """
 from contextlib import contextmanager, closing
@@ -113,10 +114,52 @@ def _readonly_source(path):
     return db
 
 
-def _inputs(manifest, plan, expected_manifest_checksum, expected_plan_sha256):
+def _offline_validation(manifest, plan, review):
+    """Explicit private review admission, used only by offline capability/verification.
+
+    This does not attest writer fencing or satisfy any production gate.
+    """
+    from foundation_backfill_manifest import validate_offline_planning_manifest
+    from foundation_backfill_operator import private_directory
+    fields = {'reviewed_source', 'owner_decision_path', 'owner_decision_sha256',
+              'audit_evidence_path', 'audit_evidence_sha256'}
+    if type(review) is not dict or set(review) != fields:
+        raise RehearsalError('OFFLINE_REVIEW_REQUIRED')
+    for prefix in ('owner_decision', 'audit_evidence'):
+        artifact = _local_file(review[prefix + '_path'])
+        private_directory(artifact.parent)
+        if file_sha256(artifact) != review[prefix + '_sha256']:
+            raise RehearsalError('OFFLINE_REVIEW_HASH_MISMATCH')
+    validation = validate_offline_planning_manifest(
+        manifest, reviewed_source=review['reviewed_source'],
+        owner_decision_sha256=review['owner_decision_sha256'],
+        audit_evidence_sha256=review['audit_evidence_sha256'])
+    if (plan.get('plan_version') != 3 or plan.get('offline_only') is not True or
+            plan.get('email_send_authorized') is not False or
+            plan.get('recipient_disposition') != 'disabled_no_send' or
+            plan.get('offline_no_send') != manifest['offline_no_send'] or
+            plan.get('new_rows', {}).get('league_notification_recipients')):
+        raise RehearsalError('OFFLINE_NO_SEND_PLAN_REQUIRED')
+    return validation
+
+
+def _rebuild_rehearsal_plan(db, manifest, inspection, validation):
+    rebuilt = _rebuild_source_plan(db, manifest, inspection, validation)
+    if manifest['schema_version'] == 3:
+        rebuilt.update(plan_version=3, offline_only=True, email_send_authorized=False,
+                       recipient_disposition='disabled_no_send',
+                       offline_no_send=manifest['offline_no_send'])
+    return rebuilt
+
+
+def _inputs(manifest, plan, expected_manifest_checksum, expected_plan_sha256, *,
+            offline_review=None):
     try:
         manifest, plan = deepcopy(manifest), deepcopy(plan)
-        validation = validate_planning_manifest(manifest)
+        if offline_review is None:
+            validation = validate_planning_manifest(manifest)
+        else:
+            validation = _offline_validation(manifest, plan, offline_review)
         if validation['status'] != 'valid' or manifest['checksum'] != expected_manifest_checksum:
             raise RehearsalError('MANIFEST_IDENTITY_MISMATCH')
         if plan_sha256(plan) != expected_plan_sha256:
@@ -141,20 +184,74 @@ def _inputs(manifest, plan, expected_manifest_checksum, expected_plan_sha256):
         raise RehearsalError('INVALID_MANIFEST_OR_PLAN') from None
 
 
+def _restrict_new_windows_artifact(path, *, directory=False):
+    """Only the clone factory's newly created directory/empty file, never parents.
+
+    Replace inherited OWNER RIGHTS with the current owner's explicit SID before
+    private content is copied. Preserve ownership; refuse on any ACL failure.
+    """
+    import os
+    if os.name != 'nt':
+        return
+    import base64
+    import subprocess
+    from foundation_backfill_operator import path as checked_path
+    path = checked_path(path, directory=directory)
+    identity = _identity(path)
+    literal = "'" + str(path).replace("'", "''") + "'"
+    kind = 'Directory' if directory else 'File'
+    inheritance = 'ContainerInherit,ObjectInherit' if directory else 'None'
+    command = "$ErrorActionPreference='Stop'; $p=" + literal + "; "
+    command += "$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; "
+    command += "$old=[System.IO." + kind + "]::GetAccessControl($p); "
+    command += "if($old.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){throw 'owner'}; "
+    command += "$acl=New-Object System.Security.AccessControl." + kind + "Security; "
+    command += "$acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); "
+    command += "foreach($id in @($sid.Value,'S-1-5-18','S-1-5-32-544')){ "
+    command += "$principal=New-Object System.Security.Principal.SecurityIdentifier($id); "
+    command += "$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($principal,'FullControl','" + inheritance + "','None','Allow'); $acl.AddAccessRule($rule)}; "
+    command += "[System.IO." + kind + "]::SetAccessControl($p,$acl); "
+    command += "$a=[System.IO." + kind + "]::GetAccessControl($p); "
+    command += "if(-not $a.AreAccessRulesProtected -or $a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){throw 'owner_or_inheritance'}; "
+    command += "$rules=@($a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])); if($rules.Count -ne 3){throw 'count'}; "
+    command += "foreach($r in $rules){if($r.IdentityReference.Value -notin @($sid.Value,'S-1-5-18','S-1-5-32-544') -or $r.IsInherited -or $r.AccessControlType -ne 'Allow' -or $r.FileSystemRights -ne 'FullControl'){throw 'grant'}}; 'PRIVATE'"
+    try:
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive',
+            '-EncodedCommand', base64.b64encode(command.encode('utf-16le')).decode()],
+            capture_output=True, timeout=15)
+        if result.returncode != 0 or result.stdout.strip() != b'PRIVATE' or _identity(path) != identity:
+            raise RehearsalError('NEW_ARTIFACT_ACL_REQUIRED')
+    except (OSError, subprocess.TimeoutExpired):
+        raise RehearsalError('NEW_ARTIFACT_ACL_REQUIRED') from None
+
+
 @contextmanager
 def rehearsal_clone(*, source_snapshot, expected_source_sha256, manifest,
                     expected_manifest_checksum, plan, expected_plan_sha256,
-                    acknowledge_disposable_production_derived=False):
+                    acknowledge_disposable_production_derived=False,
+                    offline_review=None, execution_directory=None):
     """Create a new exclusive clone; retain artifacts after capability closes.
 
-    Does not accept a destination path, overwrite a file, change source metadata,
+    Does not accept an existing destination file, overwrite a file, change source metadata,
     create a writable source connection, or create a directory in a repository.
     """
     if acknowledge_disposable_production_derived is not True:
         raise RehearsalError('DISPOSABLE_OFFLINE_CLONE_ACKNOWLEDGEMENT_REQUIRED')
-    manifest, plan, validation = _inputs(manifest, plan, expected_manifest_checksum, expected_plan_sha256)
+    manifest, plan, validation = _inputs(manifest, plan, expected_manifest_checksum, expected_plan_sha256,
+                                         offline_review=offline_review)
     source = _source_check(source_snapshot, expected_source_sha256)
     source_identity = _identity(source)
+    execution_parent = source.parent
+    if manifest['schema_version'] == 3:
+        from foundation_backfill_operator import private_directory
+        private_directory(source.parent)
+        if execution_directory is None:
+            raise RehearsalError('PRIVATE_TEMP_EXECUTION_DIRECTORY_REQUIRED')
+        execution_parent = private_directory(execution_directory)
+        if Path(tempfile.gettempdir()).resolve() not in execution_parent.parents:
+            raise RehearsalError('PRIVATE_TEMP_EXECUTION_DIRECTORY_REQUIRED')
+    elif execution_directory is not None:
+        raise RehearsalError('V3_OFFLINE_CONTRACT_REQUIRED')
     with closing(_readonly_source(source)) as db:
         db.execute('BEGIN')
         inspection = inspect_connection(db)
@@ -163,16 +260,21 @@ def rehearsal_clone(*, source_snapshot, expected_source_sha256, manifest,
         columns = _columns(db)
         if _source_projection(db, columns) != inspection['source']:
             raise RehearsalError('FOUNDATION_EMPTY_BASELINE_REQUIRED')
-        rebuilt = _rebuild_source_plan(db, manifest, inspection, validation)
+        rebuilt = _rebuild_rehearsal_plan(db, manifest, inspection, validation)
         if canonical_json(rebuilt) != canonical_json(plan):
             raise RehearsalError('REVALIDATED_PLAN_MISMATCH')
         scoring = scoring_evidence(db)
     # Fresh directory and exclusive file creation; no existing target adoption.
     directory = Path(tempfile.mkdtemp(
         prefix='rehearsal-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-',
-        dir=source.parent)).resolve(strict=True)
+        dir=execution_parent)).resolve(strict=True)
+    if manifest['schema_version'] == 3:
+        _restrict_new_windows_artifact(directory, directory=True)
+        private_directory(directory)
     path = directory / 'pickem.rehearsal.db'
     with source.open('rb') as src, path.open('xb') as dst:
+        if manifest['schema_version'] == 3:
+            _restrict_new_windows_artifact(path)
         shutil.copyfileobj(src, dst)
     if (_source_check(source, expected_source_sha256) != source or
             _identity(source) != source_identity or file_sha256(path) != expected_source_sha256):
@@ -181,7 +283,9 @@ def rehearsal_clone(*, source_snapshot, expected_source_sha256, manifest,
     _ACTIVE[target] = dict(source_identity=source_identity, target_identity=_identity(path),
                            directory_identity=_identity(directory),
                            manifest_checksum=expected_manifest_checksum,
-                           plan_sha256=expected_plan_sha256, scoring=scoring)
+                           plan_sha256=expected_plan_sha256, scoring=scoring,
+                           execution_parent=execution_parent,
+                           offline_review=deepcopy(offline_review))
     try:
         yield target
     finally:
@@ -194,25 +298,32 @@ def _target(target, database_path, source_snapshot, expected_target_sha256):
     state = _ACTIVE[target]
     source, path = _local_file(source_snapshot), _local_file(database_path)
     if (path == source or source != target.source or path != target.path or
-            path.parent.parent != source.parent or expected_target_sha256 != target.initial_sha256 or
+            path.parent.parent != state['execution_parent'] or expected_target_sha256 != target.initial_sha256 or
             _identity(source) != state['source_identity'] or
             _identity(path) != state['target_identity'] or
             _identity(path.parent) != state['directory_identity']):
         raise RehearsalError('REHEARSAL_TARGET_IDENTITY_MISMATCH')
     _source_check(source, target.initial_sha256)
+    if state['offline_review'] is not None:
+        from foundation_backfill_operator import private_directory
+        private_directory(path.parent)
+        private_directory(state['execution_parent'])
     return path, state
 
 
 def apply_rehearsal(target, *, database_path, source_snapshot, expected_target_sha256,
                     manifest, expected_manifest_checksum, plan, expected_plan_sha256, fail_at=None,
-                    completion_receipt=False):
+                    completion_receipt=False, offline_review=None):
     """Atomic offline rehearsal only; exact reruns verify then roll back read-only.
 
     Production-time gates are retained, never cleared. Only this factory's live
     capability is accepted. No caller callback can run within the transaction.
     """
     path, state = _target(target, database_path, source_snapshot, expected_target_sha256)
-    manifest, plan, validation = _inputs(manifest, plan, expected_manifest_checksum, expected_plan_sha256)
+    manifest, plan, validation = _inputs(manifest, plan, expected_manifest_checksum, expected_plan_sha256,
+                                         offline_review=offline_review)
+    if offline_review != state['offline_review']:
+        raise RehearsalError('CAPABILITY_INPUT_MISMATCH')
     if (expected_manifest_checksum != state['manifest_checksum'] or
             expected_plan_sha256 != state['plan_sha256']):
         raise RehearsalError('CAPABILITY_INPUT_MISMATCH')
@@ -225,6 +336,8 @@ def apply_rehearsal(target, *, database_path, source_snapshot, expected_target_s
     receipt_evidence = dict(manifest=manifest, plan=plan,
                             expected_manifest_checksum=expected_manifest_checksum,
                             expected_plan_sha256=expected_plan_sha256)
+    if offline_review is not None:
+        receipt_evidence['offline_review'] = deepcopy(offline_review)
     try:
         with closing(sqlite3.connect(path.as_uri() + '?mode=rw', uri=True, timeout=2,
                                     isolation_level=None)) as db:
@@ -284,7 +397,7 @@ def apply_rehearsal(target, *, database_path, source_snapshot, expected_target_s
                 columns = _columns(db)
                 if _source_projection(db, columns) != plan['source']:
                     raise RehearsalError('STALE_SOURCE_FINGERPRINT')
-                rebuilt = _rebuild_source_plan(db, manifest, current, validation)
+                rebuilt = _rebuild_rehearsal_plan(db, manifest, current, validation)
                 if canonical_json(rebuilt) != canonical_json(plan):
                     raise RehearsalError('REVALIDATED_PLAN_MISMATCH')
                 score_before = scoring_evidence(db)

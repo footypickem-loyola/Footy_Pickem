@@ -563,3 +563,68 @@ def plan_summary(plan):
                 blocker_codes=sorted({b['code'] for b in plan['blockers']}),
                 execution_gates=plan.get('execution_gates', []),
                 historical_findings=plan.get('historical_findings', []))
+
+
+
+def plan_offline_database(path, manifest, inspection, *, reviewed_source,
+                          checkpoint_sha256, owner_decision_path,
+                          owner_decision_sha256, audit_evidence_path,
+                          audit_evidence_sha256):
+    """V3 planning only, on a hash-verified standalone disposable/restore artifact.
+
+    Immutable reads are safe only for an offline file without WAL/SHM/journal.
+    Production execution and the v2 planner deliberately do not accept v3.
+    """
+    import hashlib
+    from pathlib import Path
+    from foundation_backfill_manifest import validate_offline_planning_manifest
+    from foundation_backfill_operator import private_directory
+    from foundation_backfill_rehearsal import _readonly_source
+
+    validation = validate_offline_planning_manifest(
+        manifest, reviewed_source=reviewed_source,
+        owner_decision_sha256=owner_decision_sha256,
+        audit_evidence_sha256=audit_evidence_sha256)
+    if validation['status'] != 'valid':
+        raise InspectionError('OFFLINE_MANIFEST_BLOCKED')
+
+    def verified_file(value, expected):
+        p = Path(value).absolute()
+        if (p.is_symlink() or not p.is_file() or p.resolve() != p or
+                p.stat().st_nlink != 1):
+            raise InspectionError('OFFLINE_ARTIFACT_REFUSED')
+        private_directory(p.parent)
+        with p.open('rb') as stream:
+            actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+        if actual != expected:
+            raise InspectionError('OFFLINE_ARTIFACT_HASH_MISMATCH')
+        return p
+
+    path = verified_file(path, checkpoint_sha256)
+    verified_file(owner_decision_path, owner_decision_sha256)
+    verified_file(audit_evidence_path, audit_evidence_sha256)
+    if any(Path(str(path) + suffix).exists() for suffix in ('-wal', '-shm', '-journal')):
+        raise InspectionError('OFFLINE_STANDALONE_REQUIRED')
+    try:
+        with closing(_readonly_source(path)) as db:
+            db.execute('BEGIN')
+            current = inspect_connection(db)
+            if inspection != current or current['source'] != reviewed_source:
+                raise InspectionError('SOURCE_FINGERPRINT_MISMATCH')
+            tables = {}
+            for table in sorted(set(REQUIRED_COLUMNS) | FOUNDATION):
+                cursor = db.execute('SELECT * FROM ' + quoted(table))
+                names = [c[0] for c in cursor.description]
+                tables[table] = sorted((dict(zip(names, r)) for r in cursor),
+                                       key=lambda row: digest(row))
+            plan = _build_plan(tables, manifest, current, validation)
+        verified_file(path, checkpoint_sha256)
+        verified_file(owner_decision_path, owner_decision_sha256)
+        verified_file(audit_evidence_path, audit_evidence_sha256)
+        return dict(plan, plan_version=3, offline_only=True,
+                    email_send_authorized=False, recipient_disposition='disabled_no_send',
+                    offline_no_send=manifest['offline_no_send'])
+    except InspectionError:
+        raise
+    except (sqlite3.Error, OSError, ValueError, TypeError, KeyError):
+        raise InspectionError('DATABASE_PLANNING_REFUSED') from None

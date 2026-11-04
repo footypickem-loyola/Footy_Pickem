@@ -333,3 +333,58 @@ def validate_planning_manifest(document):
             'scope': 'structure_and_internal_consistency_only', 'execution_authorized': False,
             'checksum': document['checksum'], 'mapping_counts': counts,
             'blockers': [{'label': 'Unresolved', 'code': c} for c in sorted(blockers)]}
+
+
+# V3 is a separate read-only contract, never a production recipient policy.
+OFFLINE_CONTRACT = 'stage2-offline-no-send-v1'
+
+
+def validate_offline_planning_manifest(document, *, reviewed_source,
+                                       owner_decision_sha256, audit_evidence_sha256):
+    """Source-bound no-send review; v2 and all execution admission stay unchanged.
+
+    Review hashes reference private artifacts, not signatures or send permissions.
+    As in v2, a human must establish their authority outside this validator.
+    """
+    from copy import deepcopy
+    _fields(document, {'schema_version', 'source', 'evidence', 'mappings',
+                       'checksum', 'offline_no_send'})
+    _need(type(document['schema_version']) is int and document['schema_version'] == 3)
+    _fields(reviewed_source, {'schema_sha256', 'data_sha256'})
+    _need(all(_hash(v) for v in reviewed_source.values()) and
+          document['source'] == reviewed_source, 'SOURCE_FINGERPRINT_MISMATCH')
+    disposition = document['offline_no_send']
+    _fields(disposition, {'contract', 'scope', 'mode', 'owner_decision_sha256',
+                          'audit_evidence_sha256'})
+    _need(disposition['contract'] == OFFLINE_CONTRACT and
+          disposition['scope'] == 'offline_rehearsal' and
+          disposition['mode'] == 'disabled_no_send', 'OFFLINE_NO_SEND_REQUIRED')
+    _need(_hash(owner_decision_sha256) and _hash(audit_evidence_sha256) and
+          owner_decision_sha256 != audit_evidence_sha256 and
+          disposition['owner_decision_sha256'] == owner_decision_sha256 and
+          disposition['audit_evidence_sha256'] == audit_evidence_sha256,
+          'OFFLINE_REVIEW_EVIDENCE_REQUIRED')
+    # Validate every original rule, without inventing even a temporary recipient.
+    projection = deepcopy(document)
+    del projection['offline_no_send']
+    projection['schema_version'] = 2
+    projection['checksum'] = manifest_checksum(projection)
+    validation = validate_planning_manifest(projection)
+    _need(not validation['mapping_counts'].get('recipient'), 'OFFLINE_RECIPIENTS_FORBIDDEN')
+    policies = [r for r in document['mappings'] if r['kind'] == 'policy']
+    _need(len(policies) == 1 and policies[0]['status'] == 'setup' and
+          policies[0]['correspondent_enabled'] == 0 and policies[0]['sync_enabled'] == 0,
+          'OFFLINE_DISABLED_SETUP_REQUIRED')
+    evidence = {(e['sha256'], e['kind']) for e in document['evidence']}
+    _need(all((h, 'product_decision') in evidence
+              for h in (owner_decision_sha256, audit_evidence_sha256)) and
+          owner_decision_sha256 in policies[0]['evidence'],
+          'OFFLINE_REVIEW_EVIDENCE_REQUIRED')
+    _need(_hash(document['checksum']) and document['checksum'] == manifest_checksum(document),
+          'MANIFEST_CHECKSUM_MISMATCH')
+    # The sole v2 requirement replaced by the explicit, fully checked disposition.
+    blockers = [b for b in validation['blockers']
+                if b['code'] != 'RECIPIENT_PERMISSION_MANIFEST_REQUIRED']
+    return dict(validation, schema_version=3, checksum=document['checksum'],
+                scope='offline_rehearsal_no_send_only', email_send_authorized=False,
+                status='blocked' if blockers else 'valid', blockers=blockers)
