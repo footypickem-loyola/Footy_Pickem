@@ -120,7 +120,24 @@ def check_unapplied(db):
     return columns
 
 
-def verified_applied(db, expected_schema=None):
+def verified_applied(db, expected_schema=None, *, stage2_evidence=None):
+    """Default: strict Stage 1 history. Explicit evidence: strict Stage 2 lifecycle.
+
+    Stage 2 evidence must bind the reviewed manifest, canonical plan and source;
+    no extra ledger row is accepted merely because it has a recognized name.
+    """
+    if stage2_evidence is not None:
+        from foundation_backfill_receipt import verify_state, ReceiptError
+        try:
+            verify_state(db, **stage2_evidence)
+            if expected_schema is not None:
+                row = db.execute('SELECT before_schema_hash,after_schema_hash '
+                                 'FROM schema_migrations WHERE version=?', (VERSION,)).fetchone()
+                if row is None or expected_schema not in row:
+                    raise ReceiptError('EXPECTED_SCHEMA_MISMATCH')
+        except (ReceiptError, TypeError):
+            raise MigrationError('Stage 2 evidence verification failed') from None
+        return True
     if 'schema_migrations' not in table_columns(db):
         return False
     try:
