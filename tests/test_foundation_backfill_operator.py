@@ -15,7 +15,10 @@ import foundation_backfill_execute as execute
 import test_foundation_backfill_execute as fixtures
 
 ROOT = Path(__file__).resolve().parents[1]
-HEAD = '9deeb7d4ab976d742f1ea12c0676761cdefae266'
+# Qualify the checked-out commit, not the parent that predates this harness.
+# Resolve once so blob extraction and every verification share one exact revision.
+# Bundle contents still come exclusively from Git blobs, never worktree bytes.
+HEAD = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
 
 
 class OperatorTests(unittest.TestCase):
@@ -96,6 +99,24 @@ class OperatorTests(unittest.TestCase):
             self.assertEqual(operator.sha(sources[Path(record['path']).stem]), record['sha256'])
         with self.assertRaises(operator.Refusal):
             operator.build_manifest(ROOT, '0' * 40)
+
+    def test_stale_checkout_revision_and_manifest_refuse(self):
+        self.configure()
+        stale_head = subprocess.check_output(
+            ['git', 'rev-parse', HEAD + '^'], cwd=ROOT, text=True).strip()
+        self.assertNotEqual(stale_head, HEAD)
+        with self.assertRaisesRegex(operator.Refusal, '^HEAD_MISMATCH$'):
+            operator.build_manifest(ROOT, stale_head)
+        stale_manifest = deepcopy(self.bundle_doc)
+        stale_manifest['revision'] = stale_head
+        # A changed manifest cannot reuse the approved manifest checksum.
+        with self.assertRaisesRegex(operator.Refusal, '^BUNDLE_MANIFEST_HASH_MISMATCH$'):
+            operator.verify_bundle(self.bundle, stale_manifest,
+                operator.sha(operator.canonical(self.bundle_doc)), HEAD)
+        # Rehashing a stale manifest cannot make its revision current.
+        with self.assertRaisesRegex(operator.Refusal, '^BUNDLE_REVISION_MISMATCH$'):
+            operator.verify_bundle(self.bundle, stale_manifest,
+                operator.sha(operator.canonical(stale_manifest)), HEAD)
 
     def test_missing_extra_modified_and_revision_mismatched_bundle_refuse(self):
         self.configure()
