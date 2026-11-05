@@ -9,3 +9,4 @@ openai>=1.66,<3
 Markdown>=3.7,<4
 bleach>=6.1,<7
 tzdata>=2024.1
+PyJWT[crypto]==2.15.1
