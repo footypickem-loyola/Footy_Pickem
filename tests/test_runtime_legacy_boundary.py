@@ -39,7 +39,7 @@ class BoundaryTests(unittest.TestCase):
     def test_every_registered_route_has_an_explicit_signature_policy(self):
         actual={signature(r) for r in self.app.url_map.iter_rules()}
         self.assertEqual(actual,set(ROUTES))
-        self.assertEqual(len(actual),55)
+        self.assertEqual(len(actual),56)
         self.assertNotIn('unclassified_deny',{r['category'] for r in inventory(self.app)})
 
     def test_all_private_browser_routes_reject_unauthenticated_and_name_only(self):

@@ -7,7 +7,7 @@ legacy room-code experience remains unchanged on unmigrated databases.
 
 ## Policy
 
-All 55 registered route signatures (endpoint, URL rule, declared methods) are
+All 56 registered route signatures (endpoint, URL rule, declared methods) are
 explicitly classified below. This is an exact allowlist, not a URL-prefix bypass.
 New or changed signatures are denied by default. The focused route-coverage test
 requires the registered inventory to equal the reviewed policy. No private browser
@@ -121,11 +121,12 @@ https://docs.sqlalchemy.org/en/20/orm/queryguide/api.html#sqlalchemy.orm.with_lo
 - `GET /auth/leagues/<int:league_id>` → `runtime_auth.leagues`
 - `POST /auth/logout` → `runtime_auth.logout`
 
-### League-scoped read-only gameplay (1)
+### League-scoped read-only gameplay (2)
 
 - `GET /auth/leagues/<int:league_id>/seasons/<int:season_id>/matchweeks/<int:week_number>` → `runtime_auth.matchweek`
+- `GET /auth/leagues/<int:league_id>/seasons/<int:season_id>/matchweeks/<int:week_number>/view` → `runtime_auth.matchweek_view`
 
-This exact signature delegates to the authenticated blueprint's explicit scoped
+These exact signatures delegate to the authenticated blueprint's explicit scoped
 SELECTs. It is not a prefix exemption or permission for other raw-SQL views.
 
 ### League-scoped authenticated pick submission (1)

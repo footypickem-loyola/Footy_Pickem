@@ -90,3 +90,13 @@ fixture submissions cannot consume the same turn, including consecutive snake tu
 Shared fixtures remain isolated by matchup; kickoff and result locks also apply to
 persisted queues. Three additional synthetic review regressions cover within-league
 foreign matchups, duplicate/missing form fields and revocation while waiting.
+
+## HTML form responses (Task 28, local review)
+
+The scoped Matchweek page submits the same strict form contract. With
+`Accept: text/html`, a committed pick returns 303 to its scoped view; draft
+400/409 refusals return 303 to that view with a fixed refresh notice. JSON clients
+retain 201/error responses. No CSRF or authorization refusal is converted into a
+success, and no failed POST is retried. Shared helpers supply identical phase,
+seasonal membership and fixture kickoff locks to the UI projection and write path.
+The control is implemented; authenticated league/season navigation is next.

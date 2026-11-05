@@ -41,6 +41,8 @@ def install_from_environment(app, *, session_factory, game_database, values, dra
         response.headers['Cache-Control'] = 'no-store'
         response.headers['Referrer-Policy'] = 'no-referrer'
         response.headers['Content-Security-Policy'] = "default-src 'none'; form-action 'self' " + settings.issuer.rstrip('/') + "; frame-ancestors 'none'; base-uri 'none'"
+        if request.endpoint=='runtime_auth.matchweek_view':
+            response.headers['Content-Security-Policy'] = "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
         return response
 
     @bp.errorhandler(AuthRefused)
@@ -143,7 +145,8 @@ def install_from_environment(app, *, session_factory, game_database, values, dra
         return account(db,row[0],row[1])
 
     from runtime_matchweek import install_routes
-    install_routes(bp,session_factory=session_factory,resolve_user=resolve_user)
+    install_routes(bp,session_factory=session_factory,resolve_user=resolve_user,
+                   domain=draft_domain,csrf_token=lambda:current()[1][2])
     from runtime_league_draft import install_routes as install_draft_routes
     def authorize_write(db):
         _,row=current()

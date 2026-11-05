@@ -2,11 +2,12 @@
 
 Explicit league/season/roster/slate joins; never legacy global helper fallbacks.
 """
-from flask import abort, jsonify, request
+from flask import abort, jsonify, render_template, request, url_for
+from runtime_draft_state import add_draft_state
 from sqlalchemy import text
 
 
-def install_routes(bp, *, session_factory, resolve_user):
+def install_routes(bp, *, session_factory, resolve_user, domain=None, csrf_token=None):
     @bp.get('/leagues/<int:league_id>/seasons/<int:season_id>/matchweeks/<int:week_number>')
     def matchweek(league_id,season_id,week_number):
         with session_factory() as db:
@@ -15,11 +16,26 @@ def install_routes(bp, *, session_factory, resolve_user):
             user=resolve_user(db)
             if not all(0<v<2**63 for v in (league_id,season_id,week_number)):abort(404)
             if request.args or request.content_length:abort(400)
-            data=load_matchweek(db,user,league_id,season_id,week_number)
+            data=add_draft_state(db,load_matchweek(db,user,league_id,season_id,week_number),domain)
         response=jsonify(data)
         response.headers['Cache-Control']='private, no-store'
         response.headers['X-Content-Type-Options']='nosniff'
         return response
+
+    @bp.get('/leagues/<int:league_id>/seasons/<int:season_id>/matchweeks/<int:week_number>/view')
+    def matchweek_view(league_id,season_id,week_number):
+        with session_factory() as db:
+            db.execute(text('BEGIN'))
+            user=resolve_user(db)
+            if not all(0<v<2**63 for v in (league_id,season_id,week_number)):abort(404)
+            if (set(request.args)-{'notice'} or request.content_length or
+                len(request.args.getlist('notice'))>1 or request.args.get('notice','') not in ('','saved','changed')):abort(400)
+            data=add_draft_state(db,load_matchweek(db,user,league_id,season_id,week_number),domain)
+            mine=[m for m in data['matchups'] if data['viewer']['membership_id'] in {p['id'] for p in m['players']}]
+            token=csrf_token() if csrf_token is not None else None
+        return render_template('runtime_league_matchweek.html',context=data,mine=mine,csrf=token,
+            notice=request.args.get('notice'),refresh_url=url_for('runtime_auth.matchweek_view',
+                league_id=league_id,season_id=season_id,week_number=week_number))
 
 
 def load_matchweek(db,user,league_id,season_id,week_number):

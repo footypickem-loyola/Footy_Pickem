@@ -75,3 +75,45 @@ picks, active/left/disabled membership refusal, unverified legacy sessions, fore
 selectors and inconsistent edges, null historical club links, read-only behavior
 and disabled Loyola compatibility. All fixtures/accounts are synthetic; network
 access is blocked by the test harness.
+
+## Task 28 pick interface (local review)
+
+Open `/auth/leagues/<league_id>/seasons/<season_id>/matchweeks/<week_number>/view`
+with the verified session. The page shows only the viewer's scheduled matchup(s),
+opponent, ordered pick history, current turn, lock reason and eligible fixtures.
+Each team button is an explicit fixture/team selection submitted through the
+existing authenticated pick endpoint. No request player selector is used.
+
+`draft` metadata on each Matchweek JSON matchup now includes `expected_count`,
+`turn_player_id`, `locked`, `lock_reason`, `can_pick` and `available_fixtures`.
+The server uses the real draft engine's snake-order function and shared read/write
+phase, membership and kickoff eligibility checks. It excludes fixtures already
+picked in that matchup, missing/elapsed kickoffs and recorded results. These are
+snapshot hints; the write transaction always rechecks current authorization,
+version, turn and eligibility. A lock or no scheduled matchup produces no forms.
+
+The interface uses the existing Flask templates and native POST/redirect/GET
+pattern, with no frontend framework or JavaScript requirement. Successful HTML
+submissions redirect to the same scoped page with a fixed confirmation. A stale
+or otherwise refused draft (400/409) redirects with a fixed refresh message and
+fresh server state. Authentication, CSRF and foreign-scope refusals retain their
+HTTP refusal. JSON clients retain their existing 201/error contract. No automatic
+retry is introduced. Refresh also fetches the opponent's latest state; there is no
+background polling. A concurrent change after rendering is handled by the write
+guard. An uncertain network result must be checked with Refresh, not replayed.
+
+Mobile layout uses a single bounded column, stacked team choices on narrow
+screens, 48px buttons, visible keyboard focus, escaped labels and a status banner.
+The exact HTML route permits only the local stylesheet in its CSP; scripts and
+inline styles remain disallowed. Legacy templates/routes are unchanged with the
+gate disabled. The central route inventory now enumerates 56 signatures.
+
+Focused UI tests: `python -B -m unittest discover -s tests -p test_runtime_matchweek_ui.py`.
+Tests submit the actual rendered forms, follow success/stale redirects, compare
+server draft state, check lock/revocation/cross-league refusal, escaping and legacy
+disabled-mode picks. All use synthetic data and blocked network transports.
+
+The next small functional milestone is authenticated league/season/Matchweek
+navigation so users can reach this scoped view directly after login. Scoped queue
+editing, standings/scoring presentation, administration and background writers
+remain unfinished. No production setup, account linking or deployment occurred.

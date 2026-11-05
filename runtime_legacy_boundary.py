@@ -24,6 +24,7 @@ routes('public_auth', [('runtime_auth.login_form','/auth/login','GET'),
 routes('account', [('runtime_auth.leagues','/auth/leagues','GET'),
     ('runtime_auth.leagues','/auth/leagues/<int:league_id>','GET'),('runtime_auth.logout','/auth/logout','POST')])
 routes('league_read', [('runtime_auth.matchweek','/auth/leagues/<int:league_id>/seasons/<int:season_id>/matchweeks/<int:week_number>','GET')])
+routes('league_read', [('runtime_auth.matchweek_view','/auth/leagues/<int:league_id>/seasons/<int:season_id>/matchweeks/<int:week_number>/view','GET')])
 routes('league_write', [('runtime_auth.submit_pick','/auth/leagues/<int:league_id>/seasons/<int:season_id>/matchweeks/<int:week_number>/matchups/<int:matchup_id>/picks','POST')])
 routes('legacy', [('shell','/','GET'),('tab_current','/tab/current','GET'),
     ('matchweek_partial','/partials/matchweek/<int:week_number>','GET'),

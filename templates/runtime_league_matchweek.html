@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ context.league.name }} · Matchweek {{ context.week.number }}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='runtime_league_matchweek.css') }}"></head>
+<body><main><header><p class="eyebrow">{{ context.league.name }} · {{ context.season.name }}</p>
+<h1>Matchweek {{ context.week.number }}</h1><a class="refresh" href="{{ refresh_url }}">Refresh draft</a></header>
+{% if notice == 'saved' %}<p class="notice" role="status">Pick saved. Draft refreshed.</p>
+{% elif notice == 'changed' %}<p class="notice" role="status">Pick not accepted. The draft was refreshed; check whose turn it is and the available fixtures before choosing again.</p>{% endif %}
+{% for m in mine %}
+{% set viewer = context.viewer.membership_id %}{% set state = m.draft %}
+{% set opponent = (m.players | rejectattr('id', 'equalto', viewer) | list)[0] %}
+<section aria-labelledby="matchup-{{ m.id }}"><h2 id="matchup-{{ m.id }}">You vs {{ opponent.name }}</h2>
+{% if state.locked %}<p class="badge">Draft locked: {{ state.lock_reason }}</p>
+{% elif state.can_pick %}<p class="badge">Your turn</p>
+{% else %}<p class="badge">Waiting for {{ (m.players | selectattr('id', 'equalto', state.turn_player_id) | list)[0].name }}</p>{% endif %}
+<p>{{ state.expected_count }} of 10 picks made</p>
+<h3>Picks so far</h3><ol class="history">
+{% for pick in m.picks %}<li><strong>{{ 'You' if pick.player_id == viewer else opponent.name }}</strong>: {{ pick.team }}
+{% set fixture = (context.fixtures | selectattr('id','equalto',pick.fixture_id) | list)[0] %}
+<span>{{ fixture.home }} vs {{ fixture.away }}</span></li>{% else %}<li class="empty">No picks yet.</li>{% endfor %}</ol>
+<h3>Available fixtures</h3>
+{% for fixture in state.available_fixtures %}<article class="fixture"><h4>{{ fixture.home }} vs {{ fixture.away }}</h4>
+<p>Kickoff: {{ fixture.kickoff_utc }} UTC</p>
+{% if state.can_pick and csrf %}<div class="choices">
+{% for team,club in [(fixture.home,fixture.home_club_id),(fixture.away,fixture.away_club_id)] %}
+<form method="post" action="{{ url_for('runtime_auth.submit_pick',league_id=context.league.id,season_id=context.season.id,week_number=context.week.number,matchup_id=m.id) }}">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="fixture_id" value="{{ fixture.id }}">
+<input type="hidden" name="selected_club_id" value="{{ club }}"><input type="hidden" name="expected_count" value="{{ state.expected_count }}">
+<input type="hidden" name="team" value="{{ team }}"><button type="submit">Pick {{ team }}</button></form>
+{% endfor %}</div>{% endif %}</article>{% else %}<p>No eligible fixtures remain.</p>{% endfor %}
+</section>{% else %}<section><h2>No matchup scheduled for you</h2><p>You can refresh this league's Matchweek when its schedule is ready.</p></section>{% endfor %}
+<footer>Choices and turns are checked again when you submit. Refresh to see your opponent's latest picks.</footer>
+</main></body></html>

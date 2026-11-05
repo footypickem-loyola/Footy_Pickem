@@ -90,7 +90,7 @@ is documented in `RUNTIME_LEAGUE_MATCHWEEK.md`; Task 27 scoped pick submission i
 documented in `RUNTIME_LEAGUE_DRAFT.md`. Disabled mode remains unchanged and is not multi-league
 safe; do not populate/enable second-league gameplay through that path.
 
-See `docs/RUNTIME_LEGACY_BOUNDARY.md` for all 55 route classifications, machine
+See `docs/RUNTIME_LEGACY_BOUNDARY.md` for all 56 route classifications, machine
 credentials, scoping/CSRF rules, session verification and remaining prerequisites.
 
 ## Focused validation
