@@ -7,7 +7,7 @@ legacy room-code experience remains unchanged on unmigrated databases.
 
 ## Policy
 
-All 54 registered route signatures (endpoint, URL rule, declared methods) are
+All 55 registered route signatures (endpoint, URL rule, declared methods) are
 explicitly classified below. This is an exact allowlist, not a URL-prefix bypass.
 New or changed signatures are denied by default. The focused route-coverage test
 requires the registered inventory to equal the reviewed policy. No private browser
@@ -78,7 +78,7 @@ fix was required. Private, encrypted, persistent auth-store provisioning, HTTPS
 proxy/origin verification and approved account links remain prerequisites for any
 hosted enablement. No such provisioning/configuration or live login occurred here.
 
-League switching, writable League B gameplay, foundation-aware new-write completeness,
+League switching, foundation-aware new-write completeness,
 scoped admin capabilities, automatic account claiming and league-aware background
 writers are not implemented. The feature is off by default. No production or
 preserved rehearsal data was accessed; tests use signed synthetic OIDC and temporary
@@ -127,6 +127,14 @@ https://docs.sqlalchemy.org/en/20/orm/queryguide/api.html#sqlalchemy.orm.with_lo
 
 This exact signature delegates to the authenticated blueprint's explicit scoped
 SELECTs. It is not a prefix exemption or permission for other raw-SQL views.
+
+### League-scoped authenticated pick submission (1)
+
+- `POST /auth/leagues/<int:league_id>/seasons/<int:season_id>/matchweeks/<int:week_number>/matchups/<int:matchup_id>/picks` → `runtime_auth.submit_pick`
+
+This exact handler verifies account, CSRF, membership and scoped relationships
+inside the existing serialized draft transaction. It grants no legacy-route access.
+See `RUNTIME_LEAGUE_DRAFT.md` for submission fields and lock conditions.
 
 ### Verified Loyola legacy browser access (14)
 

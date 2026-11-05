@@ -6478,7 +6478,8 @@ def main():
 if os.environ.get("RUNTIME_AUTH0_ENABLED", "0") != "0":
     from runtime_league_auth import install_from_environment
     install_from_environment(app, session_factory=SessionLocal,
-                             game_database=engine.url.database, values=os.environ)
+                             game_database=engine.url.database, values=os.environ,
+                             draft_domain=sys.modules[__name__])
     from runtime_legacy_boundary import install_boundary
     install_boundary(sys.modules[__name__])
 

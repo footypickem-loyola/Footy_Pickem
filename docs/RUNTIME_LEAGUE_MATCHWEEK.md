@@ -6,7 +6,8 @@ registers no new route and leaves Loyola's unmigrated room-code behavior intact.
 `GET /auth/leagues/<league_id>/seasons/<season_id>/matchweeks/<week_number>`
 returns JSON with league, viewer membership, season, week, ordered fixture slate,
 shared fixture results, matchups, roster player IDs/names and picks. This is a
-read-only projection, without pick submission, scoring changes or league switching UI.
+read-only projection, without scoring changes or league switching UI. Task 27 adds
+a separate authenticated POST; see `RUNTIME_LEAGUE_DRAFT.md`.
 
 The existing Auth0 blueprint requires its configured HTTPS origin and server-side
 opaque session. Exact verified issuer/subject must resolve to an active user and

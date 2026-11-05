@@ -1,6 +1,6 @@
-"""Opt-in verified identity and read-only memberships in the actual Flask runtime.
+"""Opt-in verified identity and scoped league routes in the actual Flask runtime.
 
-No legacy session upgrade, game DB writes, automatic linking or gameplay routing.
+No legacy session upgrade or automatic linking; gameplay uses explicit scoped adapters.
 """
 import base64
 import hashlib
@@ -17,7 +17,7 @@ from runtime_auth_sessions import SessionStore, AuthRefused, need
 COOKIE = '__Host-footy_runtime'
 
 
-def install_from_environment(app, *, session_factory, game_database, values):
+def install_from_environment(app, *, session_factory, game_database, values, draft_domain=None):
     config = Auth0Config.from_mapping(values)
     if not config.enabled:
         return False
@@ -144,6 +144,12 @@ def install_from_environment(app, *, session_factory, game_database, values):
 
     from runtime_matchweek import install_routes
     install_routes(bp,session_factory=session_factory,resolve_user=resolve_user)
+    from runtime_league_draft import install_routes as install_draft_routes
+    def authorize_write(db):
+        _,row=current()
+        csrf(row)
+        return account(db,row[0],row[1])
+    install_draft_routes(bp,domain=draft_domain,authorize_write=authorize_write)
     app.register_blueprint(bp)
 
     app.extensions['runtime_auth'] = dict(store=store,provider=provider,

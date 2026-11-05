@@ -29,6 +29,7 @@ class DraftService:
             try:
                 db.execute(text("BEGIN IMMEDIATE"))
                 m = db.get(d.Matchup, matchup_id)
+                player_id = self.authorize(db, m, player_id)
                 if m is None:
                     raise DraftError("Matchup not found", 404)
                 if player_id not in (m.player_a_id, m.player_b_id):
@@ -54,6 +55,17 @@ class DraftService:
                 db.rollback()
                 raise
 
+    def authorize(self, db, matchup, player_id):
+        """Default legacy authorization; scoped runtimes revalidate under the lock."""
+        return player_id
+
+    def fixture(self, db, matchup, fixture_id):
+        fx = db.get(self.d.Fixture, fixture_id)
+        return fx if fx and fx.week_id == matchup.week_id else None
+
+    def after_pick(self, db, pick, fixture):
+        """Optional foundation fields, in the same transaction as the legacy pick."""
+
     def _pick(self, db, m, player_id, fixture_id, team, expected_count=None):
         d = self.d
         count = db.query(d.Pick).filter_by(matchup_id=m.id).count()
@@ -61,14 +73,16 @@ class DraftService:
             raise DraftError("Draft changed. Refresh before picking.", 409)
         if d.compute_next_turn(db, m) != player_id:
             raise DraftError("Not your turn in this matchup")
-        fx = db.get(d.Fixture, fixture_id)
-        if not fx or fx.week_id != m.week_id or db.query(d.Pick).filter_by(
+        fx = self.fixture(db, m, fixture_id)
+        if not fx or db.query(d.Pick).filter_by(
                 matchup_id=m.id, fixture_id=fixture_id).first():
             raise DraftError("Fixture already taken or not in this week")
         if team not in (fx.home, fx.away):
             raise DraftError("Team must be one of the fixture teams")
-        db.add(d.Pick(matchup_id=m.id, player_id=player_id, fixture_id=fx.id, team=team))
+        pick = d.Pick(matchup_id=m.id, player_id=player_id, fixture_id=fx.id, team=team)
+        db.add(pick)
         db.flush()
+        self.after_pick(db, pick, fx)
 
     def _run(self, db, m):
         d = self.d
@@ -96,8 +110,8 @@ class DraftService:
 
     def unavailable(self, db, m, preference):
         d = self.d
-        fx = db.get(d.Fixture, preference.fixture_id)
-        if not fx or fx.week_id != m.week_id:
+        fx = self.fixture(db, m, preference.fixture_id)
+        if not fx:
             return "Fixture no longer in this matchup"
         if preference.team not in (fx.home, fx.away):
             return "Team no longer in this fixture"
