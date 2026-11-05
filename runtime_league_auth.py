@@ -138,10 +138,13 @@ def install_from_environment(app, *, session_factory, game_database, values):
         response.delete_cookie(COOKIE,path='/',secure=True,httponly=True,samesite='Lax')
         return response  # Local logout only; does not call Auth0 or clear Loyola.
 
-    app.register_blueprint(bp)
     def resolve_user(db):
         _,row=current()
         return account(db,row[0],row[1])
+
+    from runtime_matchweek import install_routes
+    install_routes(bp,session_factory=session_factory,resolve_user=resolve_user)
+    app.register_blueprint(bp)
 
     app.extensions['runtime_auth'] = dict(store=store,provider=provider,
                                           resolve_user=resolve_user,origin=settings.origin)

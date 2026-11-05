@@ -85,10 +85,11 @@ Task 23 installs an exact-route, deny-by-default boundary whenever this Auth0
 feature is enabled. Linked active Loyola members can use the audited legacy
 browser views with centralized Loyola query scoping. Name-only sessions, foreign
 league selectors, legacy admin and room-code join are refused. League B gameplay
-is still unavailable. Disabled mode remains unchanged and is not multi-league
+through legacy routes is still unavailable. The separate read-only Task 26 endpoint
+is documented in `RUNTIME_LEAGUE_MATCHWEEK.md`. Disabled mode remains unchanged and is not multi-league
 safe; do not populate/enable second-league gameplay through that path.
 
-See `docs/RUNTIME_LEGACY_BOUNDARY.md` for all 53 route classifications, machine
+See `docs/RUNTIME_LEGACY_BOUNDARY.md` for all 54 route classifications, machine
 credentials, scoping/CSRF rules, session verification and remaining prerequisites.
 
 ## Focused validation
