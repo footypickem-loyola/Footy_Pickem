@@ -24,9 +24,13 @@ Enabled routes (HTTPS at the exact configured callback origin only):
   are refused. Successful login rotates the opaque session ID.
 - `GET /auth/leagues`: only the authenticated user's active memberships in setup
   or active leagues; metadata only (ID, slug, name, status, membership ID, role),
-  plus a session-bound logout CSRF token. No query-based identity overrides.
+  plus a session-bound logout CSRF token for JSON clients. Browser requests with
+  `Accept: text/html` show the My Leagues navigation page. No query-based identity overrides.
 - `GET /auth/leagues/<id>`: same authorization query plus the selector; unknown
   and unauthorized leagues both return 404. The selector alone grants nothing.
+  Browser requests show active, unarchived season choices for this league.
+- `GET /auth/leagues/<id>/seasons/<season_id>`: authenticated Matchweek chooser;
+  selected season must be active, unarchived and belong to the authorized league.
 - `POST /auth/logout`: same-origin CSRF check and atomic local session revocation.
   No Auth0/provider logout request is made; provider SSO and Loyola sessions are
   unaffected. Access/refresh/ID tokens are never retained or sent to the browser.
@@ -90,7 +94,7 @@ is documented in `RUNTIME_LEAGUE_MATCHWEEK.md`; Task 27 scoped pick submission i
 documented in `RUNTIME_LEAGUE_DRAFT.md`. Disabled mode remains unchanged and is not multi-league
 safe; do not populate/enable second-league gameplay through that path.
 
-See `docs/RUNTIME_LEGACY_BOUNDARY.md` for all 56 route classifications, machine
+See `docs/RUNTIME_LEGACY_BOUNDARY.md` for all 57 route classifications, machine
 credentials, scoping/CSRF rules, session verification and remaining prerequisites.
 
 ## Focused validation
@@ -112,3 +116,5 @@ After installing requirements, reproduce the focused tests from this worktree:
 ```powershell
 python -B -m unittest discover -s tests -p test_runtime_league_auth.py
 ```
+
+Navigation behavior and focused tests: see `RUNTIME_LEAGUE_NAVIGATION.md`.

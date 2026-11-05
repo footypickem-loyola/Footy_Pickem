@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if season %}{{ season.name }} · Matchweeks{% elif league %}{{ league.name }} · Seasons{% else %}My Leagues{% endif %}</title>
+<link rel="stylesheet" href="{{ url_for('static',filename='runtime_league_matchweek.css') }}"></head>
+<body><main><nav aria-label="League navigation"><a href="{{ url_for('runtime_auth.leagues') }}">My Leagues</a>
+{% if league %}<a href="{{ url_for('runtime_auth.leagues',league_id=league.id) }}">{{ league.name }} · Seasons</a>{% endif %}</nav>
+<header><p class="eyebrow">Footy Pick ’Em{% if league %} · {{ league.name }}{% endif %}</p>
+<h1>{% if season %}{{ season.name }}{% elif league %}Choose a season{% else %}My Leagues{% endif %}</h1></header>
+{% if not league %}<section><h2>Choose your league</h2><p>Your active memberships. You can switch leagues here at any time.</p>
+<ul class="navigation-list">{% for item in leagues %}<li><a class="navigation-choice" href="{{ url_for('runtime_auth.leagues',league_id=item.id) }}">{{ item.name }}{% if item.status=='setup' %}<span>Setup · read only</span>{% endif %}</a></li>
+{% else %}<li>No active league memberships. Ask the league owner about your access.</li>{% endfor %}</ul></section>
+{% elif not season %}<section><h2>Active seasons</h2>
+{% if league.status=='setup' %}<p>This league is in setup. Drafting remains disabled.</p>{% endif %}
+<ul class="navigation-list">{% for item in seasons %}<li>{% if item.ready %}<a class="navigation-choice" href="{{ url_for('runtime_auth.season_navigation',league_id=league.id,season_id=item.id) }}">{{ item.name }}</a>
+{% else %}<p>{{ item.name }} · Schedule configuration is not ready.</p>{% endif %}</li>
+{% else %}<li>No active seasons available.</li>{% endfor %}</ul></section>
+{% else %}<section><h2>Choose a Matchweek</h2>
+{% if current %}<a class="navigation-choice current-week" href="{{ url_for('runtime_auth.matchweek_view',league_id=league.id,season_id=season.id,week_number=current.number) }}">Continue to Matchweek {{ current.number }}<span>Only unfinished Matchweek</span></a>
+{% elif weeks %}<p>Select a Matchweek below. There is no single current week to choose automatically.</p>{% endif %}
+<ul class="navigation-list">{% for week in weeks %}<li><a class="navigation-choice" href="{{ url_for('runtime_auth.matchweek_view',league_id=league.id,season_id=season.id,week_number=week.number) }}">Matchweek {{ week.number }}<span>{% if week.status=='finalized' %}Finalized · read only{% elif week.status=='provisional' %}Provisional · read only{% else %}Drafting{% endif %}</span></a></li>
+{% else %}<li>No Matchweeks scheduled yet.</li>{% endfor %}</ul></section>{% endif %}
+<footer>Use My Leagues to switch leagues. Your picks stay with their league.</footer>
+</main></body></html>

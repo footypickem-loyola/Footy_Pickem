@@ -8,7 +8,7 @@ import hmac
 from pathlib import Path
 from urllib.parse import urlencode
 import sqlite3
-from flask import Blueprint, abort, jsonify, redirect, render_template_string, request
+from flask import Blueprint, abort, jsonify, redirect, render_template, render_template_string, request
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from runtime_auth0 import Auth0Config, Auth0Provider, verify_id_token
@@ -41,7 +41,8 @@ def install_from_environment(app, *, session_factory, game_database, values, dra
         response.headers['Cache-Control'] = 'no-store'
         response.headers['Referrer-Policy'] = 'no-referrer'
         response.headers['Content-Security-Policy'] = "default-src 'none'; form-action 'self' " + settings.issuer.rstrip('/') + "; frame-ancestors 'none'; base-uri 'none'"
-        if request.endpoint=='runtime_auth.matchweek_view':
+        if request.endpoint=='runtime_auth.leagues':response.vary.add('Accept')
+        if request.endpoint in ('runtime_auth.matchweek_view','runtime_auth.leagues','runtime_auth.season_navigation'):
             response.headers['Content-Security-Policy'] = "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
         return response
 
@@ -118,18 +119,14 @@ def install_from_environment(app, *, session_factory, game_database, values, dra
         need(not request.args)
         _,row = current()
         with session_factory() as db:
+            db.execute(text('BEGIN'))
             user = account(db,row[0],row[1])  # Revalidate revocation on every request.
-            query = """SELECT l.id,l.slug,l.name,l.status,p.id AS membership_id,p.role
-                FROM players p JOIN leagues l ON l.id=p.league_id
-                WHERE p.user_id=:user AND p.status='active' AND p.left_at IS NULL
-                AND l.status IN ('setup','active')"""
-            params = dict(user=user)
-            if league_id is not None:
-                query += ' AND l.id=:league'; params['league'] = league_id
-            rows = db.execute(text(query+' ORDER BY l.id'),params).mappings().all()
-            if league_id is not None and not rows:
-                abort(404)  # Same response for unknown and unauthorized leagues.
-            data = [dict(r) for r in rows]
+            from runtime_league_navigation import memberships, season_choices
+            data=memberships(db,user,league_id)
+            seasons=season_choices(db,league_id) if league_id is not None and request.accept_mimetypes.best=='text/html' else None
+        if request.accept_mimetypes.best=='text/html':
+            return render_template('runtime_league_navigation.html',leagues=data if league_id is None else None,
+                                   league=data[0] if league_id is not None else None,seasons=seasons)
         return jsonify(leagues=data,logout_csrf=row[2])
 
     @bp.post('/logout')
@@ -153,6 +150,8 @@ def install_from_environment(app, *, session_factory, game_database, values, dra
         csrf(row)
         return account(db,row[0],row[1])
     install_draft_routes(bp,domain=draft_domain,authorize_write=authorize_write)
+    from runtime_league_navigation import install_routes as install_navigation
+    install_navigation(bp,session_factory=session_factory,resolve_user=resolve_user)
     app.register_blueprint(bp)
 
     app.extensions['runtime_auth'] = dict(store=store,provider=provider,

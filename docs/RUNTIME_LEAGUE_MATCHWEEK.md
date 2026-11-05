@@ -117,3 +117,10 @@ The next small functional milestone is authenticated league/season/Matchweek
 navigation so users can reach this scoped view directly after login. Scoped queue
 editing, standings/scoring presentation, administration and background writers
 remain unfinished. No production setup, account linking or deployment occurred.
+
+## Task 29 navigation (local review)
+
+Browser login now leads to My Leagues, active seasons, the scoped Matchweek chooser
+and this view. Breadcrumbs return to league/season/week selection without changing
+authority. See `RUNTIME_LEAGUE_NAVIGATION.md`. Existing JSON consumers keep the
+membership API; no new schema, remembered selection or legacy-route access is added.

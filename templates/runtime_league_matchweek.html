@@ -2,7 +2,9 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ context.league.name }} · Matchweek {{ context.week.number }}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='runtime_league_matchweek.css') }}"></head>
-<body><main><header><p class="eyebrow">{{ context.league.name }} · {{ context.season.name }}</p>
+<body><main><nav aria-label="League navigation"><a href="{{ url_for('runtime_auth.leagues') }}">My Leagues</a>
+<a href="{{ url_for('runtime_auth.leagues',league_id=context.league.id) }}">Seasons</a>
+<a href="{{ url_for('runtime_auth.season_navigation',league_id=context.league.id,season_id=context.season.id) }}">Matchweeks</a></nav><header><p class="eyebrow">{{ context.league.name }} · {{ context.season.name }}</p>
 <h1>Matchweek {{ context.week.number }}</h1><a class="refresh" href="{{ refresh_url }}">Refresh draft</a></header>
 {% if notice == 'saved' %}<p class="notice" role="status">Pick saved. Draft refreshed.</p>
 {% elif notice == 'changed' %}<p class="notice" role="status">Pick not accepted. The draft was refreshed; check whose turn it is and the available fixtures before choosing again.</p>{% endif %}
