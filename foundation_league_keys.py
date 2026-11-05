@@ -52,6 +52,86 @@ def validate_dependencies(db):
                           'UPDATE '+quoted(table)+' SET '+fields,'DELETE FROM '+quoted(table)):
             db.execute('EXPLAIN '+statement).fetchall()
 
+def _ddl_tokens(sql):
+    """Lex spans, keeping literals/quoted identifiers out of keyword matching.
+
+    This deliberately supports a small SQLite declaration subset. Comments and
+    unclosed quoting refuse instead of guessing where a constraint ends.
+    """
+    pattern=re.compile(r"\s+|'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[[^\]]*\]|[A-Za-z_][A-Za-z_0-9]*|[^\s]",re.S)
+    tokens=[]
+    for m in pattern.finditer(sql):
+        value=m.group()
+        if value.isspace():continue
+        need(value not in ("'",'"','`','['), 'UNSUPPORTED_UNIQUE_DECLARATION')
+        need(not sql.startswith(('--','/*'),m.start()),'UNSUPPORTED_UNIQUE_DECLARATION')
+        kind='word' if re.fullmatch('[A-Za-z_][A-Za-z_0-9]*',value) else 'symbol'
+        if value[0] in ('"','`','['):kind='identifier'
+        elif value[0]=="'":kind='literal'
+        tokens.append((value,kind,m.start(),m.end()))
+    return tokens
+
+
+def _identifier(token):
+    value,kind,_,_=token
+    if kind=='word':return value.casefold()
+    if kind=='identifier':return value[1:-1].replace(value[0]*2,value[0]).casefold()
+    return None
+
+
+def remove_global_unique(sql,key):
+    """Remove one bare inline UNIQUE or one bare UNIQUE(key) table constraint.
+
+    Never touch literals, CHECK/default expressions or composite/other keys.
+    Named target constraints, conflict policies, duplicate target declarations and
+    decorated single-column table keys are outside this reviewed grammar.
+    """
+    tokens=_ddl_tokens(sql)
+    need(len(tokens)>4 and [t[0].upper() for t in tokens[:2]]==['CREATE','TABLE'] and
+         tokens[3][:2]==('(','symbol') and tokens[-1][:2]==(')','symbol'),'UNSUPPORTED_UNIQUE_DECLARATION')
+    parts=[];start=4;depth=0;preceding=tokens[3]
+    for i in range(4,len(tokens)-1):
+        value,kind,_,_=tokens[i]
+        if kind!='symbol':continue
+        if value=='(':depth+=1
+        elif value==')':
+            depth-=1;need(depth>=0,'UNSUPPORTED_UNIQUE_DECLARATION')
+        elif value==',' and depth==0:
+            need(start<i,'UNSUPPORTED_UNIQUE_DECLARATION')
+            parts.append((tokens[start:i],preceding));start=i+1;preceding=tokens[i]
+    need(depth==0 and start<len(tokens)-1,'UNSUPPORTED_UNIQUE_DECLARATION')
+    parts.append((tokens[start:-1],preceding))
+    found=[];columns=0
+    for part,comma in parts:
+        top=[];depth=0
+        for i,token in enumerate(part):
+            value,kind,_,_=token
+            if depth==0:top.append(i)
+            if kind=='symbol' and value=='(':depth+=1
+            elif kind=='symbol' and value==')':depth-=1
+        unique=[i for i in top if part[i][1]=='word' and part[i][0].upper()=='UNIQUE']
+        if _identifier(part[0])==key:
+            columns+=1
+            if unique:
+                need(len(unique)==1 and not any(part[i][1]=='word' and part[i][0].upper()=='CONSTRAINT' for i in top),
+                     'UNSUPPORTED_UNIQUE_DECLARATION')
+                j=unique[0]
+                need(j+1==len(part) or not (part[j+1][1]=='word' and part[j+1][0].upper()=='ON'),
+                     'UNSUPPORTED_UNIQUE_DECLARATION')
+                found.append((part[j][2],part[j][3]))
+        else:
+            for j in unique:
+                # A composite key is unrelated and must remain byte-for-byte.
+                tail=part[j+1:]
+                if len(tail)>=3 and tail[0][:2]==('(','symbol') and _identifier(tail[1])==key and not any(t[0]==',' and t[1]=='symbol' for t in tail):
+                    need(j==0 and len(part)==4 and part[2][1] in ('word','identifier') and part[3][:2]==(')','symbol') and comma[:2]==(',','symbol'),
+                         'UNSUPPORTED_UNIQUE_DECLARATION')
+                    found.append((comma[2],part[-1][3]))
+    need(columns==1 and len(found)==1,'UNSUPPORTED_UNIQUE_DECLARATION')
+    start,end=found[0]
+    return sql[:start]+sql[end:]
+
+
 def rebuild(db, fail_at=None):
     before_columns=table_columns(db);before_fk=foreign_keys(db)
     before_rows=fingerprints(db);before_objects=schema(db)
@@ -64,9 +144,7 @@ def rebuild(db, fail_at=None):
         for refs in before_fk.values():
             need(not any(r[2]==table and r[4]==key for r in refs),'REFERENCED_GLOBAL_KEY')
         need(not any(re.search(re.escape(global_keys[0][1]),r[3] or '',re.I) for r in before_objects),'AUTO_INDEX_DEPENDENCY')
-        pattern=r',\s*UNIQUE\s*\(\s*'+key+r'\s*\)'
-        sql,count=re.subn(pattern,'',sql,flags=re.I)
-        need(count==1,'UNSUPPORTED_UNIQUE_DECLARATION')
+        sql=remove_global_unique(sql,key)
         need(not db.execute('SELECT 1 FROM '+quoted(table)+' WHERE NOT ('+CHECKS[table]+') LIMIT 1').fetchone(),'UNOWNED_ROWS')
         scratch='_league_keys_'+table
         need(scratch not in before_columns,'PARTIAL_REBUILD')

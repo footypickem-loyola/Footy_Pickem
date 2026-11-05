@@ -31,7 +31,8 @@ removes an existing checkpoint. Lock waits are bounded to two seconds; no retrie
 Execution time supervision remains an operator concern before any real-data use.
 
 The two tables are rebuilt with every original column/value/ID and incoming FK
-unchanged. Only the inline global name/code UNIQUE rules are removed. Existing
+unchanged. Only the obsolete global name/code UNIQUE rules are removed (bare
+inline-column or table-level declarations). Existing
 `(league_id,name_key)` and `(league_id,user_id)` indexes remain; seasons gain
 `uix_league_season_code (league_id,code)`. CHECKs require owned player/user/name-key
 and owned season/canonical-season fields, preventing new unscoped legacy inserts.
@@ -177,3 +178,65 @@ Review validation: 87/87 focused tests passed (7 migration, 4 coexistence,
 16 auth, 13 boundary, 16 drafting, 12 navigation, 10 Matchweek, 9 pick UI).
 Tracked and new-file whitespace checks passed. No broad application suite or
 private-data rehearsal was run.
+
+## Task 34: inline/table UNIQUE compatibility correction
+
+The reported offline preparation refusal came from an inline `seasons.code`
+UNIQUE declaration, while the earlier transform matched only table-level
+`UNIQUE(code)`. This correction uses a deliberately limited SQL token/span parser:
+
+- One bare inline `name/code ... UNIQUE` removes only that keyword's byte span.
+- One bare table constraint `UNIQUE(name/code)` removes only that constraint and
+  its separating comma. Double-quoted/backtick/bracket identifiers are recognized.
+- Literals, nested CHECK/default expressions and unrelated or composite unique
+  constraints are preserved; column constraints/collations/defaults remain intact.
+- Ambiguous/duplicate target declarations, named target constraints, target conflict
+  policies, decorated target table keys, comments and malformed quoting refuse.
+  This is not a general SQL rewrite or a relaxed schema-adoption path.
+
+The existing SQLite index/dependency checks still run, followed by unchanged row,
+FK, schema/dependency, receipt, authorization, checkpoint and idempotency guards.
+Stage 1 and Stage 2 implementation files are unchanged. Version 003 and its packet
+contract retain their identifiers; the implementation SHA changes, so every review
+packet must be freshly prepared/reviewed against the corrected source. No earlier
+packet approval can be reused.
+
+Synthetic tests independently alter the public frozen legacy fixture before its
+actual Stage 1/Stage 2 processing. They exercise table/table (existing coverage),
+table/inline (the reported form), inline/table and inline/inline layouts. Each new
+layout qualifies preparation/application, rollback after each drop, idempotency,
+checkpoint restoration, historical/receipt/index/trigger/view/FK preservation and
+independent shared-fixture drafting/scoring. Tests retain NOT NULL, defaults with
+misleading UNIQUE/comma text, collation, CHECKs, and unrelated composite uniqueness.
+SQLite-coalesced duplicate UNIQUE declarations are rejected during preparation
+with the completed Stage 2 target/receipt still intact.
+
+Focused reproduction from the worktree root, with repository requirements installed
+(select classes to avoid re-discovering imported fixtures):
+
+```powershell
+@'
+import sys, unittest
+sys.path.insert(0, 'tests')
+names = [
+    'test_foundation_league_keys_declarations.DeclarationParserTests',
+    'test_foundation_league_keys_declarations.DeclarationLayoutTests',
+    'test_foundation_league_keys.LeagueKeysTests',
+    'test_runtime_league_keys.CoexistenceTests',
+]
+result = unittest.TextTestRunner(verbosity=2).run(
+    unittest.defaultTestLoader.loadTestsFromNames(names))
+raise SystemExit(not result.wasSuccessful())
+'@ | python -B -
+```
+
+This task opens only disposable synthetic databases. It does not open/copy the
+Loyola checkpoint, restore, previous execution copy or private evidence, and does
+not prepare/apply any real-data packet. The existing blocked attempt remains
+untouched. A separately controlled Task 33 packet-preparation retry remains
+required; even a newly prepared packet needs separate owner checksum approval
+before an on-disk real-data migration. Production prerequisites above remain.
+
+Task 34 validation: 19/19 focused synthetic tests passed (4 parser, 4 layout/refusal,
+7 existing migration and 4 coexistence tests). Whitespace checks passed. No private
+historical database, existing rehearsal artifact or real-data packet was accessed.
