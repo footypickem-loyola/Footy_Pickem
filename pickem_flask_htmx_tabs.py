@@ -769,12 +769,12 @@ def remove_session(exception=None):
 class Player(Base):
     __tablename__ = "players"
     id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
 
 class Season(Base):
     __tablename__ = "seasons"
     id = Column(Integer, primary_key=True)
-    code = Column(String, unique=True, nullable=False)
+    code = Column(String, nullable=False)
     name = Column(String, nullable=False)
     is_active = Column(Integer, nullable=False, default=0)
     is_archived = Column(Integer, nullable=False, default=0)
@@ -1631,13 +1631,15 @@ def init_season_from_api(
     if not room_code.strip():
         raise ValueError("A room code is required")
 
+    with SessionLocal() as scope_db:
+        refuse_unscoped_seed(scope_db, Season)
     api_client = client or football_data_client()
     matches = api_client.competition_matches(competition, season_year)
     by_matchday = validate_api_matches(matches)
 
     db = SessionLocal()
     try:
-        season = db.query(Season).filter_by(code=season_code).first()
+        season = legacy_query(db, Season).filter_by(code=season_code).first()
         if season is not None and db.query(Week).filter_by(season_id=season.id).count():
             raise RuntimeError(
                 f"{season.name} already contains weeks; API import will not replace them"
@@ -1657,7 +1659,7 @@ def init_season_from_api(
         )
 
         for name in clean_players:
-            if db.query(Player).filter_by(name=name).first() is None:
+            if legacy_query(db, Player).filter_by(name=name).first() is None:
                 db.add(Player(name=name))
         db.flush()
         player_rows = db.query(Player).filter(Player.name.in_(clean_players)).all()
@@ -1822,6 +1824,8 @@ def sync_results_from_api(
         db.commit()
         raise
 
+from runtime_league_compat import legacy_query, refuse_unscoped_seed, week_fixtures
+
 # -------------------- Helpers --------------------
 def current_player(db):
     if "runtime_auth" in app.extensions:
@@ -1830,23 +1834,23 @@ def current_player(db):
     name = session.get("player_name")
     if not name:
         return None
-    return db.query(Player).filter_by(name=name).first()
+    return legacy_query(db, Player).filter_by(name=name).first()
 
 
 def active_season(db) -> Optional[Season]:
-    season = db.query(Season).filter_by(is_active=1).order_by(Season.id.desc()).first()
+    season = legacy_query(db, Season).filter_by(is_active=1).order_by(Season.id.desc()).first()
     if season:
         return season
-    season = db.query(Season).filter_by(is_archived=0).order_by(Season.id.desc()).first()
+    season = legacy_query(db, Season).filter_by(is_archived=0).order_by(Season.id.desc()).first()
     if season:
         return season
-    return db.query(Season).order_by(Season.id.desc()).first()
+    return legacy_query(db, Season).order_by(Season.id.desc()).first()
 
 
 def requested_season(db, code: Optional[str] = None) -> Optional[Season]:
     season_code = code or request.args.get("season") or request.form.get("season")
     if season_code:
-        season = db.query(Season).filter_by(code=season_code).first()
+        season = legacy_query(db, Season).filter_by(code=season_code).first()
         if season:
             return season
     return active_season(db)
@@ -1858,6 +1862,9 @@ def season_players(db, season: Season) -> List[Player]:
     for matchup in matchups:
         player_ids.update((matchup.player_a_id, matchup.player_b_id))
     if not player_ids:
+        if hasattr(db, 'execute'):
+            from runtime_league_compat import league_players
+            return league_players(db, season, Player).order_by(Player.name.asc()).all()
         return db.query(Player).order_by(Player.name.asc()).all()
     return db.query(Player).filter(Player.id.in_(player_ids)).order_by(Player.name.asc()).all()
 
@@ -1884,19 +1891,24 @@ def draft_turn_at(first, second, count):
 
 def available_fixtures_for_matchup(db, m: Matchup) -> list:
     picked_fixture_ids = [p.fixture_id for p in db.query(Pick.fixture_id).filter_by(matchup_id=m.id).all()]
-    fixtures = db.query(Fixture).filter_by(week_id=m.week_id).order_by(Fixture.match_number.asc()).all()
+    fixtures = week_fixtures(db, db.get(Week,m.week_id), Fixture, Season).order_by(Fixture.match_number.asc()).all()
     return [f for f in fixtures if f.id not in picked_fixture_ids]
 
 def weekly_points_map(db, week: Week) -> Dict[int, int]:
-    players = {p.id: 0 for p in db.query(Player).all()}
-    results = {r.fixture_id: r.outcome for r in db.query(Result).join(Fixture).filter(Fixture.week_id==week.id)}
-    for p in db.query(Pick).join(Matchup).filter(Matchup.week_id==week.id):
-        fx = p.fixture
-        outcome = results.get(fx.id)
-        if outcome is None:
-            continue
-        delta = pick_contribution(p, outcome)
-        players[p.player_id] = players.get(p.player_id, 0) + delta
+    season = db.query(Season).filter_by(id=week.season_id).all()[0]
+    if hasattr(db, 'execute'):
+        from runtime_league_compat import league_players
+        roster = league_players(db, season, Player).all()
+    else:
+        roster = db.query(Player).all()
+    players = {p.id: 0 for p in roster}
+    picks = db.query(Pick).join(Matchup).filter(Matchup.week_id==week.id).all()
+    fixture_ids = [p.fixture_id for p in picks]
+    results = {r.fixture_id: r.outcome for r in db.query(Result).filter(Result.fixture_id.in_(fixture_ids))}
+    for p in picks:
+        outcome = results.get(p.fixture_id)
+        if outcome is not None:
+            players[p.player_id] = players.get(p.player_id, 0) + pick_contribution(p, outcome)
     return players
 
 
@@ -1919,15 +1931,19 @@ def weekly_for_against(db, week: Week) -> Dict[int, Dict[str,int]]:
 
 def weekly_pick_records(db, week: Week) -> Dict[int, Dict[str, int]]:
     """Return correct/incorrect/draw pick counts for every player in a week."""
+    season = db.query(Season).filter_by(id=week.season_id).all()[0]
+    if hasattr(db, 'execute'):
+        from runtime_league_compat import league_players
+        roster = league_players(db, season, Player).all()
+    else:
+        roster = db.query(Player).all()
     records: Dict[int, Dict[str, int]] = {
         p.id: {'correct': 0, 'incorrect': 0, 'draws': 0}
-        for p in db.query(Player).all()
-    }
-    results = {
-        r.fixture_id: r.outcome
-        for r in db.query(Result).join(Fixture).filter(Fixture.week_id == week.id)
+        for p in roster
     }
     picks = db.query(Pick).join(Matchup).filter(Matchup.week_id == week.id).all()
+    results = {r.fixture_id: r.outcome for r in db.query(Result).filter(
+        Result.fixture_id.in_([p.fixture_id for p in picks]))}
     for pick in picks:
         outcome = results.get(pick.fixture_id)
         if outcome is None:
@@ -2055,18 +2071,13 @@ def club_records_for_player(
     min_picks: int = 1,
     sort_mode: str = "best",
 ) -> List[Dict[str, Any]]:
-    results = {
-        result.fixture_id: result.outcome
-        for result in db.query(Result).join(Fixture).join(Week).filter(
-            Week.season_id == season.id,
-            Week.status == "finalized",
-        )
-    }
     picks = db.query(Pick).join(Matchup).join(Week).filter(
         Week.season_id == season.id,
         Week.status == "finalized",
         Pick.player_id == player.id,
     ).all()
+    results = {r.fixture_id: r.outcome for r in db.query(Result).filter(
+        Result.fixture_id.in_([p.fixture_id for p in picks]))}
     records: Dict[str, Dict[str, Any]] = {}
     for pick in picks:
         outcome = results.get(pick.fixture_id)
@@ -2321,9 +2332,9 @@ def build_weekly_recap_context(db, week: Week) -> Dict[str, Any]:
     records = weekly_pick_records(db, week)
     results = {
         result.fixture_id: result
-        for result in db.query(Result).join(Fixture).filter(Fixture.week_id == week.id)
+        for result in db.query(Result).filter(Result.fixture_id.in_([f.id for f in week_fixtures(db, week, Fixture, Season)]))
     }
-    fixtures = db.query(Fixture).filter_by(week_id=week.id).order_by(
+    fixtures = week_fixtures(db, week, Fixture, Season).order_by(
         Fixture.match_number.asc()
     ).all()
 
@@ -4526,8 +4537,8 @@ def generate_and_store_weekly_recap_v2(
     return recap
 
 def count_results_for_week(db, wk: Week) -> Tuple[int,int]:
-    total = db.query(Fixture).filter_by(week_id=wk.id).count()
-    done = db.query(Result).join(Fixture).filter(Fixture.week_id==wk.id).count()
+    total = week_fixtures(db, wk, Fixture, Season).count()
+    done = db.query(Result).filter(Result.fixture_id.in_([f.id for f in week_fixtures(db, wk, Fixture, Season)])).count()
     return done, total
 
 def update_week_status(db, wk: Week) -> None:
@@ -4548,10 +4559,10 @@ def training_ground_week(db, season: Season) -> Optional[Week]:
     for week in weeks:
         if week.status == "finalized":
             continue
-        fixtures = db.query(Fixture).filter_by(week_id=week.id).all()
-        official = {r.fixture_id for r in db.query(Result).join(Fixture).filter(Fixture.week_id == week.id)}
+        fixtures = week_fixtures(db, week, Fixture, Season).all()
+        official = {r.fixture_id for r in db.query(Result).filter(Result.fixture_id.in_([f.id for f in week_fixtures(db, week, Fixture, Season)]))}
         finished = {s.fixture_id for s in db.query(LiveFixtureState).join(Fixture).filter(
-            Fixture.week_id == week.id, LiveFixtureState.state == "finished")}
+            Fixture.id.in_([f.id for f in week_fixtures(db, week, Fixture, Season)]), LiveFixtureState.state == "finished")}
         if not fixtures or any(f.id not in official | finished for f in fixtures):
             return week
     return weeks[-1] if weeks else None
@@ -4604,9 +4615,9 @@ def load_matchweek_model(db, season, week, include_context=True):
     matchups = db.query(Matchup).filter_by(week_id=week.id).order_by(Matchup.id).all()
     model = build_matchweek(
         week=week, season=season, you=current_player(db), matchups=matchups,
-        fixtures=db.query(Fixture).filter_by(week_id=week.id).all(),
+        fixtures=week_fixtures(db, week, Fixture, Season).all(),
         picks=db.query(Pick).join(Matchup).filter(Matchup.week_id == week.id).all(),
-        results=db.query(Result).join(Fixture).filter(Fixture.week_id == week.id).all(),
+        results=db.query(Result).filter(Result.fixture_id.in_([f.id for f in week_fixtures(db, week, Fixture, Season)])).all(),
         turns={matchup.id: compute_next_turn(db, matchup) for matchup in matchups},
         points=weekly_points_map(db, week), payouts=payouts_for_week(db, week),
         outcome_for_pick=pick_display_outcome, contribution_for_pick=pick_contribution,
@@ -4683,7 +4694,7 @@ def tab_open():
             viewer_id=you.id if you else None,
         )
     return render_template("v3/pages/fixtures.html", schedule=schedule, selected_season=season,
-                           seasons=db.query(Season).order_by(Season.id.desc()).all(), you=you,
+                           seasons=legacy_query(db, Season).order_by(Season.id.desc()).all(), you=you,
                            schedule_view="player" if you and request.args.get("view") == "player" else "league")
 
 @app.get("/admin")
@@ -4712,12 +4723,12 @@ def admin():
         sel = request.args.get("week", type=int)
         wk = season_week(db, season, sel) if sel else current_drafting_week(db, season)
         wk = wk or weeks[0]
-        fixtures = db.query(Fixture).filter_by(week_id=wk.id).order_by(
+        fixtures = week_fixtures(db, wk, Fixture, Season).order_by(
             Fixture.match_number.asc()
         ).all()
         res_map = {
             result.fixture_id: result.outcome
-            for result in db.query(Result).join(Fixture).filter(Fixture.week_id == wk.id)
+            for result in db.query(Result).filter(Result.fixture_id.in_([f.id for f in week_fixtures(db, wk, Fixture, Season)]))
         }
         recaps = db.query(WeeklyRecap).filter_by(week_id=wk.id).order_by(
             WeeklyRecap.revision.desc()
@@ -4779,7 +4790,7 @@ def admin():
         if correspondent_v2_enabled():
             correspondent_automation = correspondent_automation_status(db, wk)
 
-    year_two = db.query(Season).filter_by(code="year-2").first()
+    year_two = legacy_query(db, Season).filter_by(code="year-2").first()
     can_import_api = year_two is None or db.query(Week).filter_by(
         season_id=year_two.id
     ).count() == 0
@@ -5767,7 +5778,7 @@ def admin_set_results():
     if not wk:
         abort(404, "Week not found")
 
-    fixtures = db.query(Fixture).filter_by(week_id=wk.id).all()
+    fixtures = week_fixtures(db, wk, Fixture, Season).all()
     # Apply changes fixture-by-fixture
     for f in fixtures:
         key = f"outcome_{f.id}"
@@ -5812,7 +5823,7 @@ def tab_season():
     db = SessionLocal()
     you = current_player(db)
     selected_season = requested_season(db)
-    seasons = db.query(Season).order_by(Season.id.desc()).all()
+    seasons = legacy_query(db, Season).order_by(Season.id.desc()).all()
     results_view = None
     if selected_season is not None:
         weeks = db.query(Week).filter_by(season_id=selected_season.id, status="finalized").all()
@@ -5833,7 +5844,7 @@ def insight_context(league=False):
     you = current_player(db)
     selected_season = requested_season(db)
     context = dict(you=you, selected_season=selected_season,
-                   seasons=db.query(Season).order_by(Season.id.desc()).all())
+                   seasons=legacy_query(db, Season).order_by(Season.id.desc()).all())
     if selected_season is None:
         return context
     players = season_players(db, selected_season)
@@ -5935,7 +5946,7 @@ def fixtures_partial(week_number: int):
     wk = None if season is None else season_week(db, season, week_number)
     if wk is None:
         abort(404, "Week not found")
-    fixtures = db.query(Fixture).filter_by(week_id=wk.id).order_by(Fixture.match_number.asc()).all()
+    fixtures = week_fixtures(db, wk, Fixture, Season).order_by(Fixture.match_number.asc()).all()
     return render_template_string(FIXTURES_PARTIAL, fixtures=fixtures)
 
 @app.route("/partials/matchups/<int:week_number>")
@@ -5946,7 +5957,7 @@ def matchups_partial(week_number: int):
     if wk is None:
         abort(404, "Week not found")
     you = current_player(db)
-    results = {r.fixture_id: r.outcome for r in db.query(Result).join(Fixture).filter(Fixture.week_id == wk.id)}
+    results = {r.fixture_id: r.outcome for r in db.query(Result).filter(Result.fixture_id.in_([f.id for f in week_fixtures(db, wk, Fixture, Season)]))}
     matchups = []
     for m in db.query(Matchup).filter_by(week_id=wk.id).all():
         turn_id = compute_next_turn(db, m)
@@ -5988,7 +5999,7 @@ def scores_partial(week_number: int):
     points = weekly_points_map(db, wk)
     records = weekly_pick_records(db, wk)
     scores = []
-    for player in db.query(Player).order_by(Player.name.asc()).all():
+    for player in legacy_query(db, Player).order_by(Player.name.asc()).all():
         record = records.get(player.id, {"correct": 0, "incorrect": 0, "draws": 0})
         scores.append({
             "name": player.name,
@@ -5999,10 +6010,10 @@ def scores_partial(week_number: int):
             "draws": record["draws"],
         })
     payouts = payouts_for_week(db, wk)
-    fixtures = db.query(Fixture).filter_by(week_id=wk.id).order_by(Fixture.match_number.asc()).all()
+    fixtures = week_fixtures(db, wk, Fixture, Season).order_by(Fixture.match_number.asc()).all()
     results_map = {
         result.fixture_id: result
-        for result in db.query(Result).join(Fixture).filter(Fixture.week_id == wk.id)
+        for result in db.query(Result).filter(Result.fixture_id.in_([f.id for f in week_fixtures(db, wk, Fixture, Season)]))
     }
     fixtures_with_results = []
     for f in fixtures:
@@ -6342,9 +6353,10 @@ def init_weeks_from_csv(
     allow_reset: bool = False,
 ):
     db = SessionLocal()
+    refuse_unscoped_seed(db, Season)
     df = pd.read_csv(csv_path)
 
-    season = db.query(Season).filter_by(code=season_code).first()
+    season = legacy_query(db, Season).filter_by(code=season_code).first()
     if season is None:
         season = Season(code=season_code, name=season_name, is_active=1, is_archived=0)
         db.add(season)
@@ -6367,7 +6379,7 @@ def init_weeks_from_csv(
 
     # Players are shared across seasons; add missing names without deleting history.
     for name in players:
-        if db.query(Player).filter_by(name=name).first() is None:
+        if legacy_query(db, Player).filter_by(name=name).first() is None:
             db.add(Player(name=name))
     db.commit()
 
@@ -6396,8 +6408,8 @@ def init_weeks_from_csv(
         random.shuffle(names)
         pairs = [(names[i], names[i+1]) for i in range(0, len(names), 2)]
         for a_name, b_name in pairs:
-            a = db.query(Player).filter_by(name=a_name).first()
-            b = db.query(Player).filter_by(name=b_name).first()
+            a = legacy_query(db, Player).filter_by(name=a_name).first()
+            b = legacy_query(db, Player).filter_by(name=b_name).first()
             first = random.choice([a, b])
             db.add(Matchup(week_id=wk.id, player_a_id=a.id, player_b_id=b.id, first_picker_id=first.id))
         db.commit()
@@ -6482,6 +6494,9 @@ if os.environ.get("RUNTIME_AUTH0_ENABLED", "0") != "0":
                              draft_domain=sys.modules[__name__])
     from runtime_legacy_boundary import install_boundary
     install_boundary(sys.modules[__name__])
+else:
+    from runtime_league_compat import install_disabled_boundary
+    install_disabled_boundary(app,engine)
 
 
 if __name__ == "__main__":

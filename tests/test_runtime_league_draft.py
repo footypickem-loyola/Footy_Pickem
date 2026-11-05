@@ -164,12 +164,22 @@ class LeagueDraftTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT selected_club_id FROM picks WHERE fixture_id=900').fetchone()[0],None)
 
     def test_disabled_mode_legacy_http_pick_and_new_route_absent(self):
-        module=self.load_app(dict(self.values,RUNTIME_AUTH0_ENABLED='0'))
+        # Fallback compatibility uses a genuinely single-league legacy database.
+        # Multi-league owned data must use verified mode (covered by coexistence tests).
+        game=self.folder/'legacy-single-disabled.db'
+        module=self.load_app(dict(self.values,RUNTIME_AUTH0_ENABLED='0',DB_PATH='sqlite:///'+str(game)))
+        module.Base.metadata.create_all(module.engine)
+        with closing(sqlite3.connect(game)) as db,db:
+            db.executescript("""INSERT INTO players(id,name) VALUES(1,'Synthetic Player'),(4,'Synthetic Opponent');
+            INSERT INTO seasons(id,code,name,is_active,is_archived) VALUES(1,'loyola-season','Synthetic Loyola',1,0);
+            INSERT INTO weeks(id,season_id,number,room_code,status) VALUES(10,1,1,'SYNTHETIC','drafting');
+            INSERT INTO fixtures(id,week_id,match_number,home,away) VALUES(100,10,1,'Loyola Home','Loyola Away');
+            INSERT INTO matchups(id,week_id,player_a_id,player_b_id,first_picker_id) VALUES(1000,10,1,4,1);""")
         module.app.testing=True;client=module.app.test_client()
         with client.session_transaction() as session:session['player_name']='Synthetic Player'
         response=client.post('/pick',data=dict(season='loyola-season',week='1',matchup_id='1000',fixture_id='100',team='Loyola Home',expected_count='0'))
         self.assertEqual(response.status_code,303)
-        with closing(sqlite3.connect(self.game)) as db:
+        with closing(sqlite3.connect(game)) as db:
             self.assertEqual(db.execute('SELECT player_id FROM picks WHERE matchup_id=1000').fetchall(),[(1,)])
         self.assertEqual(client.post(self.url()).status_code,404)
 
