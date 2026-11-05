@@ -18,7 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from flask import Flask, abort, flash, jsonify, make_response, redirect, render_template, render_template_string, request, session, url_for
+from flask import Flask, g, abort, flash, jsonify, make_response, redirect, render_template, render_template_string, request, session, url_for
 from flask_session import Session
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text, ForeignKey, UniqueConstraint,
@@ -497,6 +497,8 @@ def correspondent_default_version() -> str:
 
 
 def is_admin_session() -> bool:
+    if "runtime_auth" in app.extensions:
+        return False  # Legacy room-code admin is not verified league authority.
     return bool(session.get(ADMIN_SESSION_KEY, False))
 
 
@@ -1822,6 +1824,9 @@ def sync_results_from_api(
 
 # -------------------- Helpers --------------------
 def current_player(db):
+    if "runtime_auth" in app.extensions:
+        player_id = getattr(g, "loyola_legacy_player_id", None)
+        return None if player_id is None else db.get(Player, player_id)
     name = session.get("player_name")
     if not name:
         return None
@@ -6468,6 +6473,15 @@ def main():
 
     # Stable run (no reloader); enable threading for concurrency
     app.run(host=args.host, port=args.port, debug=False, use_reloader=False, threaded=True)
+
+# Auth0 remains opt-in and never upgrades legacy room-code sessions.
+if os.environ.get("RUNTIME_AUTH0_ENABLED", "0") != "0":
+    from runtime_league_auth import install_from_environment
+    install_from_environment(app, session_factory=SessionLocal,
+                             game_database=engine.url.database, values=os.environ)
+    from runtime_legacy_boundary import install_boundary
+    install_boundary(sys.modules[__name__])
+
 
 if __name__ == "__main__":
     main()
