@@ -1,0 +1,41 @@
+name: Standalone Linux SQLite storage diagnostic
+
+on:
+  push:
+    branches:
+      - ci/gameplay-linux-storage-proof
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: tests/test_linux_gameplay_storage_probe.py
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run standalone synthetic SQLite diagnostics
+        id: probe
+        shell: bash
+        run: |
+          umask 077
+          python -I -B tests/test_linux_gameplay_storage_probe.py
+      - name: Report diagnostic scope
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo '### Standalone Linux SQLite storage diagnostic'
+            echo
+            echo '- Filesystem and descriptor observations: ${{ steps.probe.outcome }}.'
+            echo '- Mount substitution: NOT RUN. No mounts are created or replaced.'
+            echo '- Runtime 019/020 and Loyola compatibility: NOT RUN. This public-base job contains no unpublished runtime code.'
+            echo '- Persistent production guard: NOT QUALIFIED. Descriptor observations are diagnostic only.'
+          } >> "$GITHUB_STEP_SUMMARY"
