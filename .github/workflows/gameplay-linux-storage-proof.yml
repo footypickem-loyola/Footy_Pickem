@@ -16,7 +16,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          sparse-checkout: tests/test_linux_gameplay_storage_probe.py
+          sparse-checkout: |
+            tests/test_linux_gameplay_storage_probe.py
+            tests/test_linux_gameplay_namespace_proof.py
           sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
@@ -27,6 +29,13 @@ jobs:
         run: |
           umask 077
           python -I -B tests/test_linux_gameplay_storage_probe.py
+      - name: Prove ownership and SQLite sidecar behavior
+        id: ownership
+        if: ${{ !cancelled() && (steps.probe.outcome == 'success' || steps.probe.outcome == 'failure') }}
+        shell: bash
+        run: |
+          umask 077
+          sudo -n -- "$(command -v python)" -I -B tests/test_linux_gameplay_namespace_proof.py
       - name: Report diagnostic scope
         if: ${{ always() }}
         shell: bash
@@ -35,6 +44,7 @@ jobs:
             echo '### Standalone Linux SQLite storage diagnostic'
             echo
             echo '- Filesystem and descriptor observations: ${{ steps.probe.outcome }}.'
+            echo '- Ownership and sidecar proof: ${{ steps.ownership.outcome }}.'
             echo '- Mount substitution: NOT RUN. No mounts are created or replaced.'
             echo '- Runtime 019/020 and Loyola compatibility: NOT RUN. This public-base job contains no unpublished runtime code.'
             echo '- Persistent production guard: NOT QUALIFIED. Descriptor observations are diagnostic only.'
